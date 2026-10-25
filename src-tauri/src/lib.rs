@@ -1,0 +1,189 @@
+mod agents;
+mod brain;
+mod config;
+mod events;
+mod journal;
+mod market;
+mod memory;
+mod orchestrator;
+mod paths;
+mod tools;
+
+use std::sync::{atomic::AtomicBool, Mutex};
+
+use serde::Serialize;
+use tauri::{AppHandle, Manager, State};
+use tauri_plugin_opener::OpenerExt;
+
+use crate::{agents::Manifest, brain::{Brain, BrainInfo, Msg}, config::Config, paths::Paths};
+
+pub struct AppState {
+    pub config: Mutex<Config>,
+    pub paths: Paths,
+    pub http: reqwest::Client,
+    pub busy: AtomicBool,
+}
+
+type CmdResult<T> = Result<T, String>;
+
+fn err<E: std::fmt::Display>(e: E) -> String {
+    e.to_string()
+}
+
+#[tauri::command]
+fn get_config(state: State<AppState>) -> Config {
+    state.config.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn save_config(state: State<AppState>, config: Config) -> CmdResult<()> {
+    config.save(&state.paths).map_err(err)?;
+    *state.config.lock().unwrap() = config;
+    Ok(())
+}
+
+#[tauri::command]
+async fn detect_brain(state: State<'_, AppState>) -> CmdResult<BrainInfo> {
+    let cfg = state.config.lock().unwrap().clone();
+    let mut b = Brain::new(cfg, state.http.clone());
+    Ok(b.detect().await)
+}
+
+#[tauri::command]
+async fn send_message(app: AppHandle, state: State<'_, AppState>, text: String, history: Vec<Msg>) -> CmdResult<String> {
+    if state.busy.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Err("Orchestra est déjà en train de traiter une demande.".into());
+    }
+    let run_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
+    let rid = run_id.clone();
+    tauri::async_runtime::spawn(async move {
+        orchestrator::run(app, rid, text, history).await;
+    });
+    Ok(run_id)
+}
+
+#[derive(Serialize)]
+struct AgentsList {
+    installed: Vec<Manifest>,
+    registry: Vec<Manifest>,
+}
+
+#[tauri::command]
+fn list_agents(state: State<AppState>) -> AgentsList {
+    AgentsList { installed: agents::installed(&state.paths), registry: agents::local_registry(&state.paths) }
+}
+
+#[tauri::command]
+async fn market_preview(state: State<'_, AppState>) -> CmdResult<Vec<Manifest>> {
+    let cfg = state.config.lock().unwrap().clone();
+    market::fetch_remote(&state.http, &cfg).await
+}
+
+#[tauri::command]
+fn memory_tree(state: State<AppState>) -> Vec<memory::MemoryFile> {
+    memory::tree(&state.paths)
+}
+
+fn safe_path(state: &AppState, rel: &str) -> CmdResult<std::path::PathBuf> {
+    let p = std::path::Path::new(rel);
+    if p.is_absolute() || p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        return Err("chemin refusé".into());
+    }
+    Ok(state.paths.root.join(p))
+}
+
+#[tauri::command]
+fn read_text_file(state: State<AppState>, rel: String) -> CmdResult<String> {
+    let p = safe_path(&state, &rel)?;
+    std::fs::read_to_string(p).map_err(err)
+}
+
+#[tauri::command]
+fn write_text_file(state: State<AppState>, rel: String, content: String) -> CmdResult<()> {
+    let p = safe_path(&state, &rel)?;
+    std::fs::write(p, content).map_err(err)
+}
+
+#[tauri::command]
+fn list_journal_days(state: State<AppState>) -> Vec<String> {
+    journal::list_days(&state)
+}
+
+#[tauri::command]
+fn read_journal(state: State<AppState>, day: String) -> Vec<serde_json::Value> {
+    journal::read_day(&state, &day)
+}
+
+#[derive(Serialize)]
+struct PathsInfo {
+    root: String,
+    memoire: String,
+    agents: String,
+    workspace: String,
+    journal: String,
+}
+
+#[tauri::command]
+fn get_paths(state: State<AppState>) -> PathsInfo {
+    let s = |p: &std::path::Path| p.to_string_lossy().to_string();
+    PathsInfo {
+        root: s(&state.paths.root),
+        memoire: s(&state.paths.memoire),
+        agents: s(&state.paths.agents),
+        workspace: s(&state.paths.workspace),
+        journal: s(&state.paths.journal),
+    }
+}
+
+#[tauri::command]
+fn open_folder(app: AppHandle, state: State<AppState>, which: String) -> CmdResult<()> {
+    let p = match which.as_str() {
+        "memoire" => state.paths.memoire.clone(),
+        "agents" => state.paths.agents.clone(),
+        "workspace" => state.paths.workspace.clone(),
+        "journal" => state.paths.journal.clone(),
+        _ => state.paths.root.clone(),
+    };
+    app.opener().open_path(p.to_string_lossy().to_string(), None::<&str>).map_err(err)
+}
+
+#[tauri::command]
+fn is_busy(state: State<AppState>) -> bool {
+    state.busy.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            let paths = Paths::init()?;
+            let config = Config::load(&paths);
+            if !paths.config.exists() {
+                let _ = config.save(&paths);
+            }
+            agents::seed_registry(&paths)?;
+            memory::seed_main(&paths, &config.user_name)?;
+            let http = reqwest::Client::builder().user_agent("Orchestra/0.1").build()?;
+            app.manage(AppState { config: Mutex::new(config), paths, http, busy: AtomicBool::new(false) });
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            get_config,
+            save_config,
+            detect_brain,
+            send_message,
+            list_agents,
+            market_preview,
+            memory_tree,
+            read_text_file,
+            write_text_file,
+            list_journal_days,
+            read_journal,
+            get_paths,
+            open_folder,
+            is_busy,
+        ])
+        .run(tauri::generate_context!())
+        .expect("erreur au lancement d'Orchestra");
+}
