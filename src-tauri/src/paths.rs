@@ -1,6 +1,9 @@
-//! Arborescence des données d'Orchestra (dans Documents\Orchestra).
+//! Arborescence des données d'Orchestra : `%USERPROFILE%\Orchestra` (ex. C:\Users\pb\Orchestra),
+//! ou le dossier donné par la variable d'environnement ORCHESTRA_HOME.
+//! (Pas dans Documents : l'« Accès contrôlé aux dossiers » de Windows Defender y bloque
+//! les applications inconnues.)
 //!
-//! Documents/Orchestra/
+//! Orchestra/
 //!   config.json              paramètres (cerveau, clés, URL du market)
 //!   memoire/
 //!     orchestra.md           mémoire principale, lisible et modifiable
@@ -30,10 +33,12 @@ pub struct Paths {
 
 impl Paths {
     pub fn init() -> anyhow::Result<Self> {
-        let docs = dirs::document_dir()
-            .or_else(dirs::home_dir)
-            .ok_or_else(|| anyhow::anyhow!("dossier Documents introuvable"))?;
-        let root = docs.join("Orchestra");
+        let root = match std::env::var_os("ORCHESTRA_HOME") {
+            Some(p) if !p.is_empty() => PathBuf::from(p),
+            _ => dirs::home_dir()
+                .ok_or_else(|| anyhow::anyhow!("dossier utilisateur introuvable"))?
+                .join("Orchestra"),
+        };
         let p = Paths {
             config: root.join("config.json"),
             memoire: root.join("memoire"),
@@ -56,7 +61,7 @@ impl Paths {
             &p.workspace,
             &p.journal,
         ] {
-            std::fs::create_dir_all(d)?;
+            std::fs::create_dir_all(d).map_err(|e| anyhow::anyhow!("impossible de créer {} : {e}", d.display()))?;
         }
         Ok(p)
     }

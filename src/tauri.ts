@@ -1,8 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { BrainInfo, Config, Manifest, MemoryFile, OrchestraEvent, PathsInfo } from "./types";
+import { mockApi, mockOnEvent } from "./mock";
 
-export const api = {
+/** Vrai quand l'interface tourne dans la fenêtre Tauri ; sinon on est en démo navigateur. */
+export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+const real = {
   getConfig: () => invoke<Config>("get_config"),
   saveConfig: (config: Config) => invoke<void>("save_config", { config }),
   detectBrain: () => invoke<BrainInfo>("detect_brain"),
@@ -20,6 +24,9 @@ export const api = {
   isBusy: () => invoke<boolean>("is_busy"),
 };
 
+export const api: typeof real = isTauri ? real : (mockApi as unknown as typeof real);
+
 export function onEvent(cb: (e: OrchestraEvent) => void) {
+  if (!isTauri) return mockOnEvent(cb);
   return listen<OrchestraEvent>("orchestra://event", (ev) => cb(ev.payload));
 }

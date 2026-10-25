@@ -5,3 +5,6 @@ src-tauri/gen/schemas
 *.log
 .DS_Store
 Thumbs.db
+
+Orchestra.exe
+Orchestra-setup.exe

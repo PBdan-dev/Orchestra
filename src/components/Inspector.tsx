@@ -125,7 +125,7 @@ function CoreDetail() {
         <p className="small">{messages.filter((m) => m.role === "user").length} demande(s) traitée(s)</p>
       </Section>
 
-      <Section title="Dossiers (Documents/Orchestra)">
+      <Section title="Dossiers">
         <div className="folder-list">
           {[["memoire", "memoire/", "mémoire lisible"], ["agents", "agents/", "manifestes"], ["workspace", "espace-de-travail/", "où les agents écrivent"], ["journal", "journal/", "tout l'historique"]].map(([k, n, d]) => (
             <button key={k} className="folder-row" onClick={() => api.openFolder(k)}><I.folder size={14} /> <b>{n}</b> <span className="muted">{d}</span> <I.external size={12} /></button>

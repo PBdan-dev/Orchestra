@@ -157,14 +157,14 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            let paths = Paths::init()?;
+            let paths = Paths::init().map_err(|e| anyhow::anyhow!("dossiers : {e}"))?;
             let config = Config::load(&paths);
             if !paths.config.exists() {
                 let _ = config.save(&paths);
             }
-            agents::seed_registry(&paths)?;
-            memory::seed_main(&paths, &config.user_name)?;
-            let http = reqwest::Client::builder().user_agent("Orchestra/0.1").build()?;
+            agents::seed_registry(&paths).map_err(|e| anyhow::anyhow!("registre : {e}"))?;
+            memory::seed_main(&paths, &config.user_name).map_err(|e| anyhow::anyhow!("mémoire : {e}"))?;
+            let http = reqwest::Client::builder().user_agent("Orchestra/0.1").build().map_err(|e| anyhow::anyhow!("http : {e}"))?;
             app.manage(AppState { config: Mutex::new(config), paths, http, busy: AtomicBool::new(false) });
             Ok(())
         })

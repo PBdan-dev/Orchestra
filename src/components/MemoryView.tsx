@@ -47,7 +47,7 @@ export function MemoryView() {
     <div className="view memory-view">
       <aside className="file-list">
         <div className="file-list-head">
-          <span>Documents/Orchestra/memoire</span>
+          <span>Orchestra/memoire</span>
           <button className="icon-btn" onClick={() => api.openFolder("memoire")} title="Ouvrir le dossier"><I.external size={14} /></button>
         </div>
         {groups.map(([title, list]) => (

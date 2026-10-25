@@ -18,7 +18,7 @@ export function JournalView() {
   return (
     <div className="view journal-view">
       <aside className="file-list">
-        <div className="file-list-head"><span>Documents/Orchestra/journal</span><button className="icon-btn" onClick={() => api.openFolder("journal")}><I.external size={14} /></button></div>
+        <div className="file-list-head"><span>Orchestra/journal</span><button className="icon-btn" onClick={() => api.openFolder("journal")}><I.external size={14} /></button></div>
         {days.length === 0 && <div className="muted small pad">Aucun événement encore.</div>}
         {days.map((d) => <button key={d} className={`file-row ${day === d ? "active" : ""}`} onClick={() => setDay(d)}><I.journal size={13} /> <span className="file-name">{d}</span></button>)}
       </aside>

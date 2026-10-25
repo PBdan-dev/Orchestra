@@ -1,5 +1,5 @@
 //! Outils que les agents peuvent se donner. Tous sont cantonnés à
-//! l'espace de travail (Documents/Orchestra/espace-de-travail), sauf fetch_url.
+//! l'espace de travail (dossier Orchestra › espace-de-travail), sauf fetch_url.
 
 use std::path::{Path, PathBuf};
 

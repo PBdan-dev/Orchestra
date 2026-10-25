@@ -33,11 +33,10 @@ export function Stage() {
   const R = Math.max(104, Math.min(160, Math.min(usableW, size.h) * 0.17));
   const orbit = Math.min(R + 165, Math.min(usableW, size.h) / 2 - 70);
 
+  // les agents se répartissent sur l'orbite, le premier en haut à droite
   const nodes = list.map((a, i) => {
     const n = list.length;
-    const spread = n === 1 ? 0 : Math.min(Math.PI * 1.4, (n - 1) * 0.75);
-    const a0 = -spread / 2;
-    const angle = a0 + (n === 1 ? 0 : (i / (n - 1)) * spread);
+    const angle = -Math.PI / 5 + (i * Math.PI * 2) / Math.max(n, 1);
     return { a, angle, x: cx + Math.cos(angle) * orbit, y: cy + Math.sin(angle) * orbit };
   });
 

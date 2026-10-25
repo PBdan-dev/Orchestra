@@ -127,7 +127,7 @@ async fn run_inner(app: &AppHandle, run_id: &str, text: &str, history: Vec<Msg>)
                     &format!(
                         "{ORCHESTRA_IDENTITY}\n\nSituation : l'utilisateur demande un travail (« {need} ») mais aucun agent disponible ne sait le faire \
 (ni installé, ni sur l'Agent Market, ni dans le registre local). Tu ne dois PAS faire le travail toi-même. \
-Explique-le en 3 à 5 phrases, sans t'excuser à répétition : dis quel type d'agent il faudrait, et qu'il pourra être ajouté à l'Agent Market ou au registre local (Documents/Orchestra/agents/registre-local.json). \
+Explique-le en 3 à 5 phrases, sans t'excuser à répétition : dis quel type d'agent il faudrait, et qu'il pourra être ajouté à l'Agent Market ou au registre local (dossier Orchestra › agents/registre-local.json). \
 Si une partie de la demande relève de la simple discussion, tu peux y répondre."
                     ),
                     &history,
@@ -167,7 +167,7 @@ Si une partie de la demande relève de la simple discussion, tu peux y répondre
                             &brain,
                             &format!(
                                 "{ORCHESTRA_IDENTITY}\n\nTu as délégué la mission suivante à l'agent « {} » : {}\n\nRésultat rendu par l'agent :\n\"\"\"\n{}\n\"\"\"\n\n\
-Restitue ce résultat à l'utilisateur de façon claire : commence par une phrase qui dit ce que l'agent a fait, puis donne le résultat utile (texte produit, fichiers créés dans Documents/Orchestra/espace-de-travail, etc.). \
+Restitue ce résultat à l'utilisateur de façon claire : commence par une phrase qui dit ce que l'agent a fait, puis donne le résultat utile (texte produit, fichiers créés dans l'espace de travail d'Orchestra, etc.). \
 N'invente rien qui ne soit pas dans le résultat. Si l'agent a échoué ou n'a pas tout fait, dis-le simplement.",
                                 m.name, mission, outcome
                             ),

@@ -9,6 +9,7 @@ export type Inspect = { type: "agent"; id: string } | { type: "core" } | null;
 
 let seq = 0;
 const uid = () => `${Date.now().toString(36)}-${(seq++).toString(36)}`;
+let bootPromise: Promise<void> | null = null;
 
 /** Énergie partagée avec le canvas (lue à chaque frame, hors React). */
 export const live = {
@@ -73,12 +74,18 @@ export const useStore = create<State>((set, get) => ({
   setView: (view) => set({ view }),
   setInspect: (inspect) => set({ inspect }),
 
-  boot: async () => {
-    const [config, paths] = await Promise.all([api.getConfig(), api.getPaths()]);
-    set({ config, paths });
-    await onEvent((e) => get().handle(e));
-    await Promise.all([get().refreshBrain(), get().refreshAgents()]);
-    set({ bootDone: true });
+  boot: () => {
+    // idempotent : React StrictMode monte deux fois, on ne s'abonne qu'une fois aux événements
+    if (!bootPromise) {
+      bootPromise = (async () => {
+        const [config, paths] = await Promise.all([api.getConfig(), api.getPaths()]);
+        set({ config, paths });
+        await onEvent((e) => get().handle(e));
+        await Promise.all([get().refreshBrain(), get().refreshAgents()]);
+        set({ bootDone: true });
+      })();
+    }
+    return bootPromise;
   },
 
   refreshBrain: async () => {

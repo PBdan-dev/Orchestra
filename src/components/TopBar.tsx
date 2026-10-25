@@ -39,7 +39,7 @@ export function TopBar() {
           <span>{brain ? `${brain.provider} · ${brain.model || "—"}` : "…"}</span>
           <span className="dot" />
         </button>
-        <button className="icon-btn" onClick={() => api.openFolder("root")} title="Ouvrir le dossier Documents/Orchestra"><I.folder size={16} /></button>
+        <button className="icon-btn" onClick={() => api.openFolder("root")} title="Ouvrir le dossier de données d'Orchestra"><I.folder size={16} /></button>
         <button className={`icon-btn ${view === "settings" ? "active" : ""}`} onClick={() => setView("settings")} title="Paramètres"><I.gear size={16} /></button>
       </div>
     </header>

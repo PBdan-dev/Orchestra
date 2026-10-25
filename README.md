@@ -17,10 +17,13 @@ Exécutable direct : `src-tauri/target/release/orchestra.exe`
 
 Prérequis : [Ollama](https://ollama.com) lancé avec au moins un modèle (`ollama pull qwen3.5:9b`), ou un autre cerveau configuré dans Paramètres.
 
-## Données (en clair, dans `Documents\Orchestra`)
+## Données (en clair, dans `C:\Users\<toi>\Orchestra`)
+
+Le dossier peut être changé avec la variable d'environnement `ORCHESTRA_HOME`. Il n'est pas dans `Documents`
+car l'« Accès contrôlé aux dossiers » de Windows Defender y bloque les applications inconnues.
 
 ```
-Documents/Orchestra/
+Orchestra/
   config.json                 cerveau, clés, URL de l'Agent Market
   memoire/
     orchestra.md              mémoire principale (faits datés, par section)
