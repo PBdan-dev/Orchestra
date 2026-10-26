@@ -23,6 +23,9 @@ const redacteur: Manifest = {
 };
 const fichiers: Manifest = { ...redacteur, id: "agent-fichiers", name: "Agent Fichiers", description: "Organise et lit des fichiers.", capabilities: ["fichiers"], tools: ["now", "list_dir", "read_file", "write_file"], color: "#4fd1c5", icon: "folder" };
 
+let mockLoaded = false;
+let mockInstalled: Manifest[] = [];
+
 let memory = `# Mémoire d'Orchestra\n\n> Fichier lisible.\n\n## Utilisateur\n- (2026-10-25) Orchestra a été installé pour PB.\n\n## Préférences\n- (2026-10-25) PB aime les interfaces épurées et animées.\n\n## Projets\n\n## Connaissances\n\n## Agents de confiance\n`;
 
 async function stream(run_id: string, text: string, kind: "thought" | "token" = "thought", delay = 18) {
@@ -69,9 +72,12 @@ async function scenario(run_id: string, text: string) {
 export const mockApi = {
   getConfig: async () => config,
   saveConfig: async (c: Config) => { Object.assign(config, c); },
-  detectBrain: async (): Promise<BrainInfo> => ({ provider: "ollama", model: "qwen3.5:9b", online: true, models: ["qwen3.5:9b", "qwen3.6:27b"], detail: "modèle actif détecté (démo navigateur)" }),
+  detectBrain: async (): Promise<BrainInfo> => ({ provider: "ollama", model: "qwen3.5:9b", online: true, models: ["qwen3.5:9b", "qwen3.6:27b"], detail: mockLoaded ? "modèle chargé, prêt" : "modèle non chargé", loaded: mockLoaded, state: mockLoaded ? "ready" : "not_loaded" }),
+  loadModel: async (): Promise<BrainInfo> => { await sleep(2500); mockLoaded = true; return mockApi.detectBrain(); },
+  installAgent: async (id: string) => { const m = [redacteur, fichiers].find((a) => a.id === id)!; if (!mockInstalled.find((a) => a.id === id)) mockInstalled.push(m); return m; },
+  uninstallAgent: async (id: string) => { mockInstalled = mockInstalled.filter((a) => a.id !== id); },
   sendMessage: async (text: string) => { const id = Math.random().toString(36).slice(2, 8); setTimeout(() => scenario(id, text), 300); return id; },
-  listAgents: async () => ({ installed: [] as Manifest[], registry: [redacteur, fichiers] }),
+  listAgents: async () => ({ installed: mockInstalled.slice(), registry: [redacteur, fichiers] }),
   marketPreview: async () => { throw new Error("démo : pas de Market"); },
   memoryTree: async (): Promise<MemoryFile[]> => [{ name: "orchestra.md", rel: "memoire/orchestra.md", kind: "principal", size: memory.length, modified: "26/10/2026 00:12" }],
   readTextFile: async (rel: string) => (rel.endsWith("orchestra.md") ? memory : "# Mémoire de l'agent\n\n## Missions\n- (2026-10-26) Mission : …"),

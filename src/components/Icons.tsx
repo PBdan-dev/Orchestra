@@ -61,6 +61,36 @@ export const I = {
   trash: ({ size, className, style }: P) => (
     <svg {...base(size)} className={className} style={style}><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>
   ),
+  mail: ({ size, className, style }: P) => (
+    <svg {...base(size)} className={className} style={style}><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+  ),
+  calendar: ({ size, className, style }: P) => (
+    <svg {...base(size)} className={className} style={style}><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+  ),
+  globe: ({ size, className, style }: P) => (
+    <svg {...base(size)} className={className} style={style}><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+  ),
+  plus: ({ size, className, style }: P) => (
+    <svg {...base(size)} className={className} style={style}><path d="M12 5v14M5 12h14"/></svg>
+  ),
+  minus: ({ size, className, style }: P) => (
+    <svg {...base(size)} className={className} style={style}><path d="M5 12h14"/></svg>
+  ),
+  unplug: ({ size, className, style }: P) => (
+    <svg {...base(size)} className={className} style={style}><path d="M9 3v4M15 3v4M7 7h10v3a5 5 0 0 1-5 5 5 5 0 0 1-5-5V7zM12 15v6M4 4l16 16"/></svg>
+  ),
+  play: ({ size, className, style }: P) => (
+    <svg {...base(size)} className={className} style={style}><path d="M7 5v14l12-7z"/></svg>
+  ),
+  power: ({ size, className, style }: P) => (
+    <svg {...base(size)} className={className} style={style}><path d="M12 3v8M6.3 7a8 8 0 1 0 11.4 0"/></svg>
+  ),
+  refresh: ({ size, className, style }: P) => (
+    <svg {...base(size)} className={className} style={style}><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
+  ),
+  grid: ({ size, className, style }: P) => (
+    <svg {...base(size)} className={className} style={style}><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg>
+  ),
   user: ({ size, className, style }: P) => (
     <svg {...base(size)} className={className} style={style}><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
   ),

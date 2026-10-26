@@ -50,6 +50,42 @@ async fn detect_brain(state: State<'_, AppState>) -> CmdResult<BrainInfo> {
 }
 
 #[tauri::command]
+async fn load_model(state: State<'_, AppState>) -> CmdResult<BrainInfo> {
+    let cfg = state.config.lock().unwrap().clone();
+    let mut b = Brain::new(cfg, state.http.clone());
+    let info = b.detect().await;
+    if b.cfg.provider != "ollama" || info.loaded {
+        return Ok(info);
+    }
+    if !info.online {
+        return Err(info.detail);
+    }
+    b.load_ollama().await.map_err(err)?;
+    Ok(b.detect().await)
+}
+
+#[tauri::command]
+fn install_agent(state: State<AppState>, id: String) -> CmdResult<Manifest> {
+    let m = agents::local_registry(&state.paths)
+        .into_iter()
+        .find(|m| m.id == id)
+        .ok_or_else(|| format!("agent {id} absent du registre"))?;
+    agents::install(&state.paths, &m).map_err(err)?;
+    memory::ensure_agent_memory(&state.paths, &m).map_err(err)?;
+    Ok(m)
+}
+
+/// Désinstalle un agent : son manifeste est retiré, sa mémoire est conservée.
+#[tauri::command]
+fn uninstall_agent(state: State<AppState>, id: String) -> CmdResult<()> {
+    let p = state.paths.installed_manifest(&id);
+    if p.exists() {
+        std::fs::remove_file(p).map_err(err)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn send_message(app: AppHandle, state: State<'_, AppState>, text: String, history: Vec<Msg>) -> CmdResult<String> {
     if state.busy.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return Err("Orchestra est déjà en train de traiter une demande.".into());
@@ -172,6 +208,9 @@ pub fn run() {
             get_config,
             save_config,
             detect_brain,
+            load_model,
+            install_agent,
+            uninstall_agent,
             send_message,
             list_agents,
             market_preview,

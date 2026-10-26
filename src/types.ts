@@ -1,5 +1,6 @@
 export type Phase =
   | "idle"
+  | "loading"
   | "listening"
   | "thinking"
   | "recalling"
@@ -36,7 +37,7 @@ export type OrchestraEvent =
   | { type: "phase"; run_id: string; phase: Phase; label: string }
   | { type: "thought"; run_id: string; text: string }
   | { type: "recall"; run_id: string; items: Recalled[] }
-  | { type: "agent_attached"; run_id: string; agent: Manifest; source: string; reason: string }
+  | { type: "agent_attached"; run_id: string; agent: Manifest; source: string; reason: string; parent?: string }
   | { type: "agent_status"; run_id: string; agent_id: string; status: "running" | "done" | "error"; detail: string }
   | { type: "tool_call"; run_id: string; agent_id: string; tool: string; input: unknown; output: string }
   | { type: "token"; run_id: string; text: string }
@@ -66,6 +67,8 @@ export interface BrainInfo {
   online: boolean;
   models: string[];
   detail: string;
+  loaded: boolean;
+  state: "offline" | "not_loaded" | "ready" | "no_model" | "no_key";
 }
 
 export interface ChatMessage {
@@ -73,6 +76,8 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   streaming?: boolean;
+  /** message issu d'une simulation : jamais renvoyé au modèle */
+  sim?: boolean;
   intent?: string;
   agent?: string;
   at: number;
@@ -88,13 +93,15 @@ export interface AgentNode {
   attachedAt: number;
   runId: string;
   lastTool?: { tool: string; at: number };
+  /** id de l'agent parent quand c'est un sous-agent */
+  parent?: string;
 }
 
 export type Entry =
   | { kind: "phase"; id: string; runId: string; at: number; phase: Phase; label: string }
   | { kind: "thought"; id: string; runId: string; at: number; text: string }
   | { kind: "recall"; id: string; runId: string; at: number; items: Recalled[] }
-  | { kind: "agent"; id: string; runId: string; at: number; agent: Manifest; source: string; reason: string }
+  | { kind: "agent"; id: string; runId: string; at: number; agent: Manifest; source: string; reason: string; parent?: string }
   | { kind: "agent_status"; id: string; runId: string; at: number; agentId: string; status: string; detail: string }
   | { kind: "tool"; id: string; runId: string; at: number; agentId: string; tool: string; input: unknown; output: string }
   | { kind: "memorized"; id: string; runId: string; at: number; file: string; section: string; line: string }
@@ -120,6 +127,7 @@ export interface PathsInfo {
 
 export const PHASE_LABEL: Record<Phase, string> = {
   idle: "En veille",
+  loading: "Je charge le modèle",
   listening: "J'écoute",
   thinking: "Je réfléchis",
   recalling: "Je me souviens",
@@ -132,7 +140,8 @@ export const PHASE_LABEL: Record<Phase, string> = {
 };
 
 export const PHASE_COLOR: Record<Phase, string> = {
-  idle: "#7c8cf8",
+  idle: "#7dd3fc",
+  loading: "#38bdf8",
   listening: "#5eead4",
   thinking: "#a78bfa",
   recalling: "#60a5fa",

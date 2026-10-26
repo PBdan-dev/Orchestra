@@ -90,7 +90,8 @@ function EntryView({ e, streaming, agentName, agentIcon }: { e: Entry; streaming
     case "agent":
       return (
         <div className="card agent-card" style={{ ["--c" as any]: e.agent.color || "#818cf8" }}>
-          <div className="card-head"><I.plug size={13} /> Agent branché : <b>{e.agent.name}</b></div>
+          <div className="card-head"><I.plug size={13} /> {e.parent ? "Sous-agent branché" : "Agent branché"} : <b>{e.agent.name}</b></div>
+          {e.parent && <div className="small muted">sur {agentName(e.parent)}</div>}
           <div className="small muted">depuis {e.source} · {e.reason}</div>
           <div className="small">Outils qu'il se donne : {e.agent.tools.length ? e.agent.tools.join(", ") : "aucun"}</div>
         </div>

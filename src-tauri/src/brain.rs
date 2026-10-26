@@ -35,6 +35,10 @@ pub struct BrainInfo {
     pub online: bool,
     pub models: Vec<String>,
     pub detail: String,
+    /// Le modèle est-il chargé en mémoire (Ollama) ? Toujours vrai pour les autres fournisseurs.
+    pub loaded: bool,
+    /// offline | not_loaded | ready | no_model | no_key
+    pub state: String,
 }
 
 pub struct Brain {
@@ -57,8 +61,13 @@ impl Brain {
         let mut info = BrainInfo { provider: self.cfg.provider.clone(), ..Default::default() };
         match self.cfg.provider.as_str() {
             "ollama" => {
-                let base = self.cfg.ollama_url.trim_end_matches('/');
-                let tags = self.get_json(&format!("{base}/api/tags")).await;
+                let base = self.cfg.ollama_url.trim_end_matches('/').to_string();
+                // deux essais : Ollama peut mettre un instant à répondre au démarrage
+                let mut tags = self.get_json(&format!("{base}/api/tags")).await;
+                if tags.is_err() {
+                    tokio::time::sleep(Duration::from_millis(700)).await;
+                    tags = self.get_json(&format!("{base}/api/tags")).await;
+                }
                 match tags {
                     Ok(v) => {
                         info.online = true;
@@ -72,18 +81,27 @@ impl Brain {
                         if self.cfg.model.trim().is_empty() {
                             if let Some(r) = running.first() {
                                 self.model = r.clone();
-                                info.detail = "modèle actif détecté".into();
                             } else if let Some(first) = pick_default_ollama(&info.models) {
                                 self.model = first;
-                                info.detail = "aucun modèle chargé : premier modèle installé".into();
-                            } else {
-                                info.detail = "Ollama tourne mais aucun modèle n'est installé (ollama pull …)".into();
                             }
+                        }
+                        let same = |a: &str, b: &str| a == b || a.trim_end_matches(":latest") == b.trim_end_matches(":latest");
+                        info.loaded = !self.model.is_empty() && running.iter().any(|r| same(r, &self.model));
+                        if self.model.is_empty() {
+                            info.state = "no_model".into();
+                            info.detail = "Ollama tourne mais aucun modèle n'est installé (ollama pull …)".into();
+                        } else if info.loaded {
+                            info.state = "ready".into();
+                            info.detail = "modèle chargé, prêt".into();
                         } else {
-                            info.detail = if running.iter().any(|r| r == &self.cfg.model) { "modèle choisi, déjà chargé".into() } else { "modèle choisi".into() };
+                            info.state = "not_loaded".into();
+                            info.detail = "modèle non chargé : il le sera à la première demande, ou avec le bouton Charger".into();
                         }
                     }
-                    Err(e) => info.detail = format!("Ollama injoignable sur {base} : {e}"),
+                    Err(e) => {
+                        info.state = "offline".into();
+                        info.detail = format!("Ollama injoignable sur {base} ({})", short_err(&e));
+                    }
                 }
             }
             "lmstudio" => {
@@ -125,11 +143,42 @@ impl Brain {
             other => info.detail = format!("fournisseur inconnu : {other}"),
         }
         info.model = self.model.clone();
+        if info.state.is_empty() {
+            info.loaded = info.online;
+            info.state = if info.online {
+                if self.model.is_empty() { "no_model".into() } else { "ready".into() }
+            } else if ["claude", "gemini", "openrouter"].contains(&self.cfg.provider.as_str()) {
+                "no_key".into()
+            } else {
+                "offline".into()
+            };
+        }
         info
     }
 
+    /// Charge le modèle dans Ollama (requête vide + keep_alive) et le garde en mémoire 30 min.
+    pub async fn load_ollama(&self) -> anyhow::Result<()> {
+        if self.model.is_empty() {
+            anyhow::bail!("aucun modèle à charger");
+        }
+        let base = self.cfg.ollama_url.trim_end_matches('/');
+        let r = self
+            .http
+            .post(format!("{base}/api/generate"))
+            .timeout(Duration::from_secs(900))
+            .json(&json!({ "model": self.model, "prompt": "", "keep_alive": "30m", "stream": false }))
+            .send()
+            .await?;
+        if !r.status().is_success() {
+            let s = r.status();
+            let body = r.text().await.unwrap_or_default();
+            anyhow::bail!("Ollama a répondu {s} : {}", body.chars().take(200).collect::<String>());
+        }
+        Ok(())
+    }
+
     async fn get_json(&self, url: &str) -> anyhow::Result<Value> {
-        let r = self.http.get(url).timeout(Duration::from_secs(4)).send().await?;
+        let r = self.http.get(url).timeout(Duration::from_secs(8)).send().await?;
         Ok(r.json::<Value>().await?)
     }
 
@@ -185,7 +234,7 @@ impl Brain {
 
     async fn stream_ollama<F: FnMut(Chunk)>(&self, msgs: &[Msg], on: &mut F) -> anyhow::Result<()> {
         let base = self.cfg.ollama_url.trim_end_matches('/');
-        let body = json!({ "model": self.model, "messages": msgs, "stream": true, "options": { "num_ctx": 16384 } });
+        let body = json!({ "model": self.model, "messages": msgs, "stream": true, "keep_alive": "30m", "options": { "num_ctx": 16384 } });
         let resp = self.http.post(format!("{base}/api/chat")).timeout(Duration::from_secs(600)).json(&body).send().await?;
         check(resp.status(), "Ollama", &resp).await?;
         let mut err: Option<String> = None;
@@ -283,6 +332,17 @@ impl Brain {
             }
         })
         .await
+    }
+}
+
+fn short_err(e: &anyhow::Error) -> String {
+    let s = e.to_string();
+    if s.contains("timed out") || s.contains("timeout") {
+        "délai dépassé".into()
+    } else if s.contains("connect") {
+        "connexion refusée".into()
+    } else {
+        s.chars().take(120).collect()
     }
 }
 

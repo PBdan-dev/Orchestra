@@ -55,6 +55,11 @@ async fn run_inner(app: &AppHandle, run_id: &str, text: &str, history: Vec<Msg>)
     if !info.online || brain.model.is_empty() {
         anyhow::bail!("Cerveau indisponible : {}", info.detail);
     }
+    if cfg.provider == "ollama" && !info.loaded {
+        phase(app, run_id, "loading", &format!("Je charge {}", brain.model));
+        thought(app, run_id, format!("⏻ {} n'est pas en mémoire : je le charge dans Ollama…\n", brain.model));
+        brain.load_ollama().await?;
+    }
     thought(app, run_id, format!("⚡ Cerveau : {}\n", brain.label()));
 
     // 1. Rappel de mémoire

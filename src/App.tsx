@@ -26,6 +26,9 @@ export default function App() {
 
   return (
     <div className="app">
+      <div className="aurora" aria-hidden>
+        <span className="a1" /><span className="a2" /><span className="a3" />
+      </div>
       <AnimatePresence>
         {!ready && (
           <motion.div className="splash" exit={{ opacity: 0, scale: 1.04 }} transition={{ duration: 0.6 }}>
@@ -43,7 +46,10 @@ export default function App() {
           {view === "stage" && (
             <motion.div key="stage" className="layout-stage" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
               <Conscience />
-              <Stage />
+              <div className="center-col">
+                <Stage />
+                <Composer />
+              </div>
               <Conversation />
             </motion.div>
           )}
@@ -52,7 +58,6 @@ export default function App() {
           {view === "settings" && <motion.div key="settings" className="layout-view" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}><SettingsView /></motion.div>}
         </AnimatePresence>
       </main>
-      {view === "stage" && <Composer />}
     </div>
   );
 }

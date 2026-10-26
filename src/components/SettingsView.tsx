@@ -3,6 +3,7 @@ import { useStore } from "../store";
 import { api } from "../tauri";
 import type { Config, Manifest } from "../types";
 import { I } from "./Icons";
+import { brainStatus } from "../brainStatus";
 
 const PROVIDERS: { id: Config["provider"]; name: string; sub: string; local: boolean }[] = [
   { id: "ollama", name: "Ollama", sub: "local · défaut", local: true },
@@ -19,6 +20,10 @@ export function SettingsView() {
   const saveConfig = useStore((s) => s.saveConfig);
   const registry = useStore((s) => s.registry);
   const installed = useStore((s) => s.installed);
+  const brainLoading = useStore((s) => s.brainLoading);
+  const loadModel = useStore((s) => s.loadModel);
+  const refreshBrain = useStore((s) => s.refreshBrain);
+  const status = brainStatus(brain, brainLoading);
   const [form, setForm] = useState<Config | null>(config);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -80,10 +85,13 @@ export function SettingsView() {
             {form.provider === "openrouter" && <label><span>Clé API OpenRouter</span><input type="password" value={form.openrouter_api_key} onChange={(e) => set("openrouter_api_key", e.target.value)} placeholder="sk-or-…" /></label>}
           </div>
 
-          <div className={`detect ${brain?.online ? "ok" : "warn"}`}>
-            {brain?.online ? <I.check size={14} /> : <I.alert size={14} />}
-            <span>{brain ? `${brain.provider} · ${brain.model || "aucun modèle"} — ${brain.detail}` : "…"}</span>
+          <div className="detect foot-status" style={{ ["--c" as any]: status.color }}>
+            <span className="pill-dot" />
+            <span>{status.label}{brain?.model ? ` · ${brain.model}` : ""}</span>
+            <span className="muted small">— {brain?.detail}</span>
             {brain && brain.models.length > 0 && <span className="muted small">· {brain.models.length} modèle(s) disponibles</span>}
+            {status.action === "load" && <button className="glass-btn sm" onClick={loadModel}><I.power size={11} /> Charger</button>}
+            {status.action === "retry" && <button className="glass-btn sm" onClick={refreshBrain}><I.refresh size={11} /> Réessayer</button>}
           </div>
         </section>
 

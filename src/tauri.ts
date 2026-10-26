@@ -10,6 +10,9 @@ const real = {
   getConfig: () => invoke<Config>("get_config"),
   saveConfig: (config: Config) => invoke<void>("save_config", { config }),
   detectBrain: () => invoke<BrainInfo>("detect_brain"),
+  loadModel: () => invoke<BrainInfo>("load_model"),
+  installAgent: (id: string) => invoke<Manifest>("install_agent", { id }),
+  uninstallAgent: (id: string) => invoke<void>("uninstall_agent", { id }),
   sendMessage: (text: string, history: { role: string; content: string }[]) =>
     invoke<string>("send_message", { text, history }),
   listAgents: () => invoke<{ installed: Manifest[]; registry: Manifest[] }>("list_agents"),

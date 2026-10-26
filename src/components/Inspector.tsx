@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { useStore } from "../store";
 import { api } from "../tauri";
 import { PHASE_COLOR, PHASE_LABEL } from "../types";
+import { brainStatus, providerName } from "../brainStatus";
 import { AgentGlyph, I } from "./Icons";
 
 /** Tiroir de détail : un agent (prompt, outils, mémoire) ou Orchestra lui-même. */
@@ -19,6 +20,9 @@ export function Inspector() {
 
 function AgentDetail({ id }: { id: string }) {
   const node = useStore((s) => s.agents[id]);
+  const all = useStore((s) => s.agents);
+  const parentName = node?.parent ? all[node.parent]?.manifest.name : undefined;
+  const children = Object.values(all).filter((a) => a.parent === id);
   const entriesCount = useStore((s) => s.entries.length);
   const setView = useStore((s) => s.setView);
   const setMemoryFocus = useStore((s) => s.setMemoryFocus);
@@ -49,6 +53,8 @@ function AgentDetail({ id }: { id: string }) {
         <div className={`status-pill ${node.status}`}>{node.status === "running" ? "en cours" : node.status === "done" ? "terminé" : node.status === "error" ? "erreur" : "branché"}</div>
         {node.detail && <p className="small">{node.detail}</p>}
         <p className="small muted">Source : {node.source} · {node.reason}</p>
+        {node.parent && <p className="small">Sous-agent de <b>{parentName ?? node.parent}</b></p>}
+        {children.length > 0 && <p className="small">A délégué à : {children.map((c) => c.manifest.name).join(", ")}</p>}
       </Section>
 
       <Section title="Cerveau">
@@ -90,6 +96,9 @@ function CoreDetail() {
   const setView = useStore((s) => s.setView);
   const [facts, setFacts] = useState<number | null>(null);
   const entriesCount = useStore((s) => s.entries.length);
+  const brainLoading = useStore((s) => s.brainLoading);
+  const loadModel = useStore((s) => s.loadModel);
+  const status = brainStatus(brain, brainLoading);
 
   useEffect(() => {
     api.readTextFile("memoire/orchestra.md").then((t) => setFacts(t.split("\n").filter((l) => l.startsWith("- ")).length)).catch(() => setFacts(null));
@@ -107,8 +116,10 @@ function CoreDetail() {
       <p className="insp-desc">Je ne fais pas les tâches moi-même : je discute, je réponds, et je délègue le travail à des agents que je supervise. Tout ce que je fais est visible dans la Conscience, à gauche.</p>
 
       <Section title="Cerveau greffé" action={<button className="link-btn" onClick={() => setView("settings")}>changer</button>}>
-        <p className="small"><b>{brain?.provider}</b> · {brain?.model || "—"}</p>
-        <p className={`small ${brain?.online ? "ok" : "warn"}`}>{brain?.online ? "● connecté" : "○ hors ligne"} — {brain?.detail}</p>
+        <p className="small"><b>{providerName(brain?.provider)}</b> · {brain?.model || "—"}</p>
+        <p className="small foot-status" style={{ ["--c" as any]: status.color }}><span className="pill-dot" /> {status.label}</p>
+        <p className="small muted">{brain?.detail}</p>
+        {status.action === "load" && <button className="glass-btn sm" onClick={loadModel}><I.power size={11} /> Charger le modèle</button>}
       </Section>
 
       <Section title="Mémoire">

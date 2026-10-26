@@ -49,7 +49,7 @@ export function Core({ phase, cx, cy, R }: { phase: Phase; cx: number; cy: numbe
       const typing = Date.now() - live.lastKey < 400 ? 1 : 0;
 
       const base: Record<Phase, number> = {
-        idle: 2.2, listening: 4 + typing * 5, thinking: 9, recalling: 6, searching_agent: 7,
+        idle: 2.2, loading: 7, listening: 4 + typing * 5, thinking: 9, recalling: 6, searching_agent: 7,
         delegating: 8, working: 10, speaking: 5 + Math.min(8, smoothTokens * 0.6), memorizing: 5, error: 6,
       };
       const targetAmp = base[p] * (0.65 + live.energy * 0.9);
@@ -75,7 +75,7 @@ export function Core({ phase, cx, cy, R }: { phase: Phase; cx: number; cy: numbe
       ctx.fillRect(0, 0, w, h);
 
       // ondes de rappel (recalling) : cercles qui convergent ; mémorisation : qui se contractent et s'éteignent
-      if (p === "recalling" || p === "memorizing" || p === "searching_agent") {
+      if (p === "recalling" || p === "memorizing" || p === "searching_agent" || p === "loading") {
         for (let k = 0; k < 3; k++) {
           const ph = ((t * 0.55 + k / 3) % 1);
           const rr = p === "searching_agent" ? R + 20 + ph * 120 : R + 20 + (1 - ph) * 120;
@@ -112,15 +112,32 @@ export function Core({ phase, cx, cy, R }: { phase: Phase; cx: number; cy: numbe
       }
 
       // disque central
+      // disque central en verre : fond sombre, reflet spéculaire, liseré coloré
       const disc = ctx.createRadialGradient(cx - R * 0.3, cy - R * 0.35, R * 0.1, cx, cy, R);
-      disc.addColorStop(0, "rgba(28,32,54,0.98)");
-      disc.addColorStop(1, "rgba(9,10,18,0.98)");
+      disc.addColorStop(0, "rgba(26,38,64,0.96)");
+      disc.addColorStop(0.7, "rgba(10,15,28,0.97)");
+      disc.addColorStop(1, "rgba(6,9,18,0.98)");
       ctx.beginPath();
       ctx.arc(cx, cy, R, 0, Math.PI * 2);
       ctx.fillStyle = disc;
       ctx.fill();
-      ctx.strokeStyle = `rgba(${c},0.35)`;
-      ctx.lineWidth = 1;
+      const spec = ctx.createRadialGradient(cx - R * 0.45, cy - R * 0.55, 0, cx - R * 0.45, cy - R * 0.55, R * 0.9);
+      spec.addColorStop(0, "rgba(255,255,255,0.10)");
+      spec.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = spec;
+      ctx.fill();
+      ctx.strokeStyle = `rgba(${c},0.45)`;
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      // arc de balayage technologique
+      ctx.beginPath();
+      ctx.arc(cx, cy, R - 6, rot * 4, rot * 4 + Math.PI * 0.35);
+      ctx.strokeStyle = `rgba(${c},0.55)`;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(cx, cy, R - 6, rot * 4 + Math.PI, rot * 4 + Math.PI * 1.12);
+      ctx.strokeStyle = `rgba(${c},0.3)`;
       ctx.stroke();
 
       // bandes sonores circulaires
