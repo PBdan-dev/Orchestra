@@ -172,6 +172,27 @@ class UIBridge(BaseObserver):
                 await self.send(r)
 
 
+class CompteurMicro(FrameProcessor):
+    """Diagnostic : toutes les 10 s, combien de morceaux de micro sont arrivés, et combien avec du son."""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self._n = self._voiced = 0
+        self._t = time.monotonic()
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, InputAudioRawFrame):
+            self._n += 1
+            if frame.audio and np.abs(np.frombuffer(frame.audio, dtype=np.int16)).max() > 500:
+                self._voiced += 1
+            if time.monotonic() - self._t > 10:
+                logger.debug(f"Micro reçu : {self._n} morceaux en 10 s, dont {self._voiced} avec du son")
+                self._n = self._voiced = 0
+                self._t = time.monotonic()
+        await self.push_frame(frame, direction)
+
+
 class ClientCommands(FrameProcessor):
     """Commandes envoyées par l'interface : contexte du chat, lecture d'un texte, arrêt."""
 
@@ -423,6 +444,7 @@ async def dictee(s: C.VoiceSettings, stt, bridge: UIBridge):
     )
     pipeline = Pipeline([
         transport.input(),
+        CompteurMicro(),
         VADProcessor(vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=0.6))),
         stt,
         transport.output(),

@@ -19,9 +19,19 @@ export function ModeSwitch() {
   const [thumb, setThumb] = useState({ left: 3, width: 58 });
 
   const mode = voiceOn ? "voix" : "chat";
+  // position du surlignage : mesurée à chaque changement de taille (retour sur la scène, police chargée,
+  // taille du cœur), pas seulement au changement de mode — sinon elle peut être prise quand la scène est cachée
   useLayoutEffect(() => {
-    const el = voiceOn ? vox.current : chat.current;
-    if (el) setThumb({ left: el.offsetLeft, width: el.offsetWidth });
+    const measure = () => {
+      const el = voiceOn ? vox.current : chat.current;
+      if (el && el.offsetWidth > 0) setThumb({ left: el.offsetLeft, width: el.offsetWidth });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (chat.current) ro.observe(chat.current);
+    if (vox.current) ro.observe(vox.current);
+    document.fonts?.ready.then(measure).catch(() => {});
+    return () => ro.disconnect();
   }, [voiceOn]);
 
   const choose = async (m: "chat" | "voix", e: React.MouseEvent) => {

@@ -12,6 +12,7 @@ let seq = 0;
 export const uid = () => `${Date.now().toString(36)}-${(seq++).toString(36)}`;
 let bootPromise: Promise<void> | null = null;
 let voiceDraft: string | null = null;
+let dictBusy = false;
 /** vrai quand le run en cours a été lancé par la voix : son résultat sera lu à voix haute */
 let voiceRun = false;
 export let voice: VoiceClient;
@@ -384,6 +385,11 @@ export const useStore = create<State>((set, get) => ({
   stopSpeaking: () => voice?.stopSpeaking(),
 
   toggleDictation: async () => {
+    if (dictBusy) return; // pendant le chargement, les clics sont ignorés
+    dictBusy = true;
+    try { await dictationToggle(); } finally { dictBusy = false; }
+
+    async function dictationToggle() {
     const s = get();
     if (s.dictating) {
       voice.disconnect();
@@ -404,6 +410,7 @@ export const useStore = create<State>((set, get) => ({
       await voice.connect(st.port);
     } catch (e) {
       set({ voiceError: String(e).replace(/^Error: /, ""), dictating: false });
+    }
     }
   },
 

@@ -92,7 +92,10 @@ export class VoiceClient {
     const ws = new WebSocket(`ws://127.0.0.1:${port}`);
     ws.binaryType = "arraybuffer";
     this.ws = ws;
-    ws.onopen = () => { if (this.ws === ws) this.onEvent({ type: "conn", state: "on" }); };
+    ws.onopen = () => {
+      if (this.ws !== ws) { ws.close(); return; }
+      this.onEvent({ type: "conn", state: "on" });
+    };
     ws.onclose = () => {
       if (this.ws !== ws) return; // une ancienne connexion : on l'ignore
       this.ws = null;
@@ -108,6 +111,7 @@ export class VoiceClient {
         let e: VoiceEvent;
         try { e = JSON.parse(m.data); } catch { return; }
         if (e.type === "interrupt") this.flushPlayback();
+        if (e.type === "ready") this.onEvent({ type: "conn", state: "on" });
         this.onEvent(e);
       } else {
         this.play(m.data as ArrayBuffer);
@@ -135,7 +139,9 @@ export class VoiceClient {
       await this.ctx.audioWorklet.addModule(url);
       this.loop();
     }
-    if (this.ctx.state === "suspended") await this.ctx.resume();
+    if (this.ctx.state === "suspended") {
+      await Promise.race([this.ctx.resume(), new Promise((r) => setTimeout(r, 1500))]);
+    }
   }
 
   /** Ouvre le micro (une seule fois ; ensuite `gate` décide si le son part). */
