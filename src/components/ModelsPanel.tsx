@@ -6,7 +6,19 @@ import { I } from "./Icons";
 /** Voix préréglées du modèle Qwen3-TTS CustomVoice. */
 const SPEAKERS = ["Ryan", "Aiden", "Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ono_Anna", "Sohee"];
 /** Voix préréglées de Voxtral TTS (Mistral). */
-const VOXTRAL_VOICES = ["fr_female", "fr_male", "neutral_female", "neutral_male", "casual_female", "casual_male", "cheerful_female"];
+/** Les 20 voix préréglées de Voxtral TTS (Mistral), françaises d'abord. */
+const VOXTRAL_VOICES: [string, string][] = [
+  ["fr_female", "Française · femme"], ["fr_male", "Française · homme"],
+  ["neutral_female", "Anglaise neutre · femme"], ["neutral_male", "Anglaise neutre · homme"],
+  ["casual_female", "Anglaise détendue · femme"], ["casual_male", "Anglaise détendue · homme"],
+  ["cheerful_female", "Anglaise enjouée · femme"],
+  ["es_female", "Espagnole · femme"], ["es_male", "Espagnole · homme"],
+  ["de_female", "Allemande · femme"], ["de_male", "Allemande · homme"],
+  ["it_female", "Italienne · femme"], ["it_male", "Italienne · homme"],
+  ["pt_female", "Portugaise · femme"], ["pt_male", "Portugaise · homme"],
+  ["nl_female", "Néerlandaise · femme"], ["nl_male", "Néerlandaise · homme"],
+  ["ar_male", "Arabe · homme"], ["hi_female", "Hindi · femme"], ["hi_male", "Hindi · homme"],
+];
 
 /** Moteur d'un modèle de synthèse, et sa licence : seul Qwen3-TTS est utilisable commercialement. */
 export const ttsEngine = (d: string) => (d.includes("voxtral-tts") ? "voxtral" : d.includes("pocket-tts") ? "pocket" : "qwen3");
@@ -83,7 +95,7 @@ export function ModelsPanel() {
         <ModelRow id="voice" label="Voix" value={isClone ? `${pretty.ref(config.voice_reference)} (clonée)` : config.voice_speaker} open={open} setOpen={setOpen}
           current={currentVoice} onPick={pick("voice", setVoice)} empty=""
           options={
-            engine === "voxtral" ? VOXTRAL_VOICES.map((v) => ({ value: v, label: v, hint: "préréglée" })) :
+            engine === "voxtral" ? VOXTRAL_VOICES.map(([v, l]) => ({ value: v, label: l, hint: v })) :
             engine === "pocket" ? (models?.pocket_voices ?? []).map((v) => ({ value: v, label: v, hint: "référence libre" })) :
             [
               ...SPEAKERS.map((s) => ({ value: s, label: s, hint: "préréglée" })),
