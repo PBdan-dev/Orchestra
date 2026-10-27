@@ -30,6 +30,8 @@ if ($Etape -in @("tout", "python")) {
   # Qwen3-TTS accéléré par graphes CUDA et en flux (MIT) ; remplace le paquet officiel qwen-tts, trop lent
   & $Py -m pip uninstall -y qwen-tts
   & $Py -m pip install "faster-qwen3-tts==0.5.4"
+  # transformers 5.21 casse le chargement du tokenizer de Qwen3-TTS (upsample devenu une propriété)
+  & $Py -m pip install "transformers>=5.15.1,<5.21"
   # le module voix lui-même, en mode développement (le code reste dans le dépôt)
   & $Py -m pip install -e $Src
 }
