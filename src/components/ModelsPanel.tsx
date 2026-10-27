@@ -15,7 +15,7 @@ export const isPersonalOnly = (d: string) => d.startsWith("crisp:");
 const pretty = {
   stt: (f: string) => f.replace(/\.gguf$/, "").replace("Voxtral-Mini-4B-Realtime-2602", "Voxtral Mini 4B Realtime").replace(/-/g, " "),
   tts: (d: string) =>
-    d.includes("voxtral-tts") ? "Voxtral TTS (Mistral)" : d.includes("pocket-tts") ? "Pocket TTS français (Kyutai)" :
+    d.includes("voxtral-tts") ? `Voxtral TTS (Mistral)${d.includes("q4") ? " · léger" : d.includes("q8") ? " · Q8" : ""}` : d.includes("pocket-tts") ? "Pocket TTS français (Kyutai)" :
     d.replace("Qwen3-TTS-12Hz-", "Qwen3-TTS ").replace("-CustomVoice", " · voix préréglées").replace("-Base", " · voix clonées"),
   ref: (f: string) => f.replace(/\.(wav|mp3|flac|m4a)$/i, ""),
 };

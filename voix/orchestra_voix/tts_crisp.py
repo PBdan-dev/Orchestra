@@ -81,6 +81,8 @@ def open_session(model_path: Path, voice: str, language: str = "fr"):
 
 
 class CrispTTSService(TTSService):
+    """Voix CrispASR servie par un processus séparé (voir tts_worker : conflit de ggml.dll avec l'écoute)."""
+
     def __init__(self, *, model_path: Path, voice: str, on_latency=None, **kwargs):
         super().__init__(
             push_start_frame=True,
@@ -88,30 +90,58 @@ class CrispTTSService(TTSService):
             settings=TTSSettings(model=model_path.name, voice=voice, language=Language.FR),
             **kwargs,
         )
+        import subprocess
+        import sys
+
         t0 = time.perf_counter()
-        self._session, self._engine = open_session(model_path, voice)
-        self._rate = int(self._session.output_sample_rate() or 24000)
+        flags = 0x08000000 if sys.platform == "win32" else 0  # pas de fenêtre de console
+        self._proc = subprocess.Popen(
+            [sys.executable, "-X", "utf8", "-m", "orchestra_voix.tts_worker", str(model_path), voice],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=flags,
+        )
+        ready = self._proc.stdout.readline().decode("utf-8", "replace").split()
+        if not ready or ready[0] != "READY":
+            raise RuntimeError(f"la voix {model_path.name} n'a pas démarré")
+        self._rate = int(ready[1])
+        self._engine = ready[2] if len(ready) > 2 else model_path.stem
         self._lock = threading.Lock()
         self._resampler = create_stream_resampler()
         self._on_latency = on_latency
-        logger.info(f"{self._engine} chargé en {time.perf_counter() - t0:.1f} s ({model_path.name}, voix {voice})")
+        logger.info(f"{self._engine} chargé et préchauffé en {time.perf_counter() - t0:.1f} s ({model_path.name}, voix {voice}, processus séparé)")
 
     def can_generate_metrics(self) -> bool:
         return True
 
     def warmup(self):
-        t0 = time.perf_counter()
-        self._session.synthesize("Bonjour.")
-        logger.info(f"{self._engine} préchauffé en {time.perf_counter() - t0:.1f} s")
+        pass  # fait par le processus de synthèse au démarrage
 
     def set_speaker(self, voice: str):
-        with self._lock:
-            for fn in ("set_speaker_name", "set_voice"):
-                try:
-                    getattr(self._session, fn)(voice)
-                    return
-                except Exception:
-                    continue
+        self._next_voice = voice
+
+    def _request(self, text: str, emit):
+        """Envoie une demande et lit les morceaux jusqu'à la fin (toujours, pour rester synchronisé)."""
+        import json
+        import struct
+
+        req = {"text": text}
+        voice = getattr(self, "_next_voice", None)
+        if voice:
+            req["voice"] = voice
+            self._next_voice = None
+        self._proc.stdin.write((json.dumps(req, ensure_ascii=False) + "\n").encode("utf-8"))
+        self._proc.stdin.flush()
+        rd = self._proc.stdout.read
+        while True:
+            head = rd(4)
+            if len(head) < 4:
+                raise RuntimeError("processus de synthèse arrêté")
+            (n,) = struct.unpack("<i", head)
+            if n == 0:
+                return
+            if n < 0:
+                (ln,) = struct.unpack("<i", rd(4))
+                raise RuntimeError(rd(ln).decode("utf-8", "replace"))
+            emit(np.frombuffer(rd(n * 4), dtype=np.float32))
 
     async def run_tts(self, text: str, context_id: str) -> AsyncGenerator[Frame, None]:
         loop = asyncio.get_running_loop()
@@ -121,12 +151,7 @@ class CrispTTSService(TTSService):
         def worker():
             try:
                 with self._lock:
-                    # découpe courte : la première phrase sort vite
-                    for piece in split_for_speech(text):
-                        if stop.is_set():
-                            break
-                        pcm = self._session.synthesize(piece)
-                        loop.call_soon_threadsafe(q.put_nowait, np.asarray(pcm, dtype=np.float32).reshape(-1))
+                    self._request(text, lambda pcm: None if stop.is_set() else loop.call_soon_threadsafe(q.put_nowait, pcm))
             except Exception as e:
                 loop.call_soon_threadsafe(q.put_nowait, e)
             finally:
@@ -152,5 +177,12 @@ class CrispTTSService(TTSService):
                 for i in range(0, len(pcm), step):
                     yield TTSAudioRawFrame(audio=pcm[i : i + step], sample_rate=self.sample_rate, num_channels=1, context_id=context_id)
         finally:
-            stop.set()
+            stop.set()  # interruption : les morceaux restants sont lus puis ignorés
             await self.stop_ttfb_metrics()
+
+    async def cleanup(self):
+        await super().cleanup()
+        try:
+            self._proc.kill()
+        except Exception:
+            pass
