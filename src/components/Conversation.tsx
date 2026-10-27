@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { useStore } from "../store";
+import { useStore, voice } from "../store";
 import { Markdown } from "../markdown";
 import { I } from "./Icons";
 
@@ -16,6 +16,7 @@ export function Conversation() {
   const send = useStore((s) => s.send);
   const clear = useStore((s) => s.clearConversation);
   const busy = useStore((s) => s.busy);
+  const voiceOn = useStore((s) => s.voiceOn);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -49,6 +50,8 @@ export function Conversation() {
                   <span className="who">Orchestra</span>
                   {m.intent && <span className="chip ghost tiny">{m.intent}</span>}
                   {m.agent && <span className="chip tiny"><I.plug size={10} /> {m.agent}</span>}
+                  {m.voice && <span className="voice-tag" title="dit à voix haute"><I.mic size={10} /></span>}
+                  {voiceOn && !m.streaming && m.content && <button className="icon-btn" title="Écouter" onClick={() => voice.say(m.content)}><I.speaker size={12} /></button>}
                 </div>
               )}
               <div className="bubble">

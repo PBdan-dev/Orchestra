@@ -1,0 +1,22 @@
+[project]
+name = "orchestra-voix"
+version = "0.1.0"
+description = "Mode vocal d'Orchestra : boucle Pipecat locale (Voxtral, Qwen 3.5, Qwen3-TTS)"
+requires-python = ">=3.11"
+dependencies = [
+  "pipecat-ai[silero,websocket,openai]==1.14.0",
+  "faster-qwen3-tts==0.5.4",
+  "httpx",
+  "numpy",
+  "soundfile",
+]
+
+[project.scripts]
+orchestra-voix = "orchestra_voix.server:cli"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["orchestra_voix"]

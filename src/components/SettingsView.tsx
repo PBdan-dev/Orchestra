@@ -4,6 +4,7 @@ import { api } from "../tauri";
 import type { Config, Manifest } from "../types";
 import { I } from "./Icons";
 import { brainStatus } from "../brainStatus";
+import { VoiceSettings } from "./VoiceSettings";
 
 const PROVIDERS: { id: Config["provider"]; name: string; sub: string; local: boolean }[] = [
   { id: "ollama", name: "Ollama", sub: "local · défaut", local: true },
@@ -112,6 +113,8 @@ export function SettingsView() {
             <button className="link-btn" onClick={() => api.openFolder("agents")}><I.external size={12} /> ouvrir agents/registre-local.json</button>
           </div>
         </section>
+
+        <VoiceSettings form={form} set={set} />
 
         <section className="card-section">
           <h2><I.memory size={16} /> Mémoire</h2>

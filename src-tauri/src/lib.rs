@@ -8,6 +8,7 @@ mod memory;
 mod orchestrator;
 mod paths;
 mod tools;
+mod voice;
 
 use std::sync::{atomic::AtomicBool, Mutex};
 
@@ -22,6 +23,7 @@ pub struct AppState {
     pub paths: Paths,
     pub http: reqwest::Client,
     pub busy: AtomicBool,
+    pub voice: voice::VoiceProcess,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -188,6 +190,31 @@ fn is_busy(state: State<AppState>) -> bool {
     state.busy.load(std::sync::atomic::Ordering::SeqCst)
 }
 
+#[tauri::command]
+fn voice_status(state: State<AppState>) -> voice::VoiceStatus {
+    let cfg = state.config.lock().unwrap().clone();
+    state.voice.status(&state.paths, &cfg)
+}
+
+#[tauri::command]
+fn voice_start(state: State<AppState>) -> CmdResult<voice::VoiceStatus> {
+    let cfg = state.config.lock().unwrap().clone();
+    state.voice.start(&state.paths, &cfg).map_err(err)?;
+    Ok(state.voice.status(&state.paths, &cfg))
+}
+
+#[tauri::command]
+fn voice_stop(state: State<AppState>) -> voice::VoiceStatus {
+    state.voice.stop();
+    let cfg = state.config.lock().unwrap().clone();
+    state.voice.status(&state.paths, &cfg)
+}
+
+#[tauri::command]
+fn voice_log(state: State<AppState>) -> String {
+    voice::VoiceProcess::log_tail(&state.paths, 40)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -201,7 +228,14 @@ pub fn run() {
             agents::seed_registry(&paths).map_err(|e| anyhow::anyhow!("registre : {e}"))?;
             memory::seed_main(&paths, &config.user_name).map_err(|e| anyhow::anyhow!("mémoire : {e}"))?;
             let http = reqwest::Client::builder().user_agent("Orchestra/0.1").build().map_err(|e| anyhow::anyhow!("http : {e}"))?;
-            app.manage(AppState { config: Mutex::new(config), paths, http, busy: AtomicBool::new(false) });
+            let state = AppState { config: Mutex::new(config), paths, http, busy: AtomicBool::new(false), voice: voice::VoiceProcess::default() };
+            {
+                let cfg = state.config.lock().unwrap().clone();
+                if cfg.voice_enabled && cfg.voice_autostart {
+                    let _ = state.voice.start(&state.paths, &cfg);
+                }
+            }
+            app.manage(state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -222,7 +256,17 @@ pub fn run() {
             get_paths,
             open_folder,
             is_busy,
+            voice_status,
+            voice_start,
+            voice_stop,
+            voice_log,
         ])
-        .run(tauri::generate_context!())
-        .expect("erreur au lancement d'Orchestra");
+        .build(tauri::generate_context!())
+        .expect("erreur au lancement d'Orchestra")
+        .run(|app, event| {
+            // le serveur voix s'arrête avec Orchestra
+            if let tauri::RunEvent::Exit = event {
+                app.state::<AppState>().voice.stop();
+            }
+        });
 }

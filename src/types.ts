@@ -59,6 +59,33 @@ export interface Config {
   embedding_model: string;
   user_name: string;
   max_agent_steps: number;
+  voice_enabled: boolean;
+  voice_autostart: boolean;
+  voice_mode: "mains-libres" | "appuyer";
+  voice_ptt_key: string;
+  voice_read_chat: boolean;
+  voice_barge_in: boolean;
+  voice_llm: string;
+  voice_speaker: string;
+  voice_reference: string;
+  voice_port: number;
+}
+
+export interface VoiceStatus {
+  installed: boolean;
+  missing: string[];
+  running: boolean;
+  port: number;
+  dir: string;
+}
+
+export interface VoiceLatency {
+  total_ms: number;
+  vad_ms: number;
+  stt_ms: number | null;
+  llm_ms: number | null;
+  tts_ms: number | null;
+  at?: string;
 }
 
 export interface BrainInfo {
@@ -78,6 +105,8 @@ export interface ChatMessage {
   streaming?: boolean;
   /** message issu d'une simulation : jamais renvoyé au modèle */
   sim?: boolean;
+  /** message dit à voix haute (mode vocal) */
+  voice?: boolean;
   intent?: string;
   agent?: string;
   at: number;

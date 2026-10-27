@@ -2,7 +2,7 @@
  * Mode démo navigateur : quand l'interface tourne hors de Tauri (ex. `npm run dev` ouvert
  * dans un navigateur), ce faux backend rejoue un scénario complet pour travailler le design.
  */
-import type { BrainInfo, Config, Manifest, MemoryFile, OrchestraEvent, PathsInfo } from "./types";
+import type { BrainInfo, Config, Manifest, MemoryFile, OrchestraEvent, PathsInfo, VoiceStatus } from "./types";
 
 const listeners: ((e: OrchestraEvent) => void)[] = [];
 const emit = (e: OrchestraEvent) => listeners.forEach((l) => l(e));
@@ -12,7 +12,10 @@ const config: Config = {
   provider: "ollama", model: "", ollama_url: "http://127.0.0.1:11434", lmstudio_url: "http://127.0.0.1:1234",
   claude_api_key: "", gemini_api_key: "", openrouter_api_key: "", market_url: "", embeddings_enabled: false,
   embedding_model: "nomic-embed-text", user_name: "PB", max_agent_steps: 6,
+  voice_enabled: false, voice_autostart: true, voice_mode: "mains-libres", voice_ptt_key: "F2", voice_read_chat: false,
+  voice_barge_in: false, voice_llm: "qwen3.5:9b", voice_speaker: "Ryan", voice_reference: "", voice_port: 8765,
 };
+const voiceSt: VoiceStatus = { installed: false, missing: ["démo navigateur : pas de serveur voix"], running: false, port: 8765, dir: "" };
 
 const redacteur: Manifest = {
   id: "agent-redacteur", name: "Agent Rédacteur", version: "1.0.0", author: "Orchestra (démo)",
@@ -87,6 +90,10 @@ export const mockApi = {
   getPaths: async (): Promise<PathsInfo> => ({ root: "C:\\Users\\pb\\Orchestra", memoire: "", agents: "", workspace: "", journal: "" }),
   openFolder: async () => {},
   isBusy: async () => false,
+  voiceStatus: async () => voiceSt,
+  voiceStart: async (): Promise<VoiceStatus> => { throw new Error("démo navigateur : pas de serveur voix"); },
+  voiceStop: async () => voiceSt,
+  voiceLog: async () => "",
 };
 
 export function mockOnEvent(cb: (e: OrchestraEvent) => void) {

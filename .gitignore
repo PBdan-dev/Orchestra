@@ -8,3 +8,5 @@ Thumbs.db
 
 Orchestra.exe
 Orchestra-setup.exe
+__pycache__/
+*.egg-info/

@@ -22,6 +22,25 @@ pub struct Config {
     pub user_name: String,
     /// Nombre maximal d'itérations outil pour un agent.
     pub max_agent_steps: u32,
+    /// Mode vocal (module optionnel, serveur Pipecat local).
+    pub voice_enabled: bool,
+    /// Démarrer le serveur voix au lancement d'Orchestra.
+    pub voice_autostart: bool,
+    /// « mains-libres » (le VAD détecte la fin de phrase) ou « appuyer » (appuyer pour parler).
+    pub voice_mode: String,
+    /// Touche d'appuyer-pour-parler (KeyboardEvent.code).
+    pub voice_ptt_key: String,
+    /// Lire à voix haute les réponses aux messages tapés.
+    pub voice_read_chat: bool,
+    /// Le micro reste ouvert pendant qu'Orchestra parle (on peut lui couper la parole).
+    pub voice_barge_in: bool,
+    /// Cerveau du mode vocal (rapide) ; le mode texte garde `model`.
+    pub voice_llm: String,
+    /// Voix préréglée de Qwen3-TTS.
+    pub voice_speaker: String,
+    /// Fichier de voix/references/ à cloner (vide = voix préréglée). Consentement obligatoire.
+    pub voice_reference: String,
+    pub voice_port: u16,
 }
 
 impl Default for Config {
@@ -39,6 +58,16 @@ impl Default for Config {
             embedding_model: "nomic-embed-text".into(),
             user_name: String::new(),
             max_agent_steps: 6,
+            voice_enabled: false,
+            voice_autostart: true,
+            voice_mode: "mains-libres".into(),
+            voice_ptt_key: "F2".into(),
+            voice_read_chat: false,
+            voice_barge_in: false,
+            voice_llm: "qwen3.5:9b".into(),
+            voice_speaker: "Ryan".into(),
+            voice_reference: String::new(),
+            voice_port: 8765,
         }
     }
 }

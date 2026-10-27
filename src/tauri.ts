@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { BrainInfo, Config, Manifest, MemoryFile, OrchestraEvent, PathsInfo } from "./types";
+import type { BrainInfo, Config, Manifest, MemoryFile, OrchestraEvent, PathsInfo, VoiceStatus } from "./types";
 import { mockApi, mockOnEvent } from "./mock";
 
 /** Vrai quand l'interface tourne dans la fenêtre Tauri ; sinon on est en démo navigateur. */
@@ -25,6 +25,10 @@ const real = {
   getPaths: () => invoke<PathsInfo>("get_paths"),
   openFolder: (which: string) => invoke<void>("open_folder", { which }),
   isBusy: () => invoke<boolean>("is_busy"),
+  voiceStatus: () => invoke<VoiceStatus>("voice_status"),
+  voiceStart: () => invoke<VoiceStatus>("voice_start"),
+  voiceStop: () => invoke<VoiceStatus>("voice_stop"),
+  voiceLog: () => invoke<string>("voice_log"),
 };
 
 export const api: typeof real = isTauri ? real : (mockApi as unknown as typeof real);
