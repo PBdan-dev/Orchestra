@@ -56,7 +56,7 @@ def run_qwen3():
 
 def run_crisp(model, voice, tag):
     from .tts_crisp import open_session
-    from .tts_qwen3 import split_for_speech
+    from .tts_crisp import split_for_speech
 
     s, engine = open_session(model, voice)
     sr = int(s.output_sample_rate() or 24000)
@@ -79,6 +79,8 @@ def run_crisp(model, voice, tag):
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     voix = C.MODELES / "pocket-tts" / "voix" / "unmute-prod-website" / "developpeuse-3.wav"
+    import sys
+    only = sys.argv[1:]  # ex. : voxtral pocket
     runs = [
         ("Qwen3-TTS 1.7B, Ryan (commercial)", "qwen3-ryan", run_qwen3),
         ("Voxtral TTS, fr_female (usage personnel)", "voxtral-fr_female",
@@ -88,6 +90,8 @@ def main():
     ]
     lines = ["# Comparaison des voix", "", "| Voix | Premier son | Temps réel × | Fichiers |", "|---|---|---|---|"]
     for title, tag, fn in runs:
+        if only and not any(o in tag for o in only):
+            continue
         print(f"> {title}", flush=True)
         try:
             r = fn()

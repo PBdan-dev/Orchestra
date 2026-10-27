@@ -28,7 +28,7 @@ from pipecat.services.settings import TTSSettings
 from pipecat.services.tts_service import TTSService
 from pipecat.transcriptions.language import Language
 
-from .tts_qwen3 import split_for_speech
+import re
 
 CHUNK_MS = 40
 
@@ -37,6 +37,26 @@ LICENCES = {
     "voxtral-tts": "CC BY-NC 4.0 · usage personnel",
     "pocket-tts": "CC-BY 4.0 + conditions Kyutai · usage personnel",
 }
+
+
+def split_for_speech(text: str, first_max: int = 60, max_len: int = 160) -> list[str]:
+    """Découpe sur la ponctuation ; le premier morceau est court pour réduire le délai."""
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return []
+    parts = [p.strip() for p in re.split(r"(?<=[,;:.!?…])\s+", text) if p.strip()]
+    out: list[str] = []
+    buf = ""
+    for p in parts:
+        limit = first_max if not out else max_len
+        if buf and len(buf) + 1 + len(p) > limit:
+            out.append(buf)
+            buf = p
+        else:
+            buf = f"{buf} {p}".strip()
+    if buf:
+        out.append(buf)
+    return out
 
 
 def open_session(model_path: Path, voice: str, language: str = "fr"):
