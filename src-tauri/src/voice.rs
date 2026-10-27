@@ -58,12 +58,9 @@ pub fn models(paths: &Paths) -> VoiceModels {
     let mut tts = list(m.join("qwen3-tts"), &|p| p.join("model.safetensors").exists());
     if crisp {
         // voix à usage personnel (licences non commerciales), servies par CrispASR
-        for (dir, prefix) in [("voxtral-tts", "voxtral-tts"), ("pocket-tts", "pocket-tts")] {
-            for f in list(m.join(dir), &|p| p.extension().map_or(false, |e| e == "gguf")) {
-                if prefix != "pocket-tts" || f.contains("french") {
-                    tts.push(format!("crisp:{dir}/{f}"));
-                }
-            }
+        // (Pocket TTS retiré le 2026-10-28 à la demande de PB : rendu insuffisant en français)
+        for f in list(m.join("voxtral-tts"), &|p| p.extension().map_or(false, |e| e == "gguf")) {
+            tts.push(format!("crisp:voxtral-tts/{f}"));
         }
     }
     let mut pocket_voices = Vec::new();

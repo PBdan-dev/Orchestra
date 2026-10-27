@@ -493,3 +493,5 @@ pre { margin: 0; font-family: var(--mono); font-size: 12px; white-space: pre-wra
 .model-opt .muted { margin-left: auto; font-size: 11px; }
 .model-sep { font-size: 10.5px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted, #94a3b8); padding: 6px 8px 2px; }
 .voice-hint.interim .voice-hint-text { font-style: italic; color: var(--text, #e2e8f0); opacity: .8; }
+.consignes { width: 100%; resize: vertical; min-height: 70px; padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(165,243,252,.14); background: rgba(0,0,0,.25); color: inherit; font: inherit; font-size: 12.5px; outline: none; }
+.consignes:focus { border-color: rgba(165,243,252,.45); }

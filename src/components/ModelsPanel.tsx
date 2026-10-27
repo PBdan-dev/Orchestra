@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { api } from "../tauri";
 import { useStore } from "../store";
 import { brainStatus } from "../brainStatus";
 import { I } from "./Icons";
@@ -52,6 +53,14 @@ export function ModelsPanel() {
   const setTtsModel = useStore((s) => s.setTtsModel);
   const setVoice = useStore((s) => s.setVoice);
   const [open, setOpen] = useState<string | null>(null);
+  const [consignes, setConsignes] = useState("");
+  const [consSaved, setConsSaved] = useState("");
+  useEffect(() => { api.readTextFile("voix/consignes.txt").then((t) => { setConsignes(t); setConsSaved(t); }).catch(() => {}); }, []);
+  const saveConsignes = async () => {
+    if (consignes === consSaved) return;
+    await api.writeTextFile("voix/consignes.txt", consignes).catch(() => {});
+    setConsSaved(consignes);
+  };
 
   useEffect(() => { refreshVoiceModels(); refreshBrain(); }, []);
   if (!config) return null;
@@ -102,6 +111,12 @@ export function ModelsPanel() {
               ...(models?.references ?? []).map((f) => ({ value: `ref:${f}`, label: pretty.ref(f), hint: hasBase ? "clonée" : "clonée · modèle Base requis" })),
             ]}
           note={`Voix clonées : déposer un enregistrement de 5 à 15 s dans voix\\references, avec l'accord de la personne.${hasBase ? "" : " Il faut aussi le modèle Qwen3-TTS Base."}`} />
+        <div className="model-row">
+          <label className="model-row-label" htmlFor="consignes-voix" style={{ display: "block", margin: "8px 0 4px" }}>Consignes de la voix</label>
+          <textarea id="consignes-voix" className="consignes" rows={4} value={consignes} onChange={(e) => setConsignes(e.target.value)} onBlur={saveConsignes}
+            placeholder={"Ex. : tutoie-moi, réponds en une ou deux phrases, ton chaleureux et posé, pas de formules toutes faites."} />
+          <p className="small muted">{consignes !== consSaved ? "modifié, enregistré en quittant le champ" : "Prises en compte dès la phrase suivante. Elles règlent ce que dit le cerveau vocal ; la voix (Voxtral) ne fait que lire."}</p>
+        </div>
       </div>
     </>
   );

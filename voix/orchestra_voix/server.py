@@ -73,6 +73,12 @@ def system_prompt() -> str:
         memoire = C.MEMOIRE.read_text(encoding="utf-8")[-6000:]
     except OSError:
         pass
+    consignes = ""
+    try:
+        # consignes écrites par PB dans le panneau des modèles (voix/consignes.txt), relues à chaque tour
+        consignes = (C.VOIX / "consignes.txt").read_text(encoding="utf-8").strip()[:3000]
+    except OSError:
+        pass
     return (
         "Tu es Orchestra, l'assistant local de l'utilisateur, en conversation vocale. "
         "Réponds en français, à l'oral : phrases courtes et naturelles, une à trois en général. "
@@ -84,7 +90,8 @@ def system_prompt() -> str:
         "Si une question demande vraiment de réfléchir (calcul, raisonnement en plusieurs étapes, "
         "comparaison délicate, conseil important), appelle l'outil reflechir avec la question complète ; "
         "pour tout le reste, réponds directement sans réfléchir longuement.\n\n"
-        f"Ce que tu sais de l'utilisateur (ta mémoire) :\n{memoire}"
+        + (f"Consignes de l'utilisateur sur ta façon de répondre (à respecter en priorité) :\n{consignes}\n\n" if consignes else "")
+        + f"Ce que tu sais de l'utilisateur (ta mémoire) :\n{memoire}"
     )
 
 
@@ -264,17 +271,36 @@ async def garder_charge(s: C.VoiceSettings):
         logger.warning(f"Préchargement de {s.llm_model} : {e}")
 
 
-async def penser(s: C.VoiceSettings, messages: list, question: str) -> str:
-    """Réflexion à la demande : même modèle, mode « thinking » activé, réponse courte à dire."""
+async def penser(s: C.VoiceSettings, messages: list, question: str, on_thought=None) -> str:
+    """Réflexion à la demande : même modèle, mode « thinking » activé, réponse courte à dire.
+
+    La réflexion arrive en flux et part au fil de l'eau dans la Conscience (`on_thought`).
+    """
+    import json as _json
+
     import httpx
 
     base = s.ollama_url.removesuffix("/v1")
     msgs = [m for m in messages if isinstance(m, dict) and m.get("role") in ("system", "user", "assistant") and m.get("content")]
-    msgs.append({"role": "user", "content": f"{question}\n\nRéfléchis soigneusement, puis donne une réponse orale claire, en quelques phrases, sans Markdown."})
+    msgs.append({"role": "user", "content": f"{question}\n\nRéfléchis soigneusement, en français, puis donne une réponse orale claire, en quelques phrases, sans Markdown."})
+    content, buf, last = [], [], time.monotonic()
     async with httpx.AsyncClient(timeout=170) as c:
-        r = await c.post(f"{base}/api/chat", json={"model": s.llm_model, "messages": msgs, "think": True, "stream": False, "keep_alive": "60m"})
-        r.raise_for_status()
-        return r.json()["message"]["content"].strip()
+        async with c.stream("POST", f"{base}/api/chat", json={"model": s.llm_model, "messages": msgs, "think": True, "stream": True, "keep_alive": "60m"}) as r:
+            r.raise_for_status()
+            async for line in r.aiter_lines():
+                if not line.strip():
+                    continue
+                msg = _json.loads(line).get("message", {})
+                if msg.get("thinking"):
+                    buf.append(msg["thinking"])
+                if msg.get("content"):
+                    content.append(msg["content"])
+                if on_thought and buf and time.monotonic() - last > 0.25:
+                    await on_thought("".join(buf))
+                    buf, last = [], time.monotonic()
+    if on_thought and buf:
+        await on_thought("".join(buf))
+    return "".join(content).strip()
 
 
 def build_tts(s: C.VoiceSettings, lat: LatencyLog):
@@ -336,6 +362,7 @@ async def main(s: C.VoiceSettings):
 
     async def confier(params: FunctionCallParams):
         tache = str(params.arguments.get("tache", "")).strip()
+        await bridge.send({"type": "decision", "text": f"C'est un travail concret : je le confie à la boucle centrale d'Orchestra. « {tache} »"})
         await bridge.send({"type": "delegate", "text": tache})
         # accusé de réception immédiat, sans second appel au cerveau (gain d'environ une demi-seconde)
         await params.llm.push_frame(TTSSpeakFrame(text="D'accord, je m'en occupe et je te dis quand c'est prêt."))
@@ -347,10 +374,14 @@ async def main(s: C.VoiceSettings):
     async def reflechir(params: FunctionCallParams):
         question = str(params.arguments.get("question", "")).strip()
         await bridge.send({"type": "thinking", "on": True})
+        await bridge.send({"type": "decision", "text": f"Cette question mérite réflexion : je réfléchis avant de répondre. « {question} »"})
         await params.llm.push_frame(TTSSpeakFrame(text="Attends, je réfléchis."))
         t0 = time.perf_counter()
         try:
-            reponse = await penser(s, params.context.get_messages(), question)
+            async def pensee(t: str):
+                await bridge.send({"type": "thought", "text": t})
+
+            reponse = await penser(s, params.context.get_messages(), question, on_thought=pensee)
         except Exception as e:  # le dialogue continue même si la réflexion échoue
             logger.error(f"Réflexion : {e}")
             reponse = "Désolée, je n'ai pas réussi à réfléchir à ça. Tu peux reformuler ?"

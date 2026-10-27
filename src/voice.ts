@@ -23,6 +23,8 @@ export type VoiceEvent =
   | { type: "bot_start" } | { type: "bot_text"; text: string } | { type: "bot_end" }
   | { type: "delegate"; text: string }
   | { type: "thinking"; on: boolean }
+  | { type: "thought"; text: string }
+  | { type: "decision"; text: string }
   | { type: "interrupt" }
   | { type: "latency"; total_ms: number; stt_ms: number | null; llm_ms: number | null; tts_ms: number | null; vad_ms: number; [k: string]: unknown }
   | { type: "playback"; playing: boolean }

@@ -48,7 +48,7 @@ async def main():
                     state["got"] = True
                 else:
                     e = json.loads(m)
-                    if e["type"] in ("user_final", "delegate", "thinking"):
+                    if e["type"] in ("user_final", "delegate", "thinking", "decision", "thought"):
                         print(f"    {e}")
                     if e["type"] == "bot_end":
                         state["bot_done"].set()

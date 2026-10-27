@@ -451,6 +451,7 @@ export const useStore = create<State>((set, get) => ({
         }));
         break;
       case "bot_start": {
+        set((st) => ({ entries: [...st.entries, { kind: "phase", id: uid(), runId: "voix", at: Date.now(), phase: "speaking", label: "Je formule ma réponse" }] }));
         const id = uid();
         voiceDraft = id;
         set((st) => ({ messages: [...st.messages, { id, role: "assistant", content: "", streaming: true, voice: true, at: Date.now() }] }));
@@ -483,9 +484,32 @@ export const useStore = create<State>((set, get) => ({
         if (e.on) set({ phase: "thinking", phaseLabel: "Je réfléchis…" });
         live.pulse(0.5);
         break;
-      case "latency":
-        set({ voiceLatency: { total_ms: e.total_ms, vad_ms: e.vad_ms, stt_ms: e.stt_ms, llm_ms: e.llm_ms, tts_ms: e.tts_ms, at: e.at as string } });
+      case "thought":
+        // réflexion du cerveau vocal, en flux, comme dans le mode chat
+        live.pulse(0.06);
+        set((st) => {
+          const last = st.entries[st.entries.length - 1];
+          if (last && last.kind === "thought" && last.runId === "voix") {
+            return { entries: [...st.entries.slice(0, -1), { ...last, text: last.text + e.text }] };
+          }
+          return { entries: [...st.entries, { kind: "thought", id: uid(), runId: "voix", at: Date.now(), text: e.text }] };
+        });
         break;
+      case "decision":
+        set((st) => ({ entries: [...st.entries, { kind: "phase", id: uid(), runId: "voix", at: Date.now(), phase: "thinking", label: e.text }] }));
+        break;
+      case "latency": {
+        set({ voiceLatency: { total_ms: e.total_ms, vad_ms: e.vad_ms, stt_ms: e.stt_ms, llm_ms: e.llm_ms, tts_ms: e.tts_ms, at: e.at as string } });
+        const f = (v: unknown) => (typeof v === "number" ? `${v} ms` : "?");
+        set((st) => ({
+          entries: [...st.entries, {
+            kind: "phase", id: uid(), runId: "voix", at: Date.now(), phase: "speaking",
+            label: `Réponse dite en ${(e.total_ms / 1000).toFixed(2)} s · fin de phrase ${f(e.vad_ms)} · écoute ${f(e.stt_ms)} · cerveau ${f(e.llm_ms)} · voix ${f(e.tts_ms)}`,
+          }],
+        }));
+        break;
+      }
+
       default:
         break;
     }
