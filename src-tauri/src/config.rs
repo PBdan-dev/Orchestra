@@ -63,7 +63,7 @@ impl Default for Config {
             voice_mode: "mains-libres".into(),
             voice_ptt_key: "F2".into(),
             voice_read_chat: false,
-            voice_barge_in: false,
+            voice_barge_in: true,
             voice_llm: "qwen3.5:9b".into(),
             voice_speaker: "Ryan".into(),
             voice_reference: String::new(),

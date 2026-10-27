@@ -24,7 +24,6 @@ export function Composer() {
   const voiceInterim = useStore((s) => s.voiceInterim);
   const voiceError = useStore((s) => s.voiceError);
   const voiceLatency = useStore((s) => s.voiceLatency);
-  const toggleVoice = useStore((s) => s.toggleVoice);
   const holdVoice = useStore((s) => s.holdVoice);
   const stopSpeaking = useStore((s) => s.stopSpeaking);
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -64,7 +63,7 @@ export function Composer() {
   }, [text]);
 
   const submit = () => {
-    if (!text.trim() || busy) return;
+    if (!text.trim() || (busy && !voiceOn)) return;
     send(text);
     setText("");
   };
@@ -80,7 +79,6 @@ export function Composer() {
   const onUp = () => { drag.current = null; };
 
   const status = brainStatus(brain, brainLoading);
-  const voiceEnabled = !!config?.voice_enabled;
   const speaking = phase === "speaking" && voiceOn;
   const voiceHint = !voiceOn ? "" :
     voiceConn !== "on" ? "Je prépare ma voix… (premier lancement : environ 30 s)" :
@@ -103,20 +101,10 @@ export function Composer() {
         </div>
       )}
       <div className="composer-inner glass">
-        <textarea ref={ref} value={text} placeholder={busy ? "Orchestra travaille…" : "Parle à Orchestra…"}
+        <textarea ref={ref} value={text} placeholder={voiceOn ? "Parle, ou écris : je te réponds à voix haute" : busy ? "Orchestra travaille…" : "Écris à Orchestra…"}
           onChange={(e) => { setText(e.target.value); listening(); }}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }} />
-        {voiceEnabled && (
-          <button className={`mic-btn ${voiceOn ? "on" : ""} ${voiceUser || voiceHeld ? "hot" : ""}`}
-            onClick={() => { if (!ptt || !voiceOn) toggleVoice(); }}
-            onPointerDown={() => { if (ptt && voiceOn) holdVoice(true); }}
-            onPointerUp={() => holdVoice(false)} onPointerLeave={() => holdVoice(false)}
-            onContextMenu={(e) => { e.preventDefault(); if (voiceOn) toggleVoice(); }}
-            title={!voiceOn ? "Parler à Orchestra (mode vocal)" : ptt ? `Maintenir pour parler (ou ${pttKey}) · clic droit : fermer le mode vocal` : "Fermer le mode vocal"}>
-            <I.mic size={18} />
-          </button>
-        )}
-        <button className="send-btn" onClick={submit} disabled={!text.trim() || busy} title="Envoyer (Entrée)"><I.send size={18} /></button>
+        <button className="send-btn" onClick={submit} disabled={!text.trim() || (busy && !voiceOn)} title="Envoyer (Entrée)"><I.send size={18} /></button>
       </div>
       <div className="composer-foot">
         <span className="foot-status" style={{ ["--c" as any]: status.color }}><span className="pill-dot" /> {status.label}{brain?.model ? ` · ${brain.model}` : ""}</span>

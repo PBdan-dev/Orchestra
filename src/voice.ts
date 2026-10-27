@@ -22,6 +22,7 @@ export type VoiceEvent =
   | { type: "user_interim"; text: string } | { type: "user_final"; text: string }
   | { type: "bot_start" } | { type: "bot_text"; text: string } | { type: "bot_end" }
   | { type: "delegate"; text: string }
+  | { type: "thinking"; on: boolean }
   | { type: "interrupt" }
   | { type: "latency"; total_ms: number; stt_ms: number | null; llm_ms: number | null; tts_ms: number | null; vad_ms: number; [k: string]: unknown }
   | { type: "playback"; playing: boolean }
@@ -57,6 +58,7 @@ export class VoiceClient {
   private ctx: AudioContext | null = null;
   private stream: MediaStream | null = null;
   private micAnalyser: AnalyserNode | null = null;
+  private node: AudioWorkletNode | null = null;
   private outAnalyser: AnalyserNode | null = null;
   private playHead = 0;
   private sources = new Set<AudioBufferSourceNode>();
@@ -64,6 +66,10 @@ export class VoiceClient {
   private freq = new Uint8Array(256);
   private time = new Float32Array(1024);
   private wantOpen = false;
+  private retry: ReturnType<typeof setTimeout> | null = null;
+  private port = 8765;
+  /** morceaux de micro envoyés (diagnostic) */
+  sent = { voice: 0, silence: 0 };
   /** le micro envoie-t-il le vrai son ? (sinon du silence) */
   gate = true;
   /** couper le micro pendant que la voix joue (évite qu'Orchestra s'entende elle-même) */
@@ -76,21 +82,28 @@ export class VoiceClient {
 
   async connect(port: number) {
     this.wantOpen = true;
+    this.port = port;
+    if (this.retry) { clearTimeout(this.retry); this.retry = null; }
+    // une seule connexion à la fois : le serveur refuse un second client
     if (this.ws && this.ws.readyState <= WebSocket.OPEN) return;
     this.onEvent({ type: "conn", state: "connecting" });
     await this.ensureAudio();
+    if (this.ws && this.ws.readyState <= WebSocket.OPEN) return;
     const ws = new WebSocket(`ws://127.0.0.1:${port}`);
     ws.binaryType = "arraybuffer";
     this.ws = ws;
-    ws.onopen = () => this.onEvent({ type: "conn", state: "on" });
+    ws.onopen = () => { if (this.ws === ws) this.onEvent({ type: "conn", state: "on" }); };
     ws.onclose = () => {
+      if (this.ws !== ws) return; // une ancienne connexion : on l'ignore
       this.ws = null;
+      this.flushPlayback();
       this.onEvent({ type: "conn", state: "off" });
       // le serveur charge ses modèles (≈30 s au démarrage) : on réessaie tant qu'on le veut
-      if (this.wantOpen) setTimeout(() => { if (this.wantOpen) this.connect(port); }, 2000);
+      if (this.wantOpen && !this.retry) this.retry = setTimeout(() => { this.retry = null; if (this.wantOpen) this.connect(this.port); }, 1500);
     };
-    ws.onerror = () => this.onEvent({ type: "conn", state: "error", detail: "serveur voix injoignable" });
+    ws.onerror = () => { if (this.ws === ws) this.onEvent({ type: "conn", state: "error", detail: "serveur voix injoignable" }); };
     ws.onmessage = (m) => {
+      if (this.ws !== ws) return;
       if (typeof m.data === "string") {
         let e: VoiceEvent;
         try { e = JSON.parse(m.data); } catch { return; }
@@ -104,6 +117,7 @@ export class VoiceClient {
 
   disconnect() {
     this.wantOpen = false;
+    if (this.retry) { clearTimeout(this.retry); this.retry = null; }
     this.ws?.close();
     this.ws = null;
     this.stopMic();
@@ -138,10 +152,12 @@ export class VoiceClient {
     this.micAnalyser.smoothingTimeConstant = 0.55;
     src.connect(this.micAnalyser);
     const node = new AudioWorkletNode(ctx, "orchestra-capture");
+    this.node = node;
     node.port.onmessage = (m) => {
       if (!this.connected) return;
       const open = this.gate && !(this.muteWhileSpeaking && this.playing);
       this.ws!.send(open ? (m.data as ArrayBuffer) : new ArrayBuffer(640));
+      if (open) this.sent.voice++; else this.sent.silence++;
     };
     src.connect(node);
     // la worklet doit être reliée à la sortie pour tourner ; gain nul = muet
@@ -151,6 +167,9 @@ export class VoiceClient {
   }
 
   stopMic() {
+    this.node?.port.close();
+    this.node?.disconnect();
+    this.node = null;
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = null;
     this.micAnalyser = null;
@@ -160,6 +179,11 @@ export class VoiceClient {
 
   send(msg: object) {
     if (this.connected) this.ws!.send(JSON.stringify(msg));
+  }
+
+  /** Message tapé pendant le mode voix : même cerveau rapide, réponse dite. */
+  sendText(text: string) {
+    this.send({ type: "user_text", text });
   }
 
   /** Lit un texte avec la voix d'Orchestra. */
@@ -211,6 +235,10 @@ export class VoiceClient {
 
   /** Niveaux et spectre, ~60 fois par seconde. */
   private loop = () => {
+    if (this.playing && this.ctx && this.ctx.currentTime > this.playHead + 0.4) {
+      this.sources.clear();
+      this.setPlaying(false);
+    }
     const read = (a: AnalyserNode | null) => {
       if (!a) return 0;
       a.getFloatTimeDomainData(this.time.subarray(0, a.fftSize));

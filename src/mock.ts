@@ -13,7 +13,7 @@ const config: Config = {
   claude_api_key: "", gemini_api_key: "", openrouter_api_key: "", market_url: "", embeddings_enabled: false,
   embedding_model: "nomic-embed-text", user_name: "PB", max_agent_steps: 6,
   voice_enabled: false, voice_autostart: true, voice_mode: "mains-libres", voice_ptt_key: "F2", voice_read_chat: false,
-  voice_barge_in: false, voice_llm: "qwen3.5:9b", voice_speaker: "Ryan", voice_reference: "", voice_port: 8765,
+  voice_barge_in: true, voice_llm: "qwen3.5:9b", voice_speaker: "Ryan", voice_reference: "", voice_port: 8765,
 };
 const voiceSt: VoiceStatus = { installed: false, missing: ["démo navigateur : pas de serveur voix"], running: false, port: 8765, dir: "" };
 

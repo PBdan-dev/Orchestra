@@ -35,13 +35,9 @@ export function VoiceSettings({ form, set }: { form: Config; set: <K extends key
         répondre vite, Qwen3-TTS pour la voix, reliés par Pipecat. Un travail concret dit à voix haute passe par la même boucle que le chat.
       </p>
 
-      <label className="toggle">
-        <input type="checkbox" checked={form.voice_enabled} onChange={(e) => set("voice_enabled", e.target.checked)} />
-        <span>Activer le mode vocal</span>
-        <span className="muted small">Ajoute le bouton micro sous le chat. Désactivé, rien ne change.</span>
-      </label>
+      <p className="muted small">Le passage du chat à la voix se fait avec le switch sous le cœur. Réglages avancés :</p>
 
-      {form.voice_enabled && (
+      {(
         <>
           <div className="detect foot-status" style={{ ["--c" as any]: status?.installed ? (status.running ? "#34d399" : "#7dd3fc") : "#fbbf24" }}>
             <span className="pill-dot" />
@@ -99,7 +95,7 @@ export function VoiceSettings({ form, set }: { form: Config; set: <K extends key
           <label className="toggle">
             <input type="checkbox" checked={form.voice_barge_in} onChange={(e) => set("voice_barge_in", e.target.checked)} />
             <span>Pouvoir couper la parole à Orchestra en parlant</span>
-            <span className="muted small">Le micro reste ouvert pendant qu'elle parle. À réserver à un casque, sinon elle peut s'entendre elle-même.</span>
+            <span className="muted small">Le micro reste ouvert pendant qu'elle parle. Sans casque, si elle se coupe elle-même, décoche cette option.</span>
           </label>
           <label className="toggle">
             <input type="checkbox" checked={form.voice_autostart} onChange={(e) => set("voice_autostart", e.target.checked)} />

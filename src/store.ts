@@ -87,7 +87,8 @@ interface State {
   loadModel: () => Promise<void>;
   refreshAgents: () => Promise<void>;
   saveConfig: (c: Config) => Promise<void>;
-  send: (text: string) => Promise<void>;
+  /** `orchestrateur` : forcer la boucle centrale (délégation venue de la voix). */
+  send: (text: string, orchestrateur?: boolean) => Promise<void>;
   listening: () => void;
   handle: (e: OrchestraEvent) => void;
   clearConversation: () => void;
@@ -207,9 +208,23 @@ export const useStore = create<State>((set, get) => ({
     await get().refreshBrain();
   },
 
-  send: async (text) => {
+  send: async (text, orchestrateur = false) => {
     const t = text.trim();
-    if (!t || get().busy || get().simulating) return;
+    if (!t || get().simulating) return;
+    // mode voix : un message tapé part au cerveau vocal (rapide, sans réflexion), la réponse est dite
+    if (!orchestrateur && get().voiceOn && voice?.connected) {
+      set((s) => ({
+        messages: [...s.messages, { id: uid(), role: "user", content: t, at: Date.now() }],
+        entries: [...s.entries, { kind: "user", id: uid(), runId: "voix", at: Date.now(), text: t }],
+        phase: "thinking",
+        phaseLabel: "Je réfléchis",
+      }));
+      voice.send({ type: "context", messages: historyOf(get().messages.slice(0, -1)) });
+      voice.sendText(t);
+      live.pulse(0.6);
+      return;
+    }
+    if (get().busy) return;
     const history = get().messages.filter((m) => !m.streaming && !m.sim).map((m) => ({ role: m.role, content: m.content }));
     const userMsg: ChatMessage = { id: uid(), role: "user", content: t, at: Date.now() };
     const draft: ChatMessage = { id: uid(), role: "assistant", content: "", streaming: true, at: Date.now() };
@@ -372,12 +387,16 @@ export const useStore = create<State>((set, get) => ({
         // la voix confie un travail à la boucle centrale : même chemin qu'un message tapé
         if (e.text && !s.busy) {
           voiceRun = true;
-          setTimeout(() => get().send(e.text), 0);
+          setTimeout(() => get().send(e.text, true), 0);
         }
         break;
       case "playback":
         if (e.playing) set({ phase: "speaking", phaseLabel: "Je parle" });
         else if (!get().busy) set({ phase: "idle", phaseLabel: "" });
+        break;
+      case "thinking":
+        if (e.on) set({ phase: "thinking", phaseLabel: "Je réfléchis…" });
+        live.pulse(0.5);
         break;
       case "latency":
         set({ voiceLatency: { total_ms: e.total_ms, vad_ms: e.vad_ms, stt_ms: e.stt_ms, llm_ms: e.llm_ms, tts_ms: e.tts_ms, at: e.at as string } });

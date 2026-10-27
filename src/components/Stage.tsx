@@ -8,6 +8,7 @@ import { Core } from "./Core";
 import { AgentGlyph, I } from "./Icons";
 import { Inspector } from "./Inspector";
 import { AgentsPanel } from "./AgentsPanel";
+import { ModeSwitch } from "./ModeSwitch";
 
 const NODE_R = 31;
 
@@ -157,6 +158,8 @@ export function Stage() {
           )}
         </AnimatePresence>
       </div>
+
+      <ModeSwitch x={cx} y={cy + R + 34} />
 
       {/* agents */}
       <AnimatePresence>

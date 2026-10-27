@@ -20,6 +20,7 @@ import sys
 import time
 from datetime import datetime
 
+import numpy as np
 from loguru import logger
 
 from pipecat.adapters.llm.schemas.function_schema import FunctionSchema
@@ -29,7 +30,9 @@ from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
     Frame,
     FunctionCallResultProperties,
+    InputAudioRawFrame,
     InputTransportMessageFrame,
+    LLMMessagesAppendFrame,
     InterimTranscriptionFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
@@ -76,7 +79,10 @@ def system_prompt() -> str:
         "Écris les nombres et les sigles comme on les prononce. "
         "Quand on te demande un travail concret (écrire ou lire un fichier, rédiger un document, "
         "utiliser un agent, chercher quelque chose), appelle l'outil confier_a_orchestra avec la tâche "
-        "formulée clairement, puis dis en une phrase que tu t'en occupes.\n\n"
+        "formulée clairement. "
+        "Si une question demande vraiment de réfléchir (calcul, raisonnement en plusieurs étapes, "
+        "comparaison délicate, conseil important), appelle l'outil reflechir avec la question complète ; "
+        "pour tout le reste, réponds directement sans réfléchir longuement.\n\n"
         f"Ce que tu sais de l'utilisateur (ta mémoire) :\n{memoire}"
     )
 
@@ -171,9 +177,20 @@ class ClientCommands(FrameProcessor):
     def __init__(self, context: LLMContext, **kw):
         super().__init__(**kw)
         self._ctx = context
+        self._n = self._voiced = 0
+        self._t = time.monotonic()
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
+        if isinstance(frame, InputAudioRawFrame):
+            # diagnostic : l'interface envoie-t-elle du son, ou seulement du silence ?
+            self._n += 1
+            if frame.audio and np.abs(np.frombuffer(frame.audio, dtype=np.int16)).max() > 500:
+                self._voiced += 1
+            if time.monotonic() - self._t > 10:
+                logger.debug(f"Micro reçu : {self._n} morceaux en 10 s, dont {self._voiced} avec du son")
+                self._n = self._voiced = 0
+                self._t = time.monotonic()
         if isinstance(frame, InputTransportMessageFrame) and isinstance(frame.message, dict):
             m = frame.message
             kind = m.get("type")
@@ -185,6 +202,12 @@ class ClientCommands(FrameProcessor):
                 ]
                 self._ctx.set_messages([{"role": "system", "content": system_prompt()}, *hist])
                 return
+            if kind == "user_text" and m.get("text"):
+                # message tapé pendant le mode voix : même cerveau rapide, réponse dite à voix haute
+                await self.push_frame(
+                    LLMMessagesAppendFrame(messages=[{"role": "user", "content": str(m["text"])}], run_llm=True)
+                )
+                return
             if kind == "say" and m.get("text"):
                 await self.push_frame(TTSSpeakFrame(text=str(m["text"])))
                 return
@@ -192,6 +215,32 @@ class ClientCommands(FrameProcessor):
                 await self.broadcast_interruption()
                 return
         await self.push_frame(frame, direction)
+
+
+async def garder_charge(s: C.VoiceSettings):
+    """Charge le cerveau vocal dans Ollama et l'y garde (sinon ≈ 5 à 10 s de rechargement au premier mot)."""
+    import httpx
+
+    base = s.ollama_url.removesuffix("/v1")
+    try:
+        async with httpx.AsyncClient(timeout=120) as c:
+            await c.post(f"{base}/api/generate", json={"model": s.llm_model, "prompt": "", "keep_alive": "60m"})
+        logger.info(f"{s.llm_model} chargé dans Ollama")
+    except Exception as e:
+        logger.warning(f"Préchargement de {s.llm_model} : {e}")
+
+
+async def penser(s: C.VoiceSettings, messages: list, question: str) -> str:
+    """Réflexion à la demande : même modèle, mode « thinking » activé, réponse courte à dire."""
+    import httpx
+
+    base = s.ollama_url.removesuffix("/v1")
+    msgs = [m for m in messages if isinstance(m, dict) and m.get("role") in ("system", "user", "assistant") and m.get("content")]
+    msgs.append({"role": "user", "content": f"{question}\n\nRéfléchis soigneusement, puis donne une réponse orale claire, en quelques phrases, sans Markdown."})
+    async with httpx.AsyncClient(timeout=170) as c:
+        r = await c.post(f"{base}/api/chat", json={"model": s.llm_model, "messages": msgs, "think": True, "stream": False, "keep_alive": "60m"})
+        r.raise_for_status()
+        return r.json()["message"]["content"].strip()
 
 
 def build_tts(s: C.VoiceSettings, lat: LatencyLog):
@@ -230,8 +279,9 @@ async def main(s: C.VoiceSettings):
             model=s.llm_model,
             temperature=0.6,
             max_tokens=400,
-            # pas de « réflexion » en mode vocal : on veut le premier mot tout de suite
-            extra={"reasoning_effort": "none"},
+            # pas de « réflexion » en mode vocal : on veut le premier mot tout de suite.
+            # Elle est activée à la demande par l'outil `reflechir`.
+            extra={"reasoning_effort": "none", "extra_body": {"think": False}},
         ),
     )
 
@@ -245,7 +295,26 @@ async def main(s: C.VoiceSettings):
             properties=FunctionCallResultProperties(run_llm=False),
         )
 
+    async def reflechir(params: FunctionCallParams):
+        question = str(params.arguments.get("question", "")).strip()
+        await bridge.send({"type": "thinking", "on": True})
+        await params.llm.push_frame(TTSSpeakFrame(text="Attends, je réfléchis."))
+        t0 = time.perf_counter()
+        try:
+            reponse = await penser(s, params.context.get_messages(), question)
+        except Exception as e:  # le dialogue continue même si la réflexion échoue
+            logger.error(f"Réflexion : {e}")
+            reponse = "Désolée, je n'ai pas réussi à réfléchir à ça. Tu peux reformuler ?"
+        logger.info(f"Réflexion terminée en {time.perf_counter() - t0:.1f} s")
+        await bridge.send({"type": "thinking", "on": False})
+        await bridge.send({"type": "bot_start"})
+        await bridge.send({"type": "bot_text", "text": reponse})
+        await bridge.send({"type": "bot_end"})
+        await params.llm.push_frame(TTSSpeakFrame(text=reponse))
+        await params.result_callback({"reponse_dite": reponse}, properties=FunctionCallResultProperties(run_llm=False))
+
     llm.register_function("confier_a_orchestra", confier)
+    llm.register_function("reflechir", reflechir, timeout_secs=180)
     tools = ToolsSchema(
         standard_tools=[
             FunctionSchema(
@@ -253,7 +322,13 @@ async def main(s: C.VoiceSettings):
                 description="Confie un travail concret à la boucle centrale d'Orchestra, qui choisit et supervise les agents.",
                 properties={"tache": {"type": "string", "description": "La tâche, formulée clairement et complètement."}},
                 required=["tache"],
-            )
+            ),
+            FunctionSchema(
+                name="reflechir",
+                description="Prend le temps de réfléchir à fond avant de répondre. Seulement pour les questions qui le méritent.",
+                properties={"question": {"type": "string", "description": "La question complète, avec son contexte."}},
+                required=["question"],
+            ),
         ]
     )
     context = LLMContext(messages=[{"role": "system", "content": system_prompt()}], tools=tools)
@@ -291,6 +366,7 @@ async def main(s: C.VoiceSettings):
         ),
         observers=[bridge],
         idle_timeout_secs=None,
+        enable_rtvi=False,
     )
     bridge.task = task
 
@@ -298,6 +374,7 @@ async def main(s: C.VoiceSettings):
     async def _connected(_transport, _ws):
         logger.info("Interface connectée")
         context.set_messages([{"role": "system", "content": system_prompt()}])
+        asyncio.create_task(garder_charge(s))
         await bridge.send({"type": "ready", "stt": "voxtral-mini-4b-realtime", "llm": s.llm_model, "tts": s.tts})
 
     logger.info(f"Serveur voix prêt sur ws://{s.host}:{s.port} (TTS : {s.tts}, cerveau : {s.llm_model})")
