@@ -257,6 +257,17 @@ async def penser(s: C.VoiceSettings, messages: list, question: str) -> str:
 
 
 def build_tts(s: C.VoiceSettings, lat: LatencyLog):
+    if s.tts_model.startswith("crisp:"):
+        # voix à usage personnel (Voxtral TTS, Pocket TTS) : licences non commerciales
+        from .tts_crisp import CrispTTSService
+
+        voice = s.qwen3_speaker
+        if "pocket" in s.tts_model:
+            found = list((C.MODELES / "pocket-tts" / "voix").rglob(f"{voice}.wav")) or list((C.MODELES / "pocket-tts" / "voix").rglob("*.wav"))
+            voice = str(found[0]) if found else ""
+        tts = CrispTTSService(model_path=C.MODELES / s.tts_model.removeprefix("crisp:"), voice=voice, on_latency=lat.hook)
+        tts.warmup()
+        return tts
     from .tts_qwen3 import Qwen3TTSService
 
     ref = (C.REFERENCES / s.qwen3_reference) if s.qwen3_reference else None

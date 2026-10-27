@@ -475,7 +475,10 @@ export const useStore = create<State>((set, get) => ({
 
   setTtsModel: async (d) => {
     const cfg = get().config!;
-    await get().saveConfig({ ...cfg, voice_tts_model: d, voice_reference: d.includes("Base") ? cfg.voice_reference : "" });
+    const speaker = d.includes("voxtral-tts") ? "fr_female"
+      : d.includes("pocket-tts") ? (get().voiceModels?.pocket_voices.find((v) => v.includes("developpeuse")) ?? get().voiceModels?.pocket_voices[0] ?? "")
+      : (["Ryan", "Aiden", "Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ono_Anna", "Sohee"].includes(cfg.voice_speaker) ? cfg.voice_speaker : "Serena");
+    await get().saveConfig({ ...cfg, voice_tts_model: d, voice_speaker: speaker, voice_reference: d.includes("Base") ? cfg.voice_reference : "" });
     await restartVoice(set, get);
   },
 
@@ -491,7 +494,7 @@ export const useStore = create<State>((set, get) => ({
       return;
     }
     const wasClone = !!cfg.voice_reference || cfg.voice_tts_model.includes("Base");
-    const custom = models?.tts.find((t) => t.includes("CustomVoice")) ?? cfg.voice_tts_model;
+    const custom = cfg.voice_tts_model.startsWith("crisp:") ? cfg.voice_tts_model : (models?.tts.find((t) => t.includes("CustomVoice")) ?? cfg.voice_tts_model);
     await get().saveConfig({ ...cfg, voice_speaker: v, voice_reference: "", voice_tts_model: wasClone ? custom : cfg.voice_tts_model });
     if (wasClone) await restartVoice(set, get);
     else if (get().voiceOn) voice.send({ type: "set_voice", speaker: v });

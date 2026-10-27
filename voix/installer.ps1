@@ -1,6 +1,6 @@
 # Installe le module voix d'Orchestra dans %USERPROFILE%\Orchestra\voix (aucun droit administrateur).
 #
-#   powershell -ExecutionPolicy Bypass -File voix\installer.ps1 [-Etape tout|python|modeles|cuda]
+#   powershell -ExecutionPolicy Bypass -File voix\installer.ps1 [-Etape tout|python|modeles|voix-perso|cuda]
 #
 # Téléchargements (environ 12 Go, validés par PB le 2026-10-27) :
 #   PyTorch CUDA + Pipecat + faster-qwen3-tts . ~3 Go
@@ -39,6 +39,16 @@ if ($Etape -in @("tout", "python")) {
   & $Py -m pip install "transcribe-cpp==0.4.1"
   # le module voix lui-même, en mode développement (le code reste dans le dépôt)
   & $Py -m pip install -e $Src
+}
+
+if ($Etape -eq "voix-perso") {
+  # Voix pour usage PERSONNEL uniquement (licences non commerciales) : jamais dans la version commerciale.
+  #   Voxtral TTS (Mistral, CC BY-NC 4.0) via CrispASR (MIT, GPU par Vulkan) : roue de 29 Mo + modèle 4,3 Go
+  #   Pocket TTS (Kyutai) : paquet pocket-tts, poids téléchargés au premier usage (quelques centaines de Mo)
+  Etape "Voix pour usage personnel (Voxtral TTS, Pocket TTS)"
+  & $Py -m pip install "https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.45/crispasr-0.8.45%2Bvulkan-py3-none-win_amd64.whl"
+  & $Py -m pip install pocket-tts
+  & $Py -m pip install "transformers==5.15.1"
 }
 
 if ($Etape -eq "cuda") {

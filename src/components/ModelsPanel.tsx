@@ -5,10 +5,18 @@ import { I } from "./Icons";
 
 /** Voix préréglées du modèle Qwen3-TTS CustomVoice. */
 const SPEAKERS = ["Ryan", "Aiden", "Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ono_Anna", "Sohee"];
+/** Voix préréglées de Voxtral TTS (Mistral). */
+const VOXTRAL_VOICES = ["fr_female", "fr_male", "neutral_female", "neutral_male", "casual_female", "casual_male", "cheerful_female"];
+
+/** Moteur d'un modèle de synthèse, et sa licence : seul Qwen3-TTS est utilisable commercialement. */
+export const ttsEngine = (d: string) => (d.includes("voxtral-tts") ? "voxtral" : d.includes("pocket-tts") ? "pocket" : "qwen3");
+export const isPersonalOnly = (d: string) => d.startsWith("crisp:");
 
 const pretty = {
   stt: (f: string) => f.replace(/\.gguf$/, "").replace("Voxtral-Mini-4B-Realtime-2602", "Voxtral Mini 4B Realtime").replace(/-/g, " "),
-  tts: (d: string) => d.replace("Qwen3-TTS-12Hz-", "Qwen3-TTS ").replace("-CustomVoice", " · voix préréglées").replace("-Base", " · voix clonées"),
+  tts: (d: string) =>
+    d.includes("voxtral-tts") ? "Voxtral TTS (Mistral)" : d.includes("pocket-tts") ? "Pocket TTS français (Kyutai)" :
+    d.replace("Qwen3-TTS-12Hz-", "Qwen3-TTS ").replace("-CustomVoice", " · voix préréglées").replace("-Base", " · voix clonées"),
   ref: (f: string) => f.replace(/\.(wav|mp3|flac|m4a)$/i, ""),
 };
 
@@ -43,6 +51,7 @@ export function ModelsPanel() {
   const isClone = !!config.voice_reference;
   const currentVoice = isClone ? `ref:${config.voice_reference}` : config.voice_speaker;
   const hasBase = models?.tts.some((t) => t.includes("Base"));
+  const engine = ttsEngine(tts);
 
   const pick = (id: string, fn: (v: string) => void) => (v: string) => { setOpen(null); fn(v); };
 
@@ -67,15 +76,19 @@ export function ModelsPanel() {
         <ModelRow id="voicellm" label="Cerveau" value={config.voice_llm} open={open} setOpen={setOpen}
           options={llms.map((m) => ({ value: m, label: m }))} current={config.voice_llm}
           onPick={pick("voicellm", setVoiceLlm)} empty="Aucun modèle Ollama trouvé" note="Un petit modèle répond plus vite. Réflexion seulement quand la question l'exige." />
-        <ModelRow id="tts" label="Synthèse" value={pretty.tts(tts)} open={open} setOpen={setOpen}
-          options={(models?.tts ?? []).map((d) => ({ value: d, label: pretty.tts(d) }))} current={tts}
-          onPick={pick("tts", setTtsModel)} empty="Aucun modèle de synthèse installé" note="Changer recharge la voix (≈ 30 s)." />
+        <ModelRow id="tts" label="Synthèse" value={pretty.tts(tts)} sub={isPersonalOnly(tts) ? "usage personnel" : undefined} open={open} setOpen={setOpen}
+          options={(models?.tts ?? []).map((d) => ({ value: d, label: pretty.tts(d), hint: isPersonalOnly(d) ? "usage personnel" : "commercial" }))} current={tts}
+          onPick={pick("tts", setTtsModel)} empty="Aucun modèle de synthèse installé"
+          note="Changer recharge la voix (≈ 30 s). « Usage personnel » : licence non commerciale, jamais dans la version commerciale." />
         <ModelRow id="voice" label="Voix" value={isClone ? `${pretty.ref(config.voice_reference)} (clonée)` : config.voice_speaker} open={open} setOpen={setOpen}
           current={currentVoice} onPick={pick("voice", setVoice)} empty=""
-          options={[
-            ...SPEAKERS.map((s) => ({ value: s, label: s, hint: "préréglée" })),
-            ...(models?.references ?? []).map((f) => ({ value: `ref:${f}`, label: pretty.ref(f), hint: hasBase ? "clonée" : "clonée · modèle Base requis" })),
-          ]}
+          options={
+            engine === "voxtral" ? VOXTRAL_VOICES.map((v) => ({ value: v, label: v, hint: "préréglée" })) :
+            engine === "pocket" ? (models?.pocket_voices ?? []).map((v) => ({ value: v, label: v, hint: "référence libre" })) :
+            [
+              ...SPEAKERS.map((s) => ({ value: s, label: s, hint: "préréglée" })),
+              ...(models?.references ?? []).map((f) => ({ value: `ref:${f}`, label: pretty.ref(f), hint: hasBase ? "clonée" : "clonée · modèle Base requis" })),
+            ]}
           note={`Voix clonées : déposer un enregistrement de 5 à 15 s dans voix\\references, avec l'accord de la personne.${hasBase ? "" : " Il faut aussi le modèle Qwen3-TTS Base."}`} />
       </div>
     </>

@@ -95,7 +95,7 @@ export const mockApi = {
   voiceStart: async (): Promise<VoiceStatus> => { throw new Error("démo navigateur : pas de serveur voix"); },
   voiceStop: async () => voiceSt,
   voiceLog: async () => "",
-  voiceModels: async () => ({ stt: ["Voxtral-Mini-4B-Realtime-2602-Q8_0.gguf"], tts: ["Qwen3-TTS-12Hz-1.7B-CustomVoice"], references: [] }),
+  voiceModels: async () => ({ stt: ["Voxtral-Mini-4B-Realtime-2602-Q8_0.gguf"], tts: ["Qwen3-TTS-12Hz-1.7B-CustomVoice"], references: [], pocket_voices: [], crisp: false }),
   voiceRestart: async () => voiceSt,
   ollamaSwitch: async () => {},
 };

@@ -77,6 +77,8 @@ export interface VoiceModels {
   stt: string[];
   tts: string[];
   references: string[];
+  pocket_voices: string[];
+  crisp: boolean;
 }
 
 export interface VoiceStatus {

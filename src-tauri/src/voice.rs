@@ -35,6 +35,10 @@ pub struct VoiceModels {
     pub tts: Vec<String>,
     /// enregistrements de voix/references (voix clonées, avec consentement)
     pub references: Vec<String>,
+    /// voix de référence de Pocket TTS (modeles/pocket-tts/voix, licences libres)
+    pub pocket_voices: Vec<String>,
+    /// le moteur CrispASR (voix à usage personnel) est-il installé ?
+    pub crisp: bool,
 }
 
 pub fn models(paths: &Paths) -> VoiceModels {
@@ -47,12 +51,43 @@ pub fn models(paths: &Paths) -> VoiceModels {
         v.sort();
         v
     };
+    let crisp = voix(paths).join("env").join("Lib").join("site-packages").join("crispasr").exists();
+    let mut tts = list(m.join("qwen3-tts"), &|p| p.join("model.safetensors").exists());
+    if crisp {
+        // voix à usage personnel (licences non commerciales), servies par CrispASR
+        for (dir, prefix) in [("voxtral-tts", "voxtral-tts"), ("pocket-tts", "pocket-tts")] {
+            for f in list(m.join(dir), &|p| p.extension().map_or(false, |e| e == "gguf")) {
+                if prefix != "pocket-tts" || f.contains("french") {
+                    tts.push(format!("crisp:{dir}/{f}"));
+                }
+            }
+        }
+    }
+    let mut pocket_voices = Vec::new();
+    collect_wavs(&m.join("pocket-tts").join("voix"), &mut pocket_voices, 3);
+    pocket_voices.sort();
     VoiceModels {
         stt: list(m.join("voxtral"), &|p| p.extension().map_or(false, |e| e == "gguf")),
-        tts: list(m.join("qwen3-tts"), &|p| p.join("model.safetensors").exists()),
+        tts,
+        pocket_voices,
+        crisp,
         references: list(voix(paths).join("references"), &|p| {
             p.extension().map_or(false, |e| ["wav", "mp3", "flac", "m4a"].contains(&e.to_string_lossy().to_lowercase().as_str()))
         }),
+    }
+}
+
+fn collect_wavs(dir: &std::path::Path, out: &mut Vec<String>, depth: u32) {
+    let Ok(rd) = dir.read_dir() else { return };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.is_dir() && depth > 0 {
+            collect_wavs(&p, out, depth - 1);
+        } else if p.extension().map_or(false, |x| x == "wav") {
+            if let Some(n) = p.file_stem() {
+                out.push(n.to_string_lossy().to_string());
+            }
+        }
     }
 }
 
