@@ -28,6 +28,7 @@ from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
     Frame,
+    FunctionCallResultProperties,
     InputTransportMessageFrame,
     InterimTranscriptionFrame,
     LLMFullResponseEndFrame,
@@ -132,6 +133,9 @@ class UIBridge(BaseObserver):
 
     async def on_push_frame(self, data: FramePushed):
         f = data.frame
+        # certaines trames sont diffusées dans les deux sens : on ne compte que la descendante
+        if data.direction != FrameDirection.DOWNSTREAM:
+            return
         now = time.perf_counter()
         if isinstance(f, VADUserStartedSpeakingFrame):
             self.lat.reset()
@@ -234,8 +238,11 @@ async def main(s: C.VoiceSettings):
     async def confier(params: FunctionCallParams):
         tache = str(params.arguments.get("tache", "")).strip()
         await bridge.send({"type": "delegate", "text": tache})
+        # accusé de réception immédiat, sans second appel au cerveau (gain d'environ une demi-seconde)
+        await params.llm.push_frame(TTSSpeakFrame(text="D'accord, je m'en occupe et je te dis quand c'est prêt."))
         await params.result_callback(
-            {"resultat": "Tâche confiée à Orchestra, qui annoncera le résultat. Dis-le en une phrase courte."}
+            {"resultat": "Tâche confiée à Orchestra, qui annoncera le résultat."},
+            properties=FunctionCallResultProperties(run_llm=False),
         )
 
     llm.register_function("confier_a_orchestra", confier)

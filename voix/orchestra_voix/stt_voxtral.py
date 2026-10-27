@@ -114,8 +114,7 @@ class VoxtralRealtimeSTTService(STTService):
         if not self._stream:
             return ""
         try:
-            # un peu de silence pour que le dernier mot soit bien émis
-            self._stream.feed(np.zeros(int(16000 * 0.3), dtype=np.float32))
+            # pas de silence ajouté : le VAD vient déjà d'en faire passer stop_secs (≈350 ms)
             self._stream.finalize()
             snap = self._stream.snapshot()
             text = snap.text or self._stream.text().display

@@ -15,11 +15,12 @@ Proposé, à valider par PB (voir « Blocages ») : sur le PC de PB, avec Ollama
 - Vérifié le 2026-10-26 dans le journal : un vrai échange avec Ollama a abouti (réponse à « qui es-tu »). La délégation à un agent sur le vrai Ollama n'a pas encore été testée par PB.
 - Agent Market : URL toujours absente, Orchestra utilise le registre local (agents de démo).
 - Mode vocal (V0.3, en cours depuis le 2026-10-27) : sous-module `voix/` écrit selon le plan de PB (Pipecat, Voxtral Mini 4B Realtime, Qwen 3.5 9B, Qwen3-TTS). Dans l'interface : bouton micro, appuyer-pour-parler, onde du cœur qui suit le micro et la voix, réglages « Voix », délégation vocale vers la boucle centrale. Python, PyTorch CUDA, Pipecat et les modèles (Voxtral Q8, Qwen3-TTS 1.7B) sont installés dans `C:\Users\pbdan\Orchestra\voix\`.
-- Mesures du 2026-10-27 : Qwen 3.5 9B sort son premier mot en 138 ms. Qwen3-TTS officiel met 6,8 s avant le premier son : trop lent, remplacé par faster-qwen3-tts (MIT, en flux, graphes CUDA), pas encore mesuré.
-- On s'est arrêté en attendant que PB lance deux étapes d'installation bloquées par le garde-fou de Claude (voir « Prochaine action »).
+- Boucle vocale testée de bout en bout le 2026-10-27 (phrase jouée comme un micro) : environ 1,8 s entre la fin de la phrase et le premier son de la réponse. Détail : fin de parole détectée ≈ 420 ms, Voxtral ≈ 230 à 330 ms, Qwen 3.5 9B ≈ 270 à 640 ms, Qwen3-TTS (faster-qwen3-tts) ≈ 400 à 450 ms. Une demande de travail est bien confiée à l'orchestrateur (« D'accord, je m'en occupe » en 2,4 s).
+- Voxtral tourne via transcribe.cpp précompilé sur le GPU par Vulkan (pas de compilation CUDA). transformers figé à 5.15.1 (5.20 et 5.21 cassent Qwen3-TTS).
+- Mémoire GPU presque pleine pendant la voix (≈ 23 Go sur 24, avec Ollama en contexte 64k).
 
 ## Prochaine action
-PB lance, depuis ce dossier : `powershell -ExecutionPolicy Bypass -File voix\installer.ps1 -Etape python`, puis la même commande avec `-Etape transcribe` (faster-qwen3-tts et compilation CUDA de transcribe.cpp). Ensuite : mesure complète avec `python -m orchestra_voix.bench`, puis essai dans Orchestra (Paramètres, Voix, Activer, puis bouton micro).
+PB essaie au micro dans Orchestra : Paramètres, Voix, Activer le mode vocal, Enregistrer, puis bouton micro (premier lancement ≈ 30 s de chargement). Ensuite, réduire la latence : envoyer à la voix le premier morceau de phrase sans attendre la phrase entière, régler la fin de parole, réduire le contexte d'Ollama en mode vocal.
 
 ## Décisions
 - 2026-10-25 — Application de bureau Windows en Tauri 2 (Rust + React/TypeScript), installateur léger.
@@ -43,7 +44,8 @@ PB lance, depuis ce dossier : `powershell -ExecutionPolicy Bypass -File voix\ins
 ## Étapes
 - [x] V1 : orchestrateur transparent (rappel, analyse, recherche d'agent, délégation, mémorisation), interface, registre local
 - [x] V0.2 : état Ollama explicite et chargement du modèle, verre glacé, agents modulaires, simulation
-- [ ] Mode vocal : finir l'installation (faster-qwen3-tts, transcribe.cpp), mesurer la latence complète, essai par PB
+- [x] Mode vocal : installation et boucle complète testée (≈ 1,8 s)
+- [ ] Mode vocal : essai au micro par PB, puis réduction de la latence vers 0,8 s
 - [ ] PB teste une vraie délégation sur Ollama
 - [ ] Brancher l'Agent Market réel (URL et format à fournir par PB)
 - [ ] Brancher Mail Adagio comme agent
@@ -51,7 +53,7 @@ PB lance, depuis ce dossier : `powershell -ExecutionPolicy Bypass -File voix\ins
 - [ ] Mémoire optimisée (index par embeddings, résumés, oubli)
 
 ## Blocages et questions ouvertes
-- Installation vocale : le garde-fou de Claude bloque l'installation de code externe (transcribe.cpp, faster-qwen3-tts). PB lance les deux commandes ou accorde la permission.
+- Installation vocale : le garde-fou de Claude bloque l'installation de code externe ; PB lance lui-même `voix\installer.ps1` quand il faut.
 - Voix française : les voix préréglées de Qwen3-TTS ne sont pas natives en français. Une voix clonée (modèle Base, 4,5 Go de plus, avec consentement de la personne) sonnerait plus naturelle. À décider après écoute.
 - URL et format de l'Agent Market : à fournir par PB.
 - Critère de fin proposé ci-dessus : à valider ou corriger par PB.
@@ -63,3 +65,4 @@ PB lance, depuis ce dossier : `powershell -ExecutionPolicy Bypass -File voix\ins
 - 2026-10-26 — V0.2 livrée suite aux retours de PB (état Ollama, chargement du modèle, style, agents modulaires, simulation), poussée sur GitHub.
 - 2026-10-27 — Projet enregistré dans le suivi : création de ce SUIVI.md et ajout à INDEX.md.
 - 2026-10-27 — Mode vocal : sous-module `voix/` et intégration dans l'interface ; dépendances et modèles installés ; première mesure (cerveau 138 ms ; Qwen3-TTS officiel trop lent, remplacé par faster-qwen3-tts).
+- 2026-10-27 — Boucle vocale complète testée : Voxtral (Vulkan), Qwen 3.5 9B, Qwen3-TTS en flux ; environ 1,8 s jusqu'au premier son ; délégation vocale vers l'orchestrateur fonctionnelle. Exe recompilé.

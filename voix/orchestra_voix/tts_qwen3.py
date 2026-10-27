@@ -40,7 +40,7 @@ class Qwen3TTSService(TTSService):
         reference_audio: Path | None = None,
         reference_text: str = "",
         language: str = "French",
-        chunk_steps: int = 4,  # 4 pas à 12 Hz ≈ 333 ms d'audio par morceau
+        chunk_steps: int = 2,  # 2 pas à 12 Hz ≈ 167 ms d'audio par morceau : premier son plus tôt
         on_latency=None,
         **kwargs,
     ):
