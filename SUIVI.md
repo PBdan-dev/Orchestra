@@ -18,9 +18,12 @@ Proposé, à valider par PB (voir « Blocages ») : sur le PC de PB, avec Ollama
 - Boucle vocale testée de bout en bout le 2026-10-27 (phrase jouée comme un micro) : environ 1,8 s entre la fin de la phrase et le premier son de la réponse. Détail : fin de parole détectée ≈ 420 ms, Voxtral ≈ 230 à 330 ms, Qwen 3.5 9B ≈ 270 à 640 ms, Qwen3-TTS (faster-qwen3-tts) ≈ 400 à 450 ms. Une demande de travail est bien confiée à l'orchestrateur (« D'accord, je m'en occupe » en 2,4 s).
 - Voxtral tourne via transcribe.cpp précompilé sur le GPU par Vulkan (pas de compilation CUDA). transformers figé à 5.15.1 (5.20 et 5.21 cassent Qwen3-TTS).
 - Mémoire GPU presque pleine pendant la voix (≈ 23 Go sur 24, avec Ollama en contexte 64k).
+- Interface (2026-10-27 soir) : switch Chat / Voix dans le cœur ; clic sur le cœur = panneau des modèles (cerveau chat ; écoute, cerveau voix, synthèse, voix) avec listes déroulantes. Le switch charge le cerveau du mode et décharge l'autre ; passer en chat arrête le serveur voix (27B + voix > 24 Go), retour en voix ≈ 30 s.
+- Voix : réflexion coupée en mode voix, « Attends, je réfléchis » via l'outil `reflechir` quand la question l'exige ; réflexion active en chat. Coupure de parole activée par défaut. Dialogue continu testé sur 4 tours.
+- Voix choisie par PB (usage personnel) : Voxtral TTS « fr_female » (CC BY-NC) via CrispASR (MIT, Vulkan), dans un processus séparé (conflit de ggml.dll avec l'écoute). Version légère Q4 par défaut, Q8 disponible dans le panneau ; PB jugera la différence à l'usage. Boucle complète : 1,6 à 2,8 s. Qwen3-TTS reste la seule voix de la version commerciale. Pocket TTS français écarté (trop lent).
 
 ## Prochaine action
-PB essaie au micro dans Orchestra : Paramètres, Voix, Activer le mode vocal, Enregistrer, puis bouton micro (premier lancement ≈ 30 s de chargement). Ensuite, réduire la latence : envoyer à la voix le premier morceau de phrase sans attendre la phrase entière, régler la fin de parole, réduire le contexte d'Ollama en mode vocal.
+PB utilise le mode voix au quotidien (switch sous « En veille ») et compare Voxtral Q4 et Q8 sur la durée. Pistes de latence : génération en flux continu pour Voxtral TTS, contexte Ollama réduit en mode voix (64k aujourd'hui), fin de parole plus courte.
 
 ## Décisions
 - 2026-10-25 — Application de bureau Windows en Tauri 2 (Rust + React/TypeScript), installateur léger.
@@ -66,3 +69,4 @@ PB essaie au micro dans Orchestra : Paramètres, Voix, Activer le mode vocal, En
 - 2026-10-27 — Projet enregistré dans le suivi : création de ce SUIVI.md et ajout à INDEX.md.
 - 2026-10-27 — Mode vocal : sous-module `voix/` et intégration dans l'interface ; dépendances et modèles installés ; première mesure (cerveau 138 ms ; Qwen3-TTS officiel trop lent, remplacé par faster-qwen3-tts).
 - 2026-10-27 — Boucle vocale complète testée : Voxtral (Vulkan), Qwen 3.5 9B, Qwen3-TTS en flux ; environ 1,8 s jusqu'au premier son ; délégation vocale vers l'orchestrateur fonctionnelle. Exe recompilé.
+- 2026-10-27 (soir) — Panneau des modèles et switch dans le cœur ; dialogue vocal continu et réflexion à la demande ; Voxtral TTS fr_female choisie par PB pour l'usage personnel (Q4 par défaut, Q8 disponible).
