@@ -65,4 +65,7 @@ class VoiceSettings:
     qwen3_reference_text: str = ""
     # détection de fin de parole
     vad_stop_secs: float = 0.35
+    # modèles choisis dans le panneau d'Orchestra (vides = modèles par défaut)
+    stt_model: str = ""
+    tts_model: str = ""
     extra: dict = field(default_factory=dict)

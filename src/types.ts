@@ -69,6 +69,14 @@ export interface Config {
   voice_speaker: string;
   voice_reference: string;
   voice_port: number;
+  voice_stt_model: string;
+  voice_tts_model: string;
+}
+
+export interface VoiceModels {
+  stt: string[];
+  tts: string[];
+  references: string[];
 }
 
 export interface VoiceStatus {

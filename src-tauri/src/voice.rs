@@ -26,6 +26,36 @@ pub struct VoiceStatus {
     pub dir: String,
 }
 
+/// Modèles installés pour la voix, pour les listes du panneau latéral.
+#[derive(Serialize)]
+pub struct VoiceModels {
+    /// fichiers GGUF de Voxtral (écoute)
+    pub stt: Vec<String>,
+    /// dossiers Qwen3-TTS (synthèse) ; « Base » = voix clonées, « CustomVoice » = voix préréglées
+    pub tts: Vec<String>,
+    /// enregistrements de voix/references (voix clonées, avec consentement)
+    pub references: Vec<String>,
+}
+
+pub fn models(paths: &Paths) -> VoiceModels {
+    let m = voix(paths).join("modeles");
+    let list = |dir: PathBuf, keep: &dyn Fn(&std::path::Path) -> bool| -> Vec<String> {
+        let mut v: Vec<String> = dir
+            .read_dir()
+            .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| keep(p)).filter_map(|p| p.file_name().map(|n| n.to_string_lossy().to_string())).collect())
+            .unwrap_or_default();
+        v.sort();
+        v
+    };
+    VoiceModels {
+        stt: list(m.join("voxtral"), &|p| p.extension().map_or(false, |e| e == "gguf")),
+        tts: list(m.join("qwen3-tts"), &|p| p.join("model.safetensors").exists()),
+        references: list(voix(paths).join("references"), &|p| {
+            p.extension().map_or(false, |e| ["wav", "mp3", "flac", "m4a"].contains(&e.to_string_lossy().to_lowercase().as_str()))
+        }),
+    }
+}
+
 fn voix(paths: &Paths) -> PathBuf {
     paths.root.join("voix")
 }
@@ -53,11 +83,12 @@ fn missing(paths: &Paths) -> Vec<String> {
     if !has_dll {
         m.push("transcribe.cpp (moteur de Voxtral)".into());
     }
-    if !v.join("modeles").join("voxtral").join("Voxtral-Mini-4B-Realtime-2602-Q8_0.gguf").exists() {
+    let mo = models(paths);
+    if mo.stt.is_empty() {
         m.push("modèle Voxtral Mini 4B Realtime".into());
     }
-    if !v.join("modeles").join("qwen3-tts").join("Qwen3-TTS-12Hz-1.7B-CustomVoice").join("model.safetensors").exists() {
-        m.push("modèle Qwen3-TTS 1.7B".into());
+    if mo.tts.is_empty() {
+        m.push("modèle Qwen3-TTS".into());
     }
     m
 }
@@ -121,6 +152,11 @@ impl VoiceProcess {
         if !cfg.voice_reference.is_empty() {
             cmd.args(["--reference", &cfg.voice_reference]);
         }
+        // modèles choisis dans le panneau (sinon les premiers installés)
+        let mo = models(paths);
+        let stt = if mo.stt.contains(&cfg.voice_stt_model) { cfg.voice_stt_model.clone() } else { mo.stt[0].clone() };
+        let tts = if mo.tts.contains(&cfg.voice_tts_model) { cfg.voice_tts_model.clone() } else { mo.tts[0].clone() };
+        cmd.args(["--stt-model", &stt, "--tts-model", &tts]);
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;

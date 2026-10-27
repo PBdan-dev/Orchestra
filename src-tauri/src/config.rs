@@ -41,6 +41,10 @@ pub struct Config {
     /// Fichier de voix/references/ à cloner (vide = voix préréglée). Consentement obligatoire.
     pub voice_reference: String,
     pub voice_port: u16,
+    /// Modèle d'écoute : fichier GGUF de voix/modeles/voxtral.
+    pub voice_stt_model: String,
+    /// Modèle de synthèse : dossier de voix/modeles/qwen3-tts.
+    pub voice_tts_model: String,
 }
 
 impl Default for Config {
@@ -68,6 +72,8 @@ impl Default for Config {
             voice_speaker: "Ryan".into(),
             voice_reference: String::new(),
             voice_port: 8765,
+            voice_stt_model: "Voxtral-Mini-4B-Realtime-2602-Q8_0.gguf".into(),
+            voice_tts_model: "Qwen3-TTS-12Hz-1.7B-CustomVoice".into(),
         }
     }
 }

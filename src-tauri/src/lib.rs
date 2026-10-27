@@ -211,6 +211,43 @@ fn voice_stop(state: State<AppState>) -> voice::VoiceStatus {
 }
 
 #[tauri::command]
+fn voice_models(state: State<AppState>) -> voice::VoiceModels {
+    voice::models(&state.paths)
+}
+
+/// Redémarre le serveur voix (changement de modèle d'écoute ou de synthèse).
+#[tauri::command]
+fn voice_restart(state: State<AppState>) -> CmdResult<voice::VoiceStatus> {
+    state.voice.stop();
+    let cfg = state.config.lock().unwrap().clone();
+    state.voice.start(&state.paths, &cfg).map_err(err)?;
+    Ok(state.voice.status(&state.paths, &cfg))
+}
+
+/// Ollama : charge `load` (gardé 30 min) et décharge `unload` pour libérer la mémoire GPU.
+#[tauri::command]
+async fn ollama_switch(state: State<'_, AppState>, load: Option<String>, unload: Option<String>) -> CmdResult<()> {
+    let base = state.config.lock().unwrap().ollama_url.trim_end_matches('/').to_string();
+    if let Some(m) = unload.filter(|m| !m.is_empty()) {
+        let _ = state.http.post(format!("{base}/api/generate")).json(&serde_json::json!({ "model": m, "keep_alive": 0 })).send().await;
+    }
+    if let Some(m) = load.filter(|m| !m.is_empty()) {
+        let r = state
+            .http
+            .post(format!("{base}/api/generate"))
+            .timeout(std::time::Duration::from_secs(900))
+            .json(&serde_json::json!({ "model": m, "prompt": "", "keep_alive": "30m", "stream": false }))
+            .send()
+            .await
+            .map_err(err)?;
+        if !r.status().is_success() {
+            return Err(format!("Ollama a répondu {}", r.status()));
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn voice_log(state: State<AppState>) -> String {
     voice::VoiceProcess::log_tail(&state.paths, 40)
 }
@@ -260,6 +297,9 @@ pub fn run() {
             voice_start,
             voice_stop,
             voice_log,
+            voice_models,
+            voice_restart,
+            ollama_switch,
         ])
         .build(tauri::generate_context!())
         .expect("erreur au lancement d'Orchestra")

@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { api, onEvent } from "./tauri";
 import { VoiceClient, type VoiceEvent } from "./voice";
 import type {
-  AgentNode, BrainInfo, ChatMessage, Config, Entry, Manifest, OrchestraEvent, PathsInfo, Phase, VoiceLatency, VoiceStatus,
+  AgentNode, BrainInfo, ChatMessage, Config, Entry, Manifest, OrchestraEvent, PathsInfo, Phase, VoiceLatency, VoiceModels, VoiceStatus,
 } from "./types";
 
 export type View = "stage" | "memory" | "journal" | "settings";
@@ -75,6 +75,9 @@ interface State {
   voiceInterim: string;
   voiceLatency: VoiceLatency | null;
   voiceError: string;
+  voiceModels: VoiceModels | null;
+  /** changement de modèle en cours (libellé) */
+  switching: string;
 
   setMemoryFocus: (f: string | null) => void;
   setView: (v: View) => void;
@@ -105,6 +108,27 @@ interface State {
   holdVoice: (down: boolean) => void;
   stopSpeaking: () => void;
   onVoice: (e: VoiceEvent) => void;
+  refreshVoiceModels: () => Promise<void>;
+  /** Panneau des modèles */
+  setChatModel: (m: string) => Promise<void>;
+  setVoiceLlm: (m: string) => Promise<void>;
+  setSttModel: (f: string) => Promise<void>;
+  setTtsModel: (d: string) => Promise<void>;
+  /** voix préréglée (« Ryan »…) ou voix clonée (fichier de references, préfixe « ref: ») */
+  setVoice: (v: string) => Promise<void>;
+}
+
+/** Redémarre le serveur voix après un changement de modèle d'écoute ou de synthèse. */
+async function restartVoice(set: (p: Partial<State>) => void, get: () => State) {
+  if (!get().voiceStatus?.running && !get().voiceOn) return; // pris en compte au prochain passage en voix
+  set({ switching: "Je recharge ma voix… (≈ 30 s)" });
+  try {
+    const st = await api.voiceRestart();
+    set({ voiceStatus: st });
+  } catch (e) {
+    set({ voiceError: String(e) });
+  }
+  set({ switching: "" });
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -137,6 +161,8 @@ export const useStore = create<State>((set, get) => ({
   voiceInterim: "",
   voiceLatency: null,
   voiceError: "",
+  voiceModels: null,
+  switching: "",
 
   setMemoryFocus: (memoryFocus) => set({ memoryFocus }),
   setView: (view) => set({ view }),
@@ -161,7 +187,7 @@ export const useStore = create<State>((set, get) => ({
         set({ config, paths });
         await onEvent((e) => get().handle(e));
         voice = new VoiceClient((e) => get().onVoice(e));
-        await Promise.all([get().refreshBrain(), get().refreshAgents(), get().refreshVoice()]);
+        await Promise.all([get().refreshBrain(), get().refreshAgents(), get().refreshVoice(), get().refreshVoiceModels()]);
         set({ bootDone: true });
         // revérifie le cerveau régulièrement (Ollama lancé après Orchestra, modèle déchargé…)
         setInterval(() => {
@@ -308,12 +334,21 @@ export const useStore = create<State>((set, get) => ({
       voice.disconnect();
       set({ voiceOn: false, voiceUser: false, voiceHeld: false, voiceInterim: "", voiceConn: "off" });
       if ((s.phase === "listening" || s.phase === "speaking") && !s.busy) set({ phase: "idle", phaseLabel: "" });
+      // retour au chat : on libère la mémoire GPU de la voix et on charge le cerveau du chat
+      try { set({ voiceStatus: await api.voiceStop() }); } catch { /* déjà arrêté */ }
+      const cfg = get().config;
+      await api.ollamaSwitch(null, cfg?.voice_llm ?? null).catch(() => {});
+      await get().refreshBrain();
+      if (get().brain?.model !== cfg?.voice_llm || get().brain?.state === "not_loaded") get().loadModel();
       return;
     }
     set({ voiceError: "" });
     try {
       let st = await api.voiceStatus();
       if (!st.installed) throw new Error(`module voix incomplet : ${st.missing.join(", ")}`);
+      // passage à la voix : on décharge le cerveau du chat (le serveur voix charge le sien, plus léger)
+      const chatModel = get().brain?.model;
+      if (chatModel && chatModel !== get().config?.voice_llm) api.ollamaSwitch(null, chatModel).catch(() => {});
       if (!st.running) st = await api.voiceStart();
       set({ voiceStatus: st });
       const cfg = get().config!;
@@ -404,6 +439,62 @@ export const useStore = create<State>((set, get) => ({
       default:
         break;
     }
+  },
+
+  refreshVoiceModels: async () => {
+    try { set({ voiceModels: await api.voiceModels() }); } catch { /* sans module voix */ }
+  },
+
+  setChatModel: async (m) => {
+    const cfg = get().config!;
+    set({ switching: `Je charge ${m}…` });
+    await get().saveConfig({ ...cfg, model: m });
+    if (!get().voiceOn) {
+      const old = get().brain?.model;
+      await api.ollamaSwitch(m, old && old !== m ? old : null).catch((e) => set({ voiceError: String(e) }));
+      await get().refreshBrain();
+    }
+    set({ switching: "" });
+  },
+
+  setVoiceLlm: async (m) => {
+    const cfg = get().config!;
+    await get().saveConfig({ ...cfg, voice_llm: m });
+    if (get().voiceOn) {
+      const old = cfg.voice_llm;
+      if (old && old !== m) api.ollamaSwitch(null, old).catch(() => {});
+      voice.send({ type: "set_llm", model: m }); // le serveur change de cerveau à chaud et le précharge
+    }
+  },
+
+  setSttModel: async (f) => {
+    const cfg = get().config!;
+    await get().saveConfig({ ...cfg, voice_stt_model: f });
+    await restartVoice(set, get);
+  },
+
+  setTtsModel: async (d) => {
+    const cfg = get().config!;
+    await get().saveConfig({ ...cfg, voice_tts_model: d, voice_reference: d.includes("Base") ? cfg.voice_reference : "" });
+    await restartVoice(set, get);
+  },
+
+  setVoice: async (v) => {
+    const cfg = get().config!;
+    const models = get().voiceModels;
+    if (v.startsWith("ref:")) {
+      // voix clonée : il faut un modèle « Base » de Qwen3-TTS
+      const base = models?.tts.find((t) => t.includes("Base"));
+      if (!base) { set({ voiceError: "Pour une voix clonée, il faut le modèle Qwen3-TTS Base (4,5 Go)." }); return; }
+      await get().saveConfig({ ...cfg, voice_reference: v.slice(4), voice_tts_model: base });
+      await restartVoice(set, get);
+      return;
+    }
+    const wasClone = !!cfg.voice_reference || cfg.voice_tts_model.includes("Base");
+    const custom = models?.tts.find((t) => t.includes("CustomVoice")) ?? cfg.voice_tts_model;
+    await get().saveConfig({ ...cfg, voice_speaker: v, voice_reference: "", voice_tts_model: wasClone ? custom : cfg.voice_tts_model });
+    if (wasClone) await restartVoice(set, get);
+    else if (get().voiceOn) voice.send({ type: "set_voice", speaker: v });
   },
 
   handle: (e) => {

@@ -33,6 +33,7 @@ from pipecat.frames.frames import (
     InputAudioRawFrame,
     InputTransportMessageFrame,
     LLMMessagesAppendFrame,
+    LLMUpdateSettingsFrame,
     InterimTranscriptionFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
@@ -174,9 +175,11 @@ class UIBridge(BaseObserver):
 class ClientCommands(FrameProcessor):
     """Commandes envoyées par l'interface : contexte du chat, lecture d'un texte, arrêt."""
 
-    def __init__(self, context: LLMContext, **kw):
+    def __init__(self, context: LLMContext, settings: C.VoiceSettings, tts=None, **kw):
         super().__init__(**kw)
         self._ctx = context
+        self._s = settings
+        self._tts = tts
         self._n = self._voiced = 0
         self._t = time.monotonic()
 
@@ -210,6 +213,16 @@ class ClientCommands(FrameProcessor):
                 return
             if kind == "say" and m.get("text"):
                 await self.push_frame(TTSSpeakFrame(text=str(m["text"])))
+                return
+            if kind == "set_llm" and m.get("model"):
+                self._s.llm_model = str(m["model"])
+                await self.push_frame(LLMUpdateSettingsFrame(delta=OLLamaLLMService.Settings(model=self._s.llm_model)))
+                asyncio.create_task(garder_charge(self._s))
+                logger.info(f"Cerveau vocal : {self._s.llm_model}")
+                return
+            if kind == "set_voice" and m.get("speaker") and self._tts is not None:
+                self._tts.set_speaker(str(m["speaker"]))
+                logger.info(f"Voix : {m['speaker']}")
                 return
             if kind == "stop":
                 await self.broadcast_interruption()
@@ -248,7 +261,7 @@ def build_tts(s: C.VoiceSettings, lat: LatencyLog):
 
     ref = (C.REFERENCES / s.qwen3_reference) if s.qwen3_reference else None
     tts = Qwen3TTSService(
-        model_path=C.QWEN3_TTS_BASE if ref else C.QWEN3_TTS,
+        model_path=(C.MODELES / "qwen3-tts" / s.tts_model) if s.tts_model else (C.QWEN3_TTS_BASE if ref else C.QWEN3_TTS),
         speaker=s.qwen3_speaker,
         reference_audio=ref,
         reference_text=s.qwen3_reference_text,
@@ -270,7 +283,7 @@ async def main(s: C.VoiceSettings):
     from .stt_voxtral import VoxtralRealtimeSTTService
 
     stt = VoxtralRealtimeSTTService(
-        model_path=C.VOXTRAL_GGUF, library=C.transcribe_library(), delay_ms=s.voxtral_delay_ms, on_latency=lat.hook
+        model_path=(C.MODELES / "voxtral" / s.stt_model) if s.stt_model else C.VOXTRAL_GGUF, library=C.transcribe_library(), delay_ms=s.voxtral_delay_ms, on_latency=lat.hook
     )
     tts = build_tts(s, lat)
     llm = OLLamaLLMService(
@@ -349,7 +362,7 @@ async def main(s: C.VoiceSettings):
     pipeline = Pipeline(
         [
             transport.input(),
-            ClientCommands(context),
+            ClientCommands(context, s, tts),
             VADProcessor(vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=s.vad_stop_secs))),
             stt,
             agg.user(),
@@ -389,10 +402,13 @@ def cli():
     p.add_argument("--reference", default="", help="fichier de voix/references/ à cloner (avec consentement)")
     p.add_argument("--reference-text", default="")
     p.add_argument("--vad-stop", type=float, default=0.35)
+    p.add_argument("--stt-model", default="", help="fichier GGUF de modeles/voxtral")
+    p.add_argument("--tts-model", default="", help="dossier de modeles/qwen3-tts")
     a = p.parse_args()
     s = C.VoiceSettings(
         port=a.port, llm_model=a.llm, qwen3_speaker=a.speaker,
         qwen3_reference=a.reference, qwen3_reference_text=a.reference_text, vad_stop_secs=a.vad_stop,
+        stt_model=a.stt_model, tts_model=a.tts_model,
     )
     asyncio.run(main(s))
 

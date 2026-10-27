@@ -64,6 +64,10 @@ class Qwen3TTSService(TTSService):
         self._on_latency = on_latency
         logger.info(f"Qwen3-TTS chargé en {time.perf_counter() - t0:.1f} s ({model_path.name})")
 
+    def set_speaker(self, speaker: str):
+        """Change la voix préréglée à chaud (modèle CustomVoice)."""
+        self._speaker = speaker
+
     def can_generate_metrics(self) -> bool:
         return True
 

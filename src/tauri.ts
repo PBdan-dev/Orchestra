@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { BrainInfo, Config, Manifest, MemoryFile, OrchestraEvent, PathsInfo, VoiceStatus } from "./types";
+import type { BrainInfo, Config, Manifest, MemoryFile, OrchestraEvent, PathsInfo, VoiceModels, VoiceStatus } from "./types";
 import { mockApi, mockOnEvent } from "./mock";
 
 /** Vrai quand l'interface tourne dans la fenêtre Tauri ; sinon on est en démo navigateur. */
@@ -29,6 +29,9 @@ const real = {
   voiceStart: () => invoke<VoiceStatus>("voice_start"),
   voiceStop: () => invoke<VoiceStatus>("voice_stop"),
   voiceLog: () => invoke<string>("voice_log"),
+  voiceModels: () => invoke<VoiceModels>("voice_models"),
+  voiceRestart: () => invoke<VoiceStatus>("voice_restart"),
+  ollamaSwitch: (load: string | null, unload: string | null) => invoke<void>("ollama_switch", { load, unload }),
 };
 
 export const api: typeof real = isTauri ? real : (mockApi as unknown as typeof real);
