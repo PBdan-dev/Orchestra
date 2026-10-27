@@ -7,6 +7,7 @@ dependencies = [
   "pipecat-ai[silero,websocket,openai]==1.14.0",
   "faster-qwen3-tts==0.5.4",
   "transformers>=5.15.1,<5.21",
+  "transcribe-cpp==0.4.1",
   "httpx",
   "numpy",
   "soundfile",

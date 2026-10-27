@@ -41,14 +41,17 @@ fn missing(paths: &Paths) -> Vec<String> {
     if !python(paths).exists() {
         m.push("environnement Python (Pipecat, PyTorch)".into());
     }
-    let has_dll = v.join("transcribe.cpp").read_dir().ok().map_or(false, |rd| {
-        rd.flatten().any(|e| {
-            let p = e.path();
-            p.file_name().map_or(false, |n| n.to_string_lossy().starts_with("build")) && find_file(&p, "transcribe.dll", 4)
-        })
-    });
+    // moteur de Voxtral : version précompilée (Vulkan, installée par pip) ou compilée sur place
+    let prebuilt = v.join("env").join("Lib").join("site-packages").join("transcribe_cpp_native").join("_native").join("transcribe.dll");
+    let has_dll = prebuilt.exists()
+        || v.join("transcribe.cpp").read_dir().ok().map_or(false, |rd| {
+            rd.flatten().any(|e| {
+                let p = e.path();
+                p.file_name().map_or(false, |n| n.to_string_lossy().starts_with("build")) && find_file(&p, "transcribe.dll", 4)
+            })
+        });
     if !has_dll {
-        m.push("transcribe.cpp compilé (moteur de Voxtral)".into());
+        m.push("transcribe.cpp (moteur de Voxtral)".into());
     }
     if !v.join("modeles").join("voxtral").join("Voxtral-Mini-4B-Realtime-2602-Q8_0.gguf").exists() {
         m.push("modèle Voxtral Mini 4B Realtime".into());

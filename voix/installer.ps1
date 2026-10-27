@@ -1,12 +1,14 @@
 # Installe le module voix d'Orchestra dans %USERPROFILE%\Orchestra\voix (aucun droit administrateur).
 #
-#   powershell -ExecutionPolicy Bypass -File voix\installer.ps1 [-Etape tout|python|transcribe|modeles]
+#   powershell -ExecutionPolicy Bypass -File voix\installer.ps1 [-Etape tout|python|modeles|cuda]
 #
 # Téléchargements (environ 12 Go, validés par PB le 2026-10-27) :
 #   PyTorch CUDA + Pipecat + faster-qwen3-tts . ~3 Go
 #   Voxtral Mini 4B Realtime Q8_0 (Apache 2.0)  4,7 Go
 #   Qwen3-TTS 1.7B CustomVoice (Apache 2.0) ... 4,5 Go
-# Puis compilation de transcribe.cpp (MIT) avec CUDA.
+# Voxtral tourne avec transcribe.cpp (MIT), version précompilée qui utilise le GPU via Vulkan.
+# L'étape « cuda » (facultative) le recompile avec CUDA ; elle doit être lancée depuis un
+# « Developer PowerShell for VS » pour que nvcc trouve cl.exe.
 
 param([string]$Etape = "tout")
 $ErrorActionPreference = "Stop"
@@ -32,12 +34,14 @@ if ($Etape -in @("tout", "python")) {
   & $Py -m pip install "faster-qwen3-tts==0.5.4"
   # transformers 5.21 casse le chargement du tokenizer de Qwen3-TTS (upsample devenu une propriété)
   & $Py -m pip install "transformers>=5.15.1,<5.21"
+  # moteur de Voxtral : transcribe.cpp précompilé (Vulkan, aucun SDK requis)
+  & $Py -m pip install "transcribe-cpp==0.4.1"
   # le module voix lui-même, en mode développement (le code reste dans le dépôt)
   & $Py -m pip install -e $Src
 }
 
-if ($Etape -in @("tout", "transcribe")) {
-  Etape "transcribe.cpp (Voxtral) avec CUDA"
+if ($Etape -eq "cuda") {
+  Etape "transcribe.cpp (Voxtral) recompilé avec CUDA (facultatif)"
   $Tc = Join-Path $Voix "transcribe.cpp"
   if (-not (Test-Path $Tc)) { git clone --depth 1 https://github.com/handy-computer/transcribe.cpp $Tc }
   $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"

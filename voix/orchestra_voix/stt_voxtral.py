@@ -71,7 +71,14 @@ class VoxtralRealtimeSTTService(STTService):
         t0 = time.perf_counter()
         self._model = transcribe_cpp.Model(str(model_path))
         self._session = self._model.session()
-        logger.info(f"Voxtral chargé en {time.perf_counter() - t0:.1f} s ({model_path.name})")
+        logger.info(f"Voxtral chargé en {time.perf_counter() - t0:.1f} s ({model_path.name}, {self._model.device.description})")
+        # préchauffage : le premier passage compile les shaders Vulkan (≈8 s mesurées), pas pendant la première phrase
+        t0 = time.perf_counter()
+        opts = transcribe_cpp.VoxtralRealtimeStreamOptions(num_delay_tokens=max(1, round(delay_ms / 80)))
+        with self._session.stream(family=opts) as st:
+            st.feed(np.zeros(16000 * 2, dtype=np.float32))
+            st.finalize()
+        logger.info(f"Voxtral préchauffé en {time.perf_counter() - t0:.1f} s")
 
         self._preroll: collections.deque[bytes] = collections.deque()
         self._preroll_bytes = 0
