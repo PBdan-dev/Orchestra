@@ -296,6 +296,10 @@ async def main(s: C.VoiceSettings):
     stt = VoxtralRealtimeSTTService(
         model_path=(C.MODELES / "voxtral" / s.stt_model) if s.stt_model else C.VOXTRAL_GGUF, library=C.transcribe_library(), delay_ms=s.voxtral_delay_ms, on_latency=lat.hook
     )
+    if s.mode == "dictee":
+        await dictee(s, stt, bridge)
+        return
+
     tts = build_tts(s, lat)
     llm = OLLamaLLMService(
         base_url=s.ollama_url,
@@ -405,6 +409,37 @@ async def main(s: C.VoiceSettings):
     await WorkerRunner(handle_sigint=False).run(task)
 
 
+async def dictee(s: C.VoiceSettings, stt, bridge: UIBridge):
+    """Mode dictée du chat : seulement l'écoute (VAD + Voxtral), le texte part dans la zone de saisie.
+
+    Pas de cerveau ni de voix : la mémoire GPU reste libre pour le cerveau du chat.
+    """
+    transport = SingleClientWebsocketServerTransport(
+        params=SingleClientWebsocketServerParams(
+            audio_in_enabled=True, audio_in_sample_rate=16000, audio_out_enabled=False, serializer=OrchestraSerializer(),
+        ),
+        host=s.host,
+        port=s.port,
+    )
+    pipeline = Pipeline([
+        transport.input(),
+        VADProcessor(vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=0.6))),
+        stt,
+        transport.output(),
+    ])
+    task = PipelineWorker(pipeline, params=PipelineParams(audio_in_sample_rate=16000), observers=[bridge],
+                          idle_timeout_secs=None, enable_rtvi=False)
+    bridge.task = task
+
+    @transport.event_handler("on_client_connected")
+    async def _connected(_transport, _ws):
+        logger.info("Dictée : interface connectée")
+        await bridge.send({"type": "ready", "stt": "voxtral-mini-4b-realtime", "mode": "dictee"})
+
+    logger.info(f"Serveur de dictée prêt sur ws://{s.host}:{s.port}")
+    await WorkerRunner(handle_sigint=False).run(task)
+
+
 def cli():
     p = argparse.ArgumentParser(description="Serveur voix d'Orchestra")
     p.add_argument("--port", type=int, default=8765)
@@ -415,11 +450,12 @@ def cli():
     p.add_argument("--vad-stop", type=float, default=0.35)
     p.add_argument("--stt-model", default="", help="fichier GGUF de modeles/voxtral")
     p.add_argument("--tts-model", default="", help="dossier de modeles/qwen3-tts")
+    p.add_argument("--mode", choices=["voix", "dictee"], default="voix", help="dictee : écoute seule, pour le chat")
     a = p.parse_args()
     s = C.VoiceSettings(
         port=a.port, llm_model=a.llm, qwen3_speaker=a.speaker,
         qwen3_reference=a.reference, qwen3_reference_text=a.reference_text, vad_stop_secs=a.vad_stop,
-        stt_model=a.stt_model, tts_model=a.tts_model,
+        stt_model=a.stt_model, tts_model=a.tts_model, mode=a.mode,
     )
     asyncio.run(main(s))
 

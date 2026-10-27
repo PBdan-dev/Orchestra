@@ -492,3 +492,4 @@ pre { margin: 0; font-family: var(--mono); font-size: 12px; white-space: pre-wra
 .model-opt.cur { color: #5eead4; }
 .model-opt .muted { margin-left: auto; font-size: 11px; }
 .model-sep { font-size: 10.5px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted, #94a3b8); padding: 6px 8px 2px; }
+.voice-hint.interim .voice-hint-text { font-style: italic; color: var(--text, #e2e8f0); opacity: .8; }

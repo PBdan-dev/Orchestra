@@ -68,4 +68,6 @@ class VoiceSettings:
     # modèles choisis dans le panneau d'Orchestra (vides = modèles par défaut)
     stt_model: str = ""
     tts_model: str = ""
+    # « voix » : conversation complète ; « dictee » : écoute seule (micro du chat)
+    mode: str = "voix"
     extra: dict = field(default_factory=dict)

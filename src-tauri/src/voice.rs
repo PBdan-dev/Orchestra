@@ -15,6 +15,8 @@ use crate::{config::Config, paths::Paths};
 #[derive(Default)]
 pub struct VoiceProcess {
     child: Mutex<Option<Child>>,
+    /// « voix » (conversation) ou « dictee » (écoute seule, micro du chat)
+    mode: Mutex<String>,
 }
 
 #[derive(Serialize)]
@@ -22,6 +24,7 @@ pub struct VoiceStatus {
     pub installed: bool,
     pub missing: Vec<String>,
     pub running: bool,
+    pub mode: String,
     pub port: u16,
     pub dir: String,
 }
@@ -149,6 +152,7 @@ impl VoiceProcess {
             installed: miss.is_empty(),
             missing: miss,
             running: self.is_running(),
+            mode: self.mode.lock().unwrap().clone(),
             port: cfg.voice_port,
             dir: voix(paths).to_string_lossy().to_string(),
         }
@@ -169,8 +173,15 @@ impl VoiceProcess {
     }
 
     pub fn start(&self, paths: &Paths, cfg: &Config) -> anyhow::Result<()> {
+        self.start_mode(paths, cfg, "voix")
+    }
+
+    pub fn start_mode(&self, paths: &Paths, cfg: &Config, mode: &str) -> anyhow::Result<()> {
         if self.is_running() {
-            return Ok(());
+            if *self.mode.lock().unwrap() == mode {
+                return Ok(());
+            }
+            self.stop(); // autre mode : on relance
         }
         let miss = missing(paths);
         if !miss.is_empty() {
@@ -191,7 +202,7 @@ impl VoiceProcess {
         let mo = models(paths);
         let stt = if mo.stt.contains(&cfg.voice_stt_model) { cfg.voice_stt_model.clone() } else { mo.stt[0].clone() };
         let tts = if mo.tts.contains(&cfg.voice_tts_model) { cfg.voice_tts_model.clone() } else { mo.tts[0].clone() };
-        cmd.args(["--stt-model", &stt, "--tts-model", &tts]);
+        cmd.args(["--stt-model", &stt, "--tts-model", &tts, "--mode", mode]);
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -200,6 +211,7 @@ impl VoiceProcess {
         }
         let child = cmd.spawn()?;
         *self.child.lock().unwrap() = Some(child);
+        *self.mode.lock().unwrap() = mode.to_string();
         Ok(())
     }
 

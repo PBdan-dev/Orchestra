@@ -203,6 +203,14 @@ fn voice_start(state: State<AppState>) -> CmdResult<voice::VoiceStatus> {
     Ok(state.voice.status(&state.paths, &cfg))
 }
 
+/// Démarre le serveur voix dans un mode : « voix » (conversation) ou « dictee » (écoute seule).
+#[tauri::command]
+fn voice_start_mode(state: State<AppState>, mode: String) -> CmdResult<voice::VoiceStatus> {
+    let cfg = state.config.lock().unwrap().clone();
+    state.voice.start_mode(&state.paths, &cfg, &mode).map_err(err)?;
+    Ok(state.voice.status(&state.paths, &cfg))
+}
+
 #[tauri::command]
 fn voice_stop(state: State<AppState>) -> voice::VoiceStatus {
     state.voice.stop();
@@ -298,6 +306,7 @@ pub fn run() {
             voice_stop,
             voice_log,
             voice_models,
+            voice_start_mode,
             voice_restart,
             ollama_switch,
         ])

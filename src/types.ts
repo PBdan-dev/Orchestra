@@ -85,6 +85,7 @@ export interface VoiceStatus {
   installed: boolean;
   missing: string[];
   running: boolean;
+  mode: string;
   port: number;
   dir: string;
 }

@@ -16,7 +16,7 @@ const config: Config = {
   voice_barge_in: true, voice_llm: "qwen3.5:9b", voice_speaker: "Ryan", voice_reference: "", voice_port: 8765,
   voice_stt_model: "Voxtral-Mini-4B-Realtime-2602-Q8_0.gguf", voice_tts_model: "Qwen3-TTS-12Hz-1.7B-CustomVoice",
 };
-const voiceSt: VoiceStatus = { installed: false, missing: ["démo navigateur : pas de serveur voix"], running: false, port: 8765, dir: "" };
+const voiceSt: VoiceStatus = { installed: false, missing: ["démo navigateur : pas de serveur voix"], running: false, mode: "voix", port: 8765, dir: "" };
 
 const redacteur: Manifest = {
   id: "agent-redacteur", name: "Agent Rédacteur", version: "1.0.0", author: "Orchestra (démo)",
@@ -94,6 +94,7 @@ export const mockApi = {
   voiceStatus: async () => voiceSt,
   voiceStart: async (): Promise<VoiceStatus> => { throw new Error("démo navigateur : pas de serveur voix"); },
   voiceStop: async () => voiceSt,
+  voiceStartMode: async (): Promise<VoiceStatus> => { throw new Error("démo navigateur : pas de serveur voix"); },
   voiceLog: async () => "",
   voiceModels: async () => ({ stt: ["Voxtral-Mini-4B-Realtime-2602-Q8_0.gguf"], tts: ["Qwen3-TTS-12Hz-1.7B-CustomVoice"], references: [], pocket_voices: [], crisp: false }),
   voiceRestart: async () => voiceSt,

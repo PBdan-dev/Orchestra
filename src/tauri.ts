@@ -28,6 +28,7 @@ const real = {
   voiceStatus: () => invoke<VoiceStatus>("voice_status"),
   voiceStart: () => invoke<VoiceStatus>("voice_start"),
   voiceStop: () => invoke<VoiceStatus>("voice_stop"),
+  voiceStartMode: (mode: "voix" | "dictee") => invoke<VoiceStatus>("voice_start_mode", { mode }),
   voiceLog: () => invoke<string>("voice_log"),
   voiceModels: () => invoke<VoiceModels>("voice_models"),
   voiceRestart: () => invoke<VoiceStatus>("voice_restart"),

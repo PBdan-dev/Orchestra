@@ -78,6 +78,11 @@ interface State {
   voiceModels: VoiceModels | null;
   /** changement de modèle en cours (libellé) */
   switching: string;
+  /** micro du mode chat : dictée dans la zone de saisie */
+  dictating: boolean;
+  dictInterim: string;
+  /** dernier texte dicté, à ajouter à la zone de saisie (seq change à chaque phrase) */
+  dictFinal: { text: string; seq: number };
 
   setMemoryFocus: (f: string | null) => void;
   setView: (v: View) => void;
@@ -108,6 +113,7 @@ interface State {
   holdVoice: (down: boolean) => void;
   stopSpeaking: () => void;
   onVoice: (e: VoiceEvent) => void;
+  toggleDictation: () => Promise<void>;
   refreshVoiceModels: () => Promise<void>;
   /** Panneau des modèles */
   setChatModel: (m: string) => Promise<void>;
@@ -163,6 +169,9 @@ export const useStore = create<State>((set, get) => ({
   voiceError: "",
   voiceModels: null,
   switching: "",
+  dictating: false,
+  dictInterim: "",
+  dictFinal: { text: "", seq: 0 },
 
   setMemoryFocus: (memoryFocus) => set({ memoryFocus }),
   setView: (view) => set({ view }),
@@ -343,13 +352,14 @@ export const useStore = create<State>((set, get) => ({
       return;
     }
     set({ voiceError: "" });
+    if (s.dictating) await get().toggleDictation();
     try {
       let st = await api.voiceStatus();
       if (!st.installed) throw new Error(`module voix incomplet : ${st.missing.join(", ")}`);
       // passage à la voix : on décharge le cerveau du chat (le serveur voix charge le sien, plus léger)
       const chatModel = get().brain?.model;
       if (chatModel && chatModel !== get().config?.voice_llm) api.ollamaSwitch(null, chatModel).catch(() => {});
-      if (!st.running) st = await api.voiceStart();
+      if (!st.running || st.mode !== "voix") st = await api.voiceStartMode("voix");
       set({ voiceStatus: st });
       const cfg = get().config!;
       voice.muteWhileSpeaking = !cfg.voice_barge_in;
@@ -373,8 +383,41 @@ export const useStore = create<State>((set, get) => ({
 
   stopSpeaking: () => voice?.stopSpeaking(),
 
+  toggleDictation: async () => {
+    const s = get();
+    if (s.dictating) {
+      voice.disconnect();
+      set({ dictating: false, dictInterim: "", voiceConn: "off", voiceUser: false });
+      try { set({ voiceStatus: await api.voiceStop() }); } catch { /* déjà arrêté */ }
+      return;
+    }
+    if (s.voiceOn) return;
+    set({ voiceError: "", dictating: true });
+    try {
+      let st = await api.voiceStatus();
+      if (!st.installed) throw new Error(`module voix incomplet : ${st.missing.join(", ")}`);
+      st = await api.voiceStartMode("dictee"); // écoute seule : le cerveau du chat garde la mémoire GPU
+      set({ voiceStatus: st });
+      voice.muteWhileSpeaking = false;
+      voice.gate = true;
+      await voice.startMic();
+      await voice.connect(st.port);
+    } catch (e) {
+      set({ voiceError: String(e).replace(/^Error: /, ""), dictating: false });
+    }
+  },
+
   onVoice: (e) => {
     const s = get();
+    if (s.dictating) {
+      // dictée : le texte va dans la zone de saisie, rien n'est envoyé
+      if (e.type === "conn") set({ voiceConn: e.state });
+      else if (e.type === "user_start") set({ voiceUser: true, dictInterim: "" });
+      else if (e.type === "user_stop") set({ voiceUser: false });
+      else if (e.type === "user_interim") set({ dictInterim: e.text });
+      else if (e.type === "user_final") set((st) => ({ dictInterim: "", dictFinal: { text: e.text, seq: st.dictFinal.seq + 1 } }));
+      return;
+    }
     switch (e.type) {
       case "conn":
         set({ voiceConn: e.state });
