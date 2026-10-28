@@ -8,7 +8,7 @@ import { Core } from "./Core";
 import { AgentGlyph, I } from "./Icons";
 import { Inspector } from "./Inspector";
 import { AgentsPanel } from "./AgentsPanel";
-import { ModeSwitch } from "./ModeSwitch";
+import { ModeSwitch, VoiceControls } from "./ModeSwitch";
 
 const NODE_R = 31;
 
@@ -51,7 +51,8 @@ export function Stage() {
   const cx = usableW / 2;
   const cy = size.h / 2;
   const minSide = Math.min(usableW, size.h);
-  const R = Math.max(70, Math.min(230, minSide * 0.17 * coreScale));
+  // le cœur peut occuper presque toute la scène (bouton ⤢), sans dépasser
+  const R = Math.max(70, Math.min(minSide * 0.46, minSide * 0.17 * coreScale));
   const orbit = Math.max(R + 70, Math.min(R + 150, minSide / 2 - 64));
 
   // placement : agents de premier niveau sur l'orbite, sous-agents en éventail derrière leur parent
@@ -162,6 +163,7 @@ export function Stage() {
           )}
         </AnimatePresence>
         <ModeSwitch />
+        {voiceOn && <VoiceControls />}
         {(switching || (voiceOn && voiceConn !== "on")) && <span className="core-note">{switching || "Je prépare ma voix… (≈ 30 s)"}</span>}
       </div>
 
@@ -191,8 +193,12 @@ export function Stage() {
       <div className="stage-tools br" style={{ right: inspectorOpen ? 392 : 12 }}>
         <span className="tools-label">Cœur</span>
         <button className="glass-icon" onClick={() => setCoreScale(coreScale - 0.1)} title="Réduire le cœur"><I.minus size={12} /></button>
-        <input className="core-slider" type="range" min={0.6} max={1.6} step={0.02} value={coreScale} onChange={(e) => setCoreScale(Number(e.target.value))} title="Taille du cœur (Ctrl + molette)" />
+        <input className="core-slider" type="range" min={0.6} max={2.6} step={0.02} value={coreScale} onChange={(e) => setCoreScale(Number(e.target.value))} title="Taille du cœur (Ctrl + molette)" />
         <button className="glass-icon" onClick={() => setCoreScale(coreScale + 0.1)} title="Agrandir le cœur"><I.plus size={12} /></button>
+        <button className={`glass-icon ${coreScale >= 2.5 ? "active" : ""}`} onClick={() => setCoreScale(coreScale >= 2.5 ? 1 : 2.6)}
+          title={coreScale >= 2.5 ? "Taille normale" : "Cœur en grand"}>
+          {coreScale >= 2.5 ? <I.shrink size={12} /> : <I.expand size={12} />}
+        </button>
       </div>
 
       <AnimatePresence>{agentsPanel && <AgentsPanel />}</AnimatePresence>

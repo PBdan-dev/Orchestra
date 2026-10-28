@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useStore } from "../store";
 import { I } from "./Icons";
 
@@ -55,6 +55,36 @@ export function ModeSwitch() {
         disabled={!installed} title={installed ? "Voix : conversation orale continue, réponses rapides" : `Module voix incomplet : ${status?.missing.join(", ")}`}>
         {mode === "voix" && voiceConn === "on" ? <span className="mode-dot" /> : <I.mic size={12} />} Voix
       </button>
+    </div>
+  );
+}
+
+/** Dans le cœur, en mode voix : couper le micro, et couper la parole quand Orchestra parle. */
+export function VoiceControls() {
+  const muted = useStore((s) => s.voiceMuted);
+  const setMuted = useStore((s) => s.setMuted);
+  const phase = useStore((s) => s.phase);
+  const stopSpeaking = useStore((s) => s.stopSpeaking);
+  const speaking = phase === "speaking";
+
+  // Échap coupe la parole
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && useStore.getState().phase === "speaking") stopSpeaking(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  return (
+    <div className="voice-controls" onClick={(e) => e.stopPropagation()}>
+      <button className={`vc-btn mute ${muted ? "on" : ""}`} onClick={() => setMuted(!muted)} aria-pressed={muted}
+        title={muted ? "Micro coupé : Orchestra ne t'entend pas. Clique pour le rouvrir." : "Couper le micro"}>
+        {muted ? <I.micOff size={13} /> : <I.mic size={13} />} {muted ? "Micro coupé" : "Micro ouvert"}
+      </button>
+      {speaking && (
+        <button className="vc-btn stop" onClick={stopSpeaking} title="Couper la parole (Échap)">
+          <I.stop size={11} /> Stop
+        </button>
+      )}
     </div>
   );
 }

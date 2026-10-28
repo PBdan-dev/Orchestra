@@ -4,6 +4,18 @@ type P = { size?: number; className?: string; style?: React.CSSProperties };
 const base = (size = 16) => ({ width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const });
 
 export const I = {
+  expand: ({ size, className, style }: P) => (
+    <svg {...base(size)} className={className} style={style}><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/></svg>
+  ),
+  shrink: ({ size, className, style }: P) => (
+    <svg {...base(size)} className={className} style={style}><path d="M20 10h-6V4M4 14h6v6M14 10l7-7M10 14l-7 7"/></svg>
+  ),
+  micOff: ({ size, className, style }: P) => (
+    <svg {...base(size)} className={className} style={style}><path d="M9 9v2a3 3 0 0 0 5.1 2.1M15 9.3V6a3 3 0 0 0-5.7-1.3"/><path d="M5 11a7 7 0 0 0 11.5 5.4M19 11a7 7 0 0 1-.6 2.8M12 18v3M3 3l18 18"/></svg>
+  ),
+  stop: ({ size, className, style }: P) => (
+    <svg {...base(size)} className={className} style={style}><rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor" stroke="none"/></svg>
+  ),
   chevron: ({ size, className, style }: P) => (
     <svg {...base(size)} className={className} style={style}><path d="m9 6 6 6-6 6"/></svg>
   ),

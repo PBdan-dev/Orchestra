@@ -111,7 +111,7 @@ export function Composer() {
         <div className={`voice-hint ${voiceError ? "warn" : ""} ${voiceUser || voiceHeld ? "hot" : ""} ${dictInterim ? "interim" : ""}`}>
           <span className="voice-dot" />
           <span className="voice-hint-text">{voiceError || dictHint || voiceHint}</span>
-          {speaking && <button className="link-btn" onClick={stopSpeaking}>couper la parole</button>}
+          {speaking && <button className="vc-btn stop sm" onClick={stopSpeaking} title="Couper la parole (Échap)"><I.stop size={10} /> Stop</button>}
           {voiceLatency && !voiceError && <span className="muted small" title={`fin de parole ${voiceLatency.vad_ms} ms · écoute ${voiceLatency.stt_ms ?? "?"} ms · cerveau ${voiceLatency.llm_ms ?? "?"} ms · voix ${voiceLatency.tts_ms ?? "?"} ms`}>· réponse en {(voiceLatency.total_ms / 1000).toFixed(2)} s</span>}
         </div>
       )}

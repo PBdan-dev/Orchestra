@@ -76,6 +76,8 @@ interface State {
   voiceInterim: string;
   voiceLatency: VoiceLatency | null;
   voiceError: string;
+  /** micro coupé dans le mode voix (Orchestra n'entend plus rien) */
+  voiceMuted: boolean;
   voiceModels: VoiceModels | null;
   /** changement de modèle en cours (libellé) */
   switching: string;
@@ -113,6 +115,7 @@ interface State {
   /** appuyer-pour-parler */
   holdVoice: (down: boolean) => void;
   stopSpeaking: () => void;
+  setMuted: (m: boolean) => void;
   onVoice: (e: VoiceEvent) => void;
   toggleDictation: () => Promise<void>;
   refreshVoiceModels: () => Promise<void>;
@@ -168,6 +171,7 @@ export const useStore = create<State>((set, get) => ({
   voiceInterim: "",
   voiceLatency: null,
   voiceError: "",
+  voiceMuted: false,
   voiceModels: null,
   switching: "",
   dictating: false,
@@ -178,7 +182,7 @@ export const useStore = create<State>((set, get) => ({
   setView: (view) => set({ view }),
   setInspect: (inspect) => set({ inspect }),
   setCoreScale: (s) => {
-    const coreScale = Math.max(0.6, Math.min(1.6, Math.round(s * 100) / 100));
+    const coreScale = Math.max(0.6, Math.min(2.6, Math.round(s * 100) / 100));
     pref.set("coreScale", coreScale);
     set({ coreScale });
   },
@@ -342,7 +346,7 @@ export const useStore = create<State>((set, get) => ({
     const s = get();
     if (s.voiceOn) {
       voice.disconnect();
-      set({ voiceOn: false, voiceUser: false, voiceHeld: false, voiceInterim: "", voiceConn: "off" });
+      set({ voiceOn: false, voiceUser: false, voiceHeld: false, voiceInterim: "", voiceConn: "off", voiceMuted: false });
       if ((s.phase === "listening" || s.phase === "speaking") && !s.busy) set({ phase: "idle", phaseLabel: "" });
       // retour au chat : on libère la mémoire GPU de la voix et on charge le cerveau du chat
       try { set({ voiceStatus: await api.voiceStop() }); } catch { /* déjà arrêté */ }
@@ -383,6 +387,11 @@ export const useStore = create<State>((set, get) => ({
   },
 
   stopSpeaking: () => voice?.stopSpeaking(),
+
+  setMuted: (m) => {
+    if (voice) voice.gate = !m && get().config?.voice_mode !== "appuyer";
+    set({ voiceMuted: m });
+  },
 
   toggleDictation: async () => {
     if (dictBusy) return; // pendant le chargement, les clics sont ignorés

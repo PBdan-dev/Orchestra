@@ -67,6 +67,16 @@ from .protocol import OrchestraSerializer
 OUT_RATE = 24000
 
 
+JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"]
+
+
+def maintenant() -> str:
+    """Date et heure en toutes lettres : sans elles, le modèle invente la date."""
+    d = datetime.now()
+    return f"{JOURS[d.weekday()]} {d.day} {MOIS[d.month - 1]} {d.year}, il est {d.hour} h {d.minute:02d}"
+
+
 def system_prompt() -> str:
     memoire = ""
     try:
@@ -80,6 +90,7 @@ def system_prompt() -> str:
     except OSError:
         pass
     return (
+        f"Nous sommes le {maintenant()}. "
         "Tu es Orchestra, l'assistant local de l'utilisateur, en conversation vocale. "
         "Réponds en français, à l'oral : phrases courtes et naturelles, une à trois en général. "
         "Jamais de Markdown, de listes, d'emoji ni de code : tout ce que tu écris est lu à voix haute. "
@@ -89,7 +100,9 @@ def system_prompt() -> str:
         "formulée clairement. "
         "Si une question demande vraiment de réfléchir (calcul, raisonnement en plusieurs étapes, "
         "comparaison délicate, conseil important), appelle l'outil reflechir avec la question complète ; "
-        "pour tout le reste, réponds directement sans réfléchir longuement.\n\n"
+        "pour tout le reste, réponds directement sans réfléchir longuement. "
+        "Tiens compte de toute la conversation qui précède : ce que l'utilisateur t'a déjà dit reste vrai, "
+        "ne le contredis pas et ne lui redemande pas.\n\n"
         + (f"Consignes de l'utilisateur sur ta façon de répondre (à respecter en priorité) :\n{consignes}\n\n" if consignes else "")
         + f"Ce que tu sais de l'utilisateur (ta mémoire) :\n{memoire}"
     )
@@ -228,7 +241,7 @@ class ClientCommands(FrameProcessor):
             if kind == "context":
                 hist = [
                     {"role": x["role"], "content": str(x["content"])[:2000]}
-                    for x in m.get("messages", [])[-16:]
+                    for x in m.get("messages", [])[-40:]
                     if x.get("role") in ("user", "assistant") and x.get("content")
                 ]
                 self._ctx.set_messages([{"role": "system", "content": system_prompt()}, *hist])
