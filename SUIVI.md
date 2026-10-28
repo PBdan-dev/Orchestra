@@ -25,8 +25,16 @@ Validé le 2026-10-28 : les 11 critères de `docs/CAHIER_DES_CHARGES.md` §13 (b
 ## État actuel — conception (2026-10-28)
 - Synthèse du projet et cahier des charges pour Claude Code rédigés : `docs/SYNTHESE.md` (dont évaluation complexité / fiabilité et viabilité) et `docs/CAHIER_DES_CHARGES.md` (lots, critères d'acceptation, formats du contrat). Exécutables sans attendre : Phase 0 (mesure), lot A (cache), T1 (contrat), T8 (agents hébergés).
 
+## État actuel — Phase 0 terminée (2026-10-28)
+- Branche Git : `main` reste à la V0.2. Le travail voix (jusqu'à `439ece9`) et la Phase 0 sont sur `claude/project-thread-9jt23q` (poussée sur GitHub, partie de `439ece9`). Fusion dans `main` : sur feu vert de PB.
+- Mesure : chaque appel au cerveau (analyse, réponse, agent, mémorisation) écrit une ligne dans `Orchestra/mesures/cerveau-AAAA-MM-JJ.jsonl` (tokens du prompt calculés, durées, premier token), pour les 5 fournisseurs.
+- Évaluation : `eval/` du dépôt (mémoire de test de 26 faits, 20 questions, 15 tâches, validés par PB). Lanceur : depuis `src-tauri/`, `cargo run --release --example evaluation -- --modele qwen3.6:27b` ; il travaille dans `Orchestra/eval/donnees-test/` (vraie mémoire jamais touchée) et écrit `Orchestra/eval/rapport-<date>.md` + `.jsonl`.
+- **Référence** (qwen3.6:27b, température 0, 3 passages, 75 min, `Orchestra/eval/rapport-2026-10-28_1823.md`) : mémoire **20/20** ; routage **14/15 (93 %)**, seul échec « Écris-le. » délégué au lieu de demander une précision ; tour médian 35 s (90e centile 93 s) ; 3,49 appels au cerveau par tour ; prompt calculé en entier à chaque appel (≈ 280 à 1 000 tokens) ; premier token ≈ 0,4 à 0,6 s ; dossier de données hors voix : 19 ko.
+- Constaté : `load_ollama` charge le modèle sans `num_ctx`, donc Ollama le recharge au premier vrai appel (18 s mesurées). À corriger avec le lot A (A5).
+- Tests : 11 tests unitaires Rust (`cargo test --lib`), pas encore d'intégration continue (lot F).
+
 ## Prochaine action
-PB lance Claude Code sur la Phase 0 et le lot F avec `docs/CAHIER_DES_CHARGES.md`.
+PB valide le plan du lot F (fiabilisation : appel d'outils natif, sorties contraintes, tests et intégration continue, erreurs du cerveau). Décision attendue : rendre le jeu mémoire plus difficile (20/20 dès la référence ne laisse pas voir une régression fine) ou le garder tel quel.
 
 ## Décisions
 - 2026-10-25 — Application de bureau Windows en Tauri 2 (Rust + React/TypeScript), installateur léger.
@@ -65,7 +73,11 @@ PB lance Claude Code sur la Phase 0 et le lot F avec `docs/CAHIER_DES_CHARGES.md
 - [x] V0.2 : état Ollama explicite et chargement du modèle, verre glacé, agents modulaires, simulation
 - [x] Mode vocal : installation et boucle complète testée (≈ 1,8 s)
 - [ ] Mode vocal : essai au micro par PB, puis réduction de la latence vers 0,8 s
-- [ ] PB teste une vraie délégation sur Ollama
+- [x] Cahier des charges — Phase 0 : mesure, jeux d'évaluation, lanceur, référence sur qwen3.6:27b (2026-10-28)
+- [ ] Cahier des charges — Lot F : fiabilisation (prochain)
+- [ ] Cahier des charges — Lots A, B, T1 à T9, C, D, S, M2, M3, M1 (ordre de la section 11)
+- [x] Délégation sur le vrai Ollama vérifiée par l'évaluation (6 tâches déléguées au bon agent, 3/3)
+- [ ] PB teste une vraie délégation sur Ollama dans l'interface
 - [ ] Brancher l'Agent Market réel (`https://pbdan-dev.github.io/Agent_Market/`)
 - [ ] Brancher Mail Adagio comme agent
 - [ ] Ajout autonome de fonctionnalités (Orchestra crée ou installe ses propres agents)
@@ -85,3 +97,4 @@ PB lance Claude Code sur la Phase 0 et le lot F avec `docs/CAHIER_DES_CHARGES.md
 - 2026-10-27 — Boucle vocale complète testée : Voxtral (Vulkan), Qwen 3.5 9B, Qwen3-TTS en flux ; environ 1,8 s jusqu'au premier son ; délégation vocale vers l'orchestrateur fonctionnelle. Exe recompilé.
 - 2026-10-27 (soir) — Panneau des modèles et switch dans le cœur ; dialogue vocal continu et réflexion à la demande ; Voxtral TTS fr_female choisie par PB pour l'usage personnel (Q4 par défaut, Q8 disponible).
 - 2026-10-28 — Synthèse et cahier des charges rédigés à partir des 4 documents de conception et du code (commit 439ece9) ; 4 décisions de PB enregistrées ; évaluation de complexité, fiabilité et viabilité.
+- 2026-10-28 (soir) — Phase 0 du cahier : écarts code / section 3 signalés à PB (12 constats confirmés, branche main restée en V0.2, chat sur 9B, mémoire presque vide) ; mesure de chaque appel au cerveau ; jeux d'évaluation validés par PB ; lanceur sans interface ; référence qwen3.6:27b : mémoire 20/20, routage 14/15, tour médian 35 s.
