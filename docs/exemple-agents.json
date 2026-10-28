@@ -1,0 +1,168 @@
+{
+  "format": "agent-market/catalogue",
+  "version": 1,
+  "genere_le": "2027-03-02T09:00:00Z",
+  "market": {
+    "nom": "Agent Market",
+    "url": "https://pbdan-dev.github.io/agent-market/",
+    "cle_publique": "ed25519:3q2+7wAAAAAAAExEMPLEexempleCLEpubliqueNONvalide0000="
+  },
+  "agents": [
+    {
+      "id": "agent-mail",
+      "name": "Mail Adagio",
+      "version": "2.1.0",
+      "author": { "nom": "PB", "contact": "https://github.com/PBdan-dev" },
+      "description": "Trie la boîte Gmail par thème et par statut, résume les fils importants et propose des réponses.",
+      "categorie": "communication",
+      "capabilities": ["mails", "tri", "résumé", "gmail"],
+      "fiche": {
+        "sait_faire": [
+          "Classer les mails non lus par thème et par statut (à traiter, en attente, info)",
+          "Résumer un fil de discussion",
+          "Proposer un brouillon de réponse"
+        ],
+        "ne_sait_pas_faire": [
+          "Envoyer un mail sans validation de l'utilisateur",
+          "Gérer une autre messagerie que Gmail",
+          "Lire les pièces jointes chiffrées"
+        ],
+        "outils_propres": ["lire_mails", "appliquer_libelles", "resumer_fil", "creer_brouillon"],
+        "consignes": "Ne supprime jamais un mail. Toute action d'envoi passe par la validation de l'utilisateur."
+      },
+      "execution": {
+        "type": "local",
+        "systemes": ["windows-x64"],
+        "commande": "mail-adagio.exe --agent",
+        "protocole": "stdio-json"
+      },
+      "modele": {
+        "via": "porte",
+        "demande": "inherit",
+        "minimum": "qwen3.5:9b",
+        "recommande": "qwen3.6:27b"
+      },
+      "ressources": { "vram_go": 0, "gpu_exclusif": false },
+      "reseau_declare": ["imap.gmail.com"],
+      "acces_declares": {
+        "fichiers": "dossier du projet de la mission uniquement",
+        "identifiants": "mot de passe d'application Gmail, saisi par l'utilisateur à l'installation, stocké localement"
+      },
+      "actions_sensibles": ["creer_brouillon", "appliquer_libelles"],
+      "compatibilite": { "orchestra_min": "1.0.0", "contrat": 1 },
+      "paquet": {
+        "url": "https://github.com/PBdan-dev/agent-market/releases/download/agent-mail-2.1.0/agent-mail-2.1.0.zip",
+        "taille_octets": 18734592,
+        "sha256": "9f2c4e81a07b3d55e6c1f04a2b8d97e3c5a61f0e4d2b7c98a13e5f60d4b2c7a1"
+      },
+      "certification": {
+        "statut": "orchestra_certified",
+        "version_certifiee": "2.1.0",
+        "date": "2027-01-15",
+        "signature": "ed25519:EXEMPLEsignatureNONvalideMailAdagio210000000000000000000000000="
+      },
+      "licence": "MIT",
+      "prix": { "type": "gratuit" },
+      "notes": { "moyenne": 4.6, "nombre": 38 },
+      "color": "#b794f4",
+      "icon": "mail"
+    },
+    {
+      "id": "agent-3d-multivues",
+      "name": "Studio Multivues 3D",
+      "version": "1.0.3",
+      "author": { "nom": "PB", "contact": "https://github.com/PBdan-dev" },
+      "description": "Transforme des images de référence d'un personnage en rendus multi-vues sur fond transparent, prêts pour une génération 3D.",
+      "categorie": "image-3d",
+      "capabilities": ["3d", "personnage", "multi-vues", "détourage"],
+      "fiche": {
+        "sait_faire": [
+          "Générer les vues face, profil, dos et trois-quarts d'un personnage à partir de 1 à 4 images",
+          "Détourer les rendus sur fond transparent",
+          "Vérifier la cohérence des vues (couleurs, proportions)"
+        ],
+        "ne_sait_pas_faire": [
+          "Produire le modèle 3D lui-même",
+          "Traiter des décors ou des objets complexes",
+          "Garantir la ressemblance avec une personne réelle"
+        ],
+        "outils_propres": ["generer_vues", "detourer", "controler_coherence"],
+        "consignes": "Livre toujours les vues dans un sous-dossier nommé d'après le personnage."
+      },
+      "execution": {
+        "type": "local",
+        "systemes": ["windows-x64"],
+        "commande": "studio-multivues.exe --agent",
+        "protocole": "stdio-json"
+      },
+      "modele": {
+        "via": "porte",
+        "demande": "qwen3.5:9b",
+        "minimum": "qwen3.5:9b",
+        "recommande": "qwen3.5:9b"
+      },
+      "ressources": { "vram_go": 20, "gpu_exclusif": true },
+      "reseau_declare": [],
+      "acces_declares": {
+        "fichiers": "dossier du projet de la mission uniquement",
+        "identifiants": "aucun"
+      },
+      "actions_sensibles": [],
+      "compatibilite": { "orchestra_min": "1.0.0", "contrat": 1 },
+      "paquet": {
+        "url": "https://github.com/PBdan-dev/agent-market/releases/download/agent-3d-multivues-1.0.3/agent-3d-multivues-1.0.3.zip",
+        "taille_octets": 412316860,
+        "sha256": "4b7e0d2a9c13f86e5a2d40b7c91e3f58d6a0c2b4e7f19d3a85c60e2b1f47d9c3"
+      },
+      "certification": {
+        "statut": "orchestra_certified",
+        "version_certifiee": "1.0.3",
+        "date": "2027-02-20",
+        "signature": "ed25519:EXEMPLEsignatureNONvalideStudio3D103000000000000000000000000="
+      },
+      "licence": "Apache-2.0",
+      "prix": { "type": "gratuit" },
+      "notes": { "moyenne": 4.2, "nombre": 11 },
+      "color": "#63b3ed",
+      "icon": "cube"
+    },
+    {
+      "id": "traduction-juridique",
+      "name": "Traducteur juridique FR-EN",
+      "version": "3.0.0",
+      "author": { "nom": "Exemple Studio", "contact": "https://exemple-studio.dev" },
+      "description": "Traduit des documents juridiques entre le français et l'anglais avec un glossaire contrôlé.",
+      "categorie": "traduction",
+      "capabilities": ["traduction", "juridique", "français", "anglais"],
+      "fiche": {
+        "sait_faire": [
+          "Traduire contrats, CGV et statuts entre français et anglais",
+          "Appliquer un glossaire fourni par l'utilisateur"
+        ],
+        "ne_sait_pas_faire": [
+          "Donner un avis juridique",
+          "Traduire d'autres langues"
+        ],
+        "outils_propres": [],
+        "consignes": "Signale toute clause ambiguë au lieu de la reformuler."
+      },
+      "execution": {
+        "type": "heberge",
+        "endpoint": "https://api.exemple-studio.dev/orchestra/v1/missions"
+      },
+      "donnees_envoyees": "texte à traduire, langue cible et glossaire éventuel, rien d'autre",
+      "conservation_declaree": "aucune : données supprimées à la fin de la mission",
+      "compatibilite": { "orchestra_min": "1.0.0", "contrat": 1 },
+      "certification": {
+        "statut": "livrable_seul",
+        "date": "2027-02-02",
+        "signature": "ed25519:EXEMPLEsignatureNONvalideTraduction30000000000000000000000="
+      },
+      "licence": "propriétaire",
+      "prix": { "type": "location", "par_mission_eur": 0.40 },
+      "notes": { "moyenne": 4.8, "nombre": 112 },
+      "color": "#f6ad55",
+      "icon": "language"
+    }
+  ]
+}
