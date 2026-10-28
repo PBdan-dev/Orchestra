@@ -30,11 +30,13 @@ Validé le 2026-10-28 : les 11 critères de `docs/CAHIER_DES_CHARGES.md` §13 (b
 - Mesure : chaque appel au cerveau (analyse, réponse, agent, mémorisation) écrit une ligne dans `Orchestra/mesures/cerveau-AAAA-MM-JJ.jsonl` (tokens du prompt calculés, durées, premier token), pour les 5 fournisseurs.
 - Évaluation : `eval/` du dépôt (mémoire de test de 26 faits, 20 questions, 15 tâches, validés par PB). Lanceur : depuis `src-tauri/`, `cargo run --release --example evaluation -- --modele qwen3.6:27b` ; il travaille dans `Orchestra/eval/donnees-test/` (vraie mémoire jamais touchée) et écrit `Orchestra/eval/rapport-<date>.md` + `.jsonl`.
 - **Référence** (qwen3.6:27b, température 0, 3 passages, 75 min, `Orchestra/eval/rapport-2026-10-28_1823.md`) : mémoire **20/20** ; routage **14/15 (93 %)**, seul échec « Écris-le. » délégué au lieu de demander une précision ; tour médian 35 s (90e centile 93 s) ; 3,49 appels au cerveau par tour ; prompt calculé en entier à chaque appel (≈ 280 à 1 000 tokens) ; premier token ≈ 0,4 à 0,6 s ; dossier de données hors voix : 19 ko.
+- **Référence mémoire v2** (jeu durci à la demande de PB : 56 faits, questions reformulées, pièges, fait modifié, réponses absentes ; 1 passage, 13 min, `Orchestra/eval/rapport-2026-10-28_2021.md`) : **15/20**. Pièges 8/8, absents 2/2 (pas d'invention), direct 3/3, modifié 1/1, **reformulées 1/6** : sans mot commun avec le fait, le rappel par mots ne trouve rien (à corriger par M2, recherche par le sens). Cas grave : « puis-je manger des cacahuètes ? » → « oui » alors que PB est allergique. Réponses médianes de 32 mots.
+- Demande de PB (28/10) : réponses plus synthétiques, aller à l'essentiel (« Ton ordinateur s'appelle Zeus. », sans proposition en plus). À traiter avec la réécriture du prompt au lot A, suivi par la longueur des réponses dans le rapport.
 - Constaté : `load_ollama` charge le modèle sans `num_ctx`, donc Ollama le recharge au premier vrai appel (18 s mesurées). À corriger avec le lot A (A5).
 - Tests : 11 tests unitaires Rust (`cargo test --lib`), pas encore d'intégration continue (lot F).
 
 ## Prochaine action
-PB valide le plan du lot F (fiabilisation : appel d'outils natif, sorties contraintes, tests et intégration continue, erreurs du cerveau). Décision attendue : rendre le jeu mémoire plus difficile (20/20 dès la référence ne laisse pas voir une régression fine) ou le garder tel quel.
+PB valide le plan du lot F (fiabilisation : appel d'outils natif, sorties contraintes, tests et intégration continue, erreurs du cerveau), présenté par Claude.
 
 ## Décisions
 - 2026-10-25 — Application de bureau Windows en Tauri 2 (Rust + React/TypeScript), installateur léger.
@@ -98,3 +100,4 @@ PB valide le plan du lot F (fiabilisation : appel d'outils natif, sorties contra
 - 2026-10-27 (soir) — Panneau des modèles et switch dans le cœur ; dialogue vocal continu et réflexion à la demande ; Voxtral TTS fr_female choisie par PB pour l'usage personnel (Q4 par défaut, Q8 disponible).
 - 2026-10-28 — Synthèse et cahier des charges rédigés à partir des 4 documents de conception et du code (commit 439ece9) ; 4 décisions de PB enregistrées ; évaluation de complexité, fiabilité et viabilité.
 - 2026-10-28 (soir) — Phase 0 du cahier : écarts code / section 3 signalés à PB (12 constats confirmés, branche main restée en V0.2, chat sur 9B, mémoire presque vide) ; mesure de chaque appel au cerveau ; jeux d'évaluation validés par PB ; lanceur sans interface ; référence qwen3.6:27b : mémoire 20/20, routage 14/15, tour médian 35 s.
+- 2026-10-28 (soir) — Jeu mémoire durci (v2) : 15/20, les 5 échecs sont des questions reformulées (rappel par mots) ; faux positif de notation corrigé (h09) ; demande de PB de réponses plus synthétiques notée pour le lot A.
