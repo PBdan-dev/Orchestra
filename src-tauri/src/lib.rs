@@ -1,13 +1,15 @@
-mod agents;
-mod brain;
-mod config;
-mod events;
+pub mod agents;
+pub mod brain;
+pub mod config;
+pub mod evaluation;
+pub mod events;
 mod journal;
-mod market;
-mod memory;
-mod orchestrator;
-mod paths;
-mod tools;
+pub mod market;
+pub mod memory;
+pub mod mesures;
+pub mod orchestrator;
+pub mod paths;
+pub mod tools;
 mod voice;
 
 use std::sync::{atomic::AtomicBool, Mutex};

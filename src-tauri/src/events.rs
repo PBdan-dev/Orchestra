@@ -44,7 +44,19 @@ pub struct Recalled {
     pub reason: String,
 }
 
-pub fn emit(app: &AppHandle, ev: Event) {
-    crate::journal::append(app, &ev);
-    let _ = app.emit(CHANNEL, ev);
+/// Destination des événements d'un tour : l'interface (et le journal) dans l'application,
+/// une simple liste dans le lanceur d'évaluation.
+pub trait Sortie: Send + Sync {
+    fn envoyer(&self, ev: Event);
+}
+
+impl Sortie for AppHandle {
+    fn envoyer(&self, ev: Event) {
+        crate::journal::append(self, &ev);
+        let _ = Emitter::emit(self, CHANNEL, ev);
+    }
+}
+
+pub fn emit(out: &dyn Sortie, ev: Event) {
+    out.envoyer(ev);
 }

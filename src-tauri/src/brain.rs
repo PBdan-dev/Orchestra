@@ -1,13 +1,17 @@
 //! Le cerveau : un fournisseur de modèle greffé à Orchestra.
 //! Ollama (défaut, local), LM Studio (local, API OpenAI), Claude, Gemini, OpenRouter.
 
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::config::Config;
+use crate::{
+    config::Config,
+    mesures::{Mesure, Releve},
+};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Msg {
@@ -45,11 +49,19 @@ pub struct Brain {
     pub cfg: Config,
     pub http: reqwest::Client,
     pub model: String,
+    /// Mesures de chaque appel (partagées entre les cerveaux d'un même tour).
+    pub releve: Arc<Releve>,
 }
 
 impl Brain {
     pub fn new(cfg: Config, http: reqwest::Client) -> Self {
-        Brain { model: cfg.model.clone(), cfg, http }
+        Brain { model: cfg.model.clone(), cfg, http, releve: Arc::new(Releve::default()) }
+    }
+
+    /// Même cerveau, avec un relevé de mesures donné.
+    pub fn avec_releve(mut self, releve: Arc<Releve>) -> Self {
+        self.releve = releve;
+        self
     }
 
     pub fn label(&self) -> String {
@@ -199,11 +211,18 @@ impl Brain {
         Ok(v["embeddings"][0].as_array().map(|a| a.iter().filter_map(|x| x.as_f64().map(|f| f as f32)).collect()))
     }
 
-    /// Appel en streaming. `on` reçoit chaque fragment ; renvoie le contenu complet.
-    pub async fn stream<F: FnMut(Chunk)>(&self, msgs: &[Msg], mut on: F) -> anyhow::Result<String> {
+    /// Appel en streaming. `role` (analyse, reponse, memorisation, agent…) sert aux mesures ;
+    /// `on` reçoit chaque fragment ; renvoie le contenu complet.
+    pub async fn stream<F: FnMut(Chunk)>(&self, role: &str, msgs: &[Msg], mut on: F) -> anyhow::Result<String> {
+        let debut = Instant::now();
+        let mut mesure = Mesure::nouvelle(role, &self.cfg.provider, &self.model);
+        let mut premier: Option<f64> = None;
         let mut full = String::new();
         let mut splitter = ThinkSplitter::default();
         let mut deliver = |raw: Chunk| {
+            if premier.is_none() && (!raw.thinking.is_empty() || !raw.content.is_empty()) {
+                premier = Some(debut.elapsed().as_secs_f64() * 1000.0);
+            }
             // sépare les <think>…</think> éventuellement inclus dans le contenu
             let (th, co) = splitter.feed(&raw.content);
             let c = Chunk { thinking: format!("{}{}", raw.thinking, th), content: co };
@@ -212,35 +231,47 @@ impl Brain {
                 on(c);
             }
         };
-        match self.cfg.provider.as_str() {
-            "ollama" => self.stream_ollama(msgs, &mut deliver).await?,
+        let m = &mut mesure;
+        let res = match self.cfg.provider.as_str() {
+            "ollama" => self.stream_ollama(msgs, &mut deliver, m).await,
             "lmstudio" => {
                 let base = format!("{}/v1", self.cfg.lmstudio_url.trim_end_matches('/'));
-                self.stream_openai(&base, "", msgs, &mut deliver).await?
+                self.stream_openai(&base, "", msgs, &mut deliver, m).await
             }
-            "openrouter" => {
-                self.stream_openai("https://openrouter.ai/api/v1", &self.cfg.openrouter_api_key, msgs, &mut deliver).await?
-            }
-            "claude" => self.stream_claude(msgs, &mut deliver).await?,
-            "gemini" => self.stream_gemini(msgs, &mut deliver).await?,
-            other => anyhow::bail!("fournisseur inconnu : {other}"),
-        }
+            "openrouter" => self.stream_openai("https://openrouter.ai/api/v1", &self.cfg.openrouter_api_key, msgs, &mut deliver, m).await,
+            "claude" => self.stream_claude(msgs, &mut deliver, m).await,
+            "gemini" => self.stream_gemini(msgs, &mut deliver, m).await,
+            other => Err(anyhow::anyhow!("fournisseur inconnu : {other}")),
+        };
+        mesure.premier_token_ms = premier;
+        mesure.total_ms = debut.elapsed().as_secs_f64() * 1000.0;
+        mesure.ok = res.is_ok();
+        mesure.erreur = res.as_ref().err().map(|e| e.to_string());
+        self.releve.noter(mesure);
+        res?;
         Ok(full.trim().to_string())
     }
 
-    pub async fn complete(&self, msgs: &[Msg]) -> anyhow::Result<String> {
-        self.stream(msgs, |_| {}).await
+    pub async fn complete(&self, role: &str, msgs: &[Msg]) -> anyhow::Result<String> {
+        self.stream(role, msgs, |_| {}).await
     }
 
-    async fn stream_ollama<F: FnMut(Chunk)>(&self, msgs: &[Msg], on: &mut F) -> anyhow::Result<()> {
+    async fn stream_ollama<F: FnMut(Chunk)>(&self, msgs: &[Msg], on: &mut F, mesure: &mut Mesure) -> anyhow::Result<()> {
         let base = self.cfg.ollama_url.trim_end_matches('/');
-        let body = json!({ "model": self.model, "messages": msgs, "stream": true, "keep_alive": "30m", "options": { "num_ctx": 16384 } });
+        let mut options = json!({ "num_ctx": 16384 });
+        // évaluation : réponses reproductibles (température fixée, graine fixe)
+        if let Some(t) = self.cfg.eval_temperature {
+            options["temperature"] = json!(t);
+            options["seed"] = json!(42);
+        }
+        let body = json!({ "model": self.model, "messages": msgs, "stream": true, "keep_alive": "30m", "options": options });
         let resp = self.http.post(format!("{base}/api/chat")).timeout(Duration::from_secs(600)).json(&body).send().await?;
         check(resp.status(), "Ollama", &resp).await?;
         let mut err: Option<String> = None;
         stream_lines(resp, |line| {
             let Ok(v) = serde_json::from_str::<Value>(line) else { return };
             if let Some(e) = v["error"].as_str() { err = Some(e.to_string()); return; }
+            if v["done"].as_bool() == Some(true) { mesure.lire_ollama(&v); }
             let c = Chunk {
                 thinking: v["message"]["thinking"].as_str().unwrap_or("").to_string(),
                 content: v["message"]["content"].as_str().unwrap_or("").to_string(),
@@ -252,8 +283,16 @@ impl Brain {
         Ok(())
     }
 
-    async fn stream_openai<F: FnMut(Chunk)>(&self, base: &str, key: &str, msgs: &[Msg], on: &mut F) -> anyhow::Result<()> {
-        let body = json!({ "model": self.model, "messages": msgs, "stream": true });
+    async fn stream_openai<F: FnMut(Chunk)>(&self, base: &str, key: &str, msgs: &[Msg], on: &mut F, mesure: &mut Mesure) -> anyhow::Result<()> {
+        let mut body = json!({ "model": self.model, "messages": msgs, "stream": true });
+        if !key.is_empty() {
+            // OpenRouter : usage (tokens) dans le dernier fragment
+            body["stream_options"] = json!({ "include_usage": true });
+        }
+        if let Some(t) = self.cfg.eval_temperature {
+            body["temperature"] = json!(t);
+            body["seed"] = json!(42);
+        }
         let mut req = self.http.post(format!("{base}/chat/completions")).timeout(Duration::from_secs(600)).json(&body);
         if !key.is_empty() {
             req = req.bearer_auth(key).header("HTTP-Referer", "https://github.com/PBdan-dev/Orchestra").header("X-Title", "Orchestra");
@@ -265,6 +304,7 @@ impl Brain {
             let data = data.trim();
             if data == "[DONE]" { return; }
             let Ok(v) = serde_json::from_str::<Value>(data) else { return };
+            if v["usage"].is_object() { mesure.lire_openai(&v["usage"]); }
             let d = &v["choices"][0]["delta"];
             let thinking = d["reasoning"].as_str().or(d["reasoning_content"].as_str()).unwrap_or("").to_string();
             on(Chunk { thinking, content: d["content"].as_str().unwrap_or("").to_string() });
@@ -272,10 +312,13 @@ impl Brain {
         .await
     }
 
-    async fn stream_claude<F: FnMut(Chunk)>(&self, msgs: &[Msg], on: &mut F) -> anyhow::Result<()> {
+    async fn stream_claude<F: FnMut(Chunk)>(&self, msgs: &[Msg], on: &mut F, mesure: &mut Mesure) -> anyhow::Result<()> {
         let system: Vec<&str> = msgs.iter().filter(|m| m.role == "system").map(|m| m.content.as_str()).collect();
         let rest: Vec<Value> = msgs.iter().filter(|m| m.role != "system").map(|m| json!({ "role": m.role, "content": m.content })).collect();
-        let body = json!({ "model": self.model, "max_tokens": 4096, "stream": true, "system": system.join("\n\n"), "messages": rest });
+        let mut body = json!({ "model": self.model, "max_tokens": 4096, "stream": true, "system": system.join("\n\n"), "messages": rest });
+        if let Some(t) = self.cfg.eval_temperature {
+            body["temperature"] = json!(t);
+        }
         let resp = self
             .http
             .post("https://api.anthropic.com/v1/messages")
@@ -289,6 +332,8 @@ impl Brain {
         stream_lines(resp, |line| {
             let Some(data) = line.strip_prefix("data:") else { return };
             let Ok(v) = serde_json::from_str::<Value>(data.trim()) else { return };
+            if v["type"] == "message_start" { mesure.lire_claude(&v["message"]["usage"]); }
+            if v["type"] == "message_delta" { mesure.lire_claude(&v["usage"]); }
             if v["type"] == "content_block_delta" {
                 let d = &v["delta"];
                 match d["type"].as_str() {
@@ -301,7 +346,7 @@ impl Brain {
         .await
     }
 
-    async fn stream_gemini<F: FnMut(Chunk)>(&self, msgs: &[Msg], on: &mut F) -> anyhow::Result<()> {
+    async fn stream_gemini<F: FnMut(Chunk)>(&self, msgs: &[Msg], on: &mut F, mesure: &mut Mesure) -> anyhow::Result<()> {
         let system: Vec<&str> = msgs.iter().filter(|m| m.role == "system").map(|m| m.content.as_str()).collect();
         let contents: Vec<Value> = msgs
             .iter()
@@ -309,6 +354,9 @@ impl Brain {
             .map(|m| json!({ "role": if m.role == "assistant" { "model" } else { "user" }, "parts": [{ "text": m.content }] }))
             .collect();
         let mut body = json!({ "contents": contents });
+        if let Some(t) = self.cfg.eval_temperature {
+            body["generationConfig"] = json!({ "temperature": t });
+        }
         if !system.is_empty() {
             body["systemInstruction"] = json!({ "parts": [{ "text": system.join("\n\n") }] });
         }
@@ -322,6 +370,7 @@ impl Brain {
         stream_lines(resp, |line| {
             let Some(data) = line.strip_prefix("data:") else { return };
             let Ok(v) = serde_json::from_str::<Value>(data.trim()) else { return };
+            if v["usageMetadata"].is_object() { mesure.lire_gemini(&v["usageMetadata"]); }
             if let Some(parts) = v["candidates"][0]["content"]["parts"].as_array() {
                 for p in parts {
                     if let Some(t) = p["text"].as_str() {

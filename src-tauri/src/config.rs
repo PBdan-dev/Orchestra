@@ -45,6 +45,9 @@ pub struct Config {
     pub voice_stt_model: String,
     /// Modèle de synthèse : dossier de voix/modeles/qwen3-tts.
     pub voice_tts_model: String,
+    /// Température imposée (lanceur d'évaluation seulement, jamais enregistrée).
+    #[serde(skip)]
+    pub eval_temperature: Option<f32>,
 }
 
 impl Default for Config {
@@ -74,6 +77,7 @@ impl Default for Config {
             voice_port: 8765,
             voice_stt_model: "Voxtral-Mini-4B-Realtime-2602-Q8_0.gguf".into(),
             voice_tts_model: "Qwen3-TTS-12Hz-1.7B-CustomVoice".into(),
+            eval_temperature: None,
         }
     }
 }

@@ -1,15 +1,45 @@
 //! Le chef d'orchestre. Une demande traverse ces étapes, chacune visible dans l'interface :
 //! rappel de mémoire → analyse → (recherche d'agent → délégation → travail) → réponse → mémorisation.
 
+use std::sync::Arc;
+
+use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
 use crate::{
     agents::{self, Manifest},
     brain::{Brain, Chunk, Msg},
-    events::{emit, Event},
-    market, memory, tools, AppState,
+    config::Config,
+    events::{emit, Event, Sortie},
+    market, memory,
+    mesures::Releve,
+    paths::Paths,
+    tools, AppState,
 };
+
+/// Ce dont un tour a besoin, sans dépendre de l'interface (le lanceur d'évaluation l'utilise aussi).
+pub struct Contexte {
+    pub cfg: Config,
+    pub paths: Paths,
+    pub http: reqwest::Client,
+    pub releve: Arc<Releve>,
+}
+
+/// Ce qu'un tour a décidé et produit.
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct Tour {
+    pub reponse: String,
+    /// discussion | recherche | travail
+    pub intention: String,
+    pub agent_necessaire: bool,
+    pub besoin: String,
+    /// Agent à qui la mission a été confiée.
+    pub agent: Option<String>,
+    pub agent_en_echec: bool,
+    /// Travail demandé, mais aucun agent ne convient.
+    pub aucun_agent: bool,
+}
 
 const ORCHESTRA_IDENTITY: &str = "Tu es Orchestra, un orchestrateur d'agents qui tourne en local sur l'ordinateur de l'utilisateur. \
 Tu es sobre, précis et chaleureux. Tu réponds en français. \
@@ -25,7 +55,12 @@ struct Analysis {
 }
 
 pub async fn run(app: AppHandle, run_id: String, text: String, history: Vec<Msg>) {
-    if let Err(e) = run_inner(&app, &run_id, &text, history).await {
+    let ctx = {
+        let state = app.state::<AppState>();
+        let cfg = state.config.lock().unwrap().clone();
+        Contexte { cfg, paths: state.paths.clone(), http: state.http.clone(), releve: Arc::new(Releve::vers(state.paths.mesures.clone())) }
+    };
+    if let Err(e) = tour(&app, &ctx, &run_id, &text, history).await {
         emit(&app, Event::Error { run_id: run_id.clone(), message: e.to_string() });
         phase(&app, &run_id, "idle", "");
     }
@@ -34,38 +69,39 @@ pub async fn run(app: AppHandle, run_id: String, text: String, history: Vec<Msg>
     }
 }
 
-fn phase(app: &AppHandle, run_id: &str, p: &str, label: &str) {
-    emit(app, Event::Phase { run_id: run_id.into(), phase: p.into(), label: label.into() });
+fn phase(out: &dyn Sortie, run_id: &str, p: &str, label: &str) {
+    emit(out, Event::Phase { run_id: run_id.into(), phase: p.into(), label: label.into() });
 }
 
-fn thought(app: &AppHandle, run_id: &str, s: impl Into<String>) {
-    emit(app, Event::Thought { run_id: run_id.into(), text: s.into() });
+fn thought(out: &dyn Sortie, run_id: &str, s: impl Into<String>) {
+    emit(out, Event::Thought { run_id: run_id.into(), text: s.into() });
 }
 
-async fn run_inner(app: &AppHandle, run_id: &str, text: &str, history: Vec<Msg>) -> anyhow::Result<()> {
-    let state = app.state::<AppState>();
-    let cfg = state.config.lock().unwrap().clone();
-    let paths = state.paths.clone();
-    let http = state.http.clone();
-    let mut brain = Brain::new(cfg.clone(), http.clone());
+/// Un tour complet : rappel, analyse, délégation éventuelle, réponse, mémorisation.
+pub async fn tour(out: &dyn Sortie, ctx: &Contexte, run_id: &str, text: &str, history: Vec<Msg>) -> anyhow::Result<Tour> {
+    let cfg = ctx.cfg.clone();
+    let paths = ctx.paths.clone();
+    let http = ctx.http.clone();
+    let mut brain = Brain::new(cfg.clone(), http.clone()).avec_releve(ctx.releve.clone());
+    let mut bilan = Tour::default();
 
     // 0. Cerveau
-    phase(app, run_id, "thinking", "Connexion au cerveau");
+    phase(out, run_id, "thinking", "Connexion au cerveau");
     let info = brain.detect().await;
     if !info.online || brain.model.is_empty() {
         anyhow::bail!("Cerveau indisponible : {}", info.detail);
     }
     if cfg.provider == "ollama" && !info.loaded {
-        phase(app, run_id, "loading", &format!("Je charge {}", brain.model));
-        thought(app, run_id, format!("⏻ {} n'est pas en mémoire : je le charge dans Ollama…\n", brain.model));
+        phase(out, run_id, "loading", &format!("Je charge {}", brain.model));
+        thought(out, run_id, format!("⏻ {} n'est pas en mémoire : je le charge dans Ollama…\n", brain.model));
         brain.load_ollama().await?;
     }
-    thought(app, run_id, format!("⚡ Cerveau : {}\n", brain.label()));
+    thought(out, run_id, format!("⚡ Cerveau : {}\n", brain.label()));
 
     // 1. Rappel de mémoire
-    phase(app, run_id, "recalling", "Je consulte ma mémoire");
+    phase(out, run_id, "recalling", "Je consulte ma mémoire");
     let recalled = memory::recall(&paths, Some(&brain), text, 6).await;
-    emit(app, Event::Recall { run_id: run_id.into(), items: recalled.clone() });
+    emit(out, Event::Recall { run_id: run_id.into(), items: recalled.clone() });
     let memory_block = if recalled.is_empty() {
         "Aucun souvenir pertinent.".to_string()
     } else {
@@ -73,10 +109,10 @@ async fn run_inner(app: &AppHandle, run_id: &str, text: &str, history: Vec<Msg>)
     };
 
     // 2. Analyse
-    phase(app, run_id, "thinking", "J'analyse la demande");
-    let analysis = analyse(app, run_id, &brain, text, &history, &memory_block).await?;
+    phase(out, run_id, "thinking", "J'analyse la demande");
+    let analysis = analyse(out, run_id, &brain, text, &history, &memory_block).await?;
     thought(
-        app,
+        out,
         run_id,
         format!(
             "\n→ Intention : {} · agent nécessaire : {}{}\n",
@@ -88,10 +124,13 @@ async fn run_inner(app: &AppHandle, run_id: &str, text: &str, history: Vec<Msg>)
 
     let answer: String;
     let mut used_agent: Option<Manifest> = None;
+    bilan.intention = analysis.intent.clone();
+    bilan.agent_necessaire = analysis.needs_agent;
+    bilan.besoin = analysis.need.clone();
 
     if analysis.needs_agent && analysis.intent == "travail" {
         // 3. Recherche d'agent
-        phase(app, run_id, "searching_agent", "Je cherche l'agent qu'il faut");
+        phase(out, run_id, "searching_agent", "Je cherche l'agent qu'il faut");
         let need = if analysis.need.is_empty() { text.to_string() } else { analysis.need.clone() };
         let mut chosen: Option<(Manifest, String, String)> = None;
 
@@ -102,7 +141,7 @@ async fn run_inner(app: &AppHandle, run_id: &str, text: &str, history: Vec<Msg>)
             let common = tw.iter().filter(|w| need_words.contains(w)).count();
             if common > 0 {
                 if let Some(m) = agents::get_installed(&paths, &t.agent_id) {
-                    thought(app, run_id, format!("🧠 Ma mémoire dit : « {} » → {} (réussi {}×). Je le réutilise.\n", t.need, m.name, t.successes));
+                    thought(out, run_id, format!("🧠 Ma mémoire dit : « {} » → {} (réussi {}×). Je le réutilise.\n", t.need, m.name, t.successes));
                     chosen = Some((m, "mémoire".into(), format!("agent de confiance pour « {} »", t.need)));
                     break;
                 }
@@ -113,7 +152,7 @@ async fn run_inner(app: &AppHandle, run_id: &str, text: &str, history: Vec<Msg>)
         if chosen.is_none() {
             let (found, log) = market::find_agent(&http, &cfg, &paths, &need).await;
             for l in &log {
-                thought(app, run_id, format!("🔎 {l}\n"));
+                thought(out, run_id, format!("🔎 {l}\n"));
             }
             if let Some(f) = found {
                 let reason = format!("meilleur score ({:.1}) pour « {} »", f.score, need);
@@ -123,10 +162,11 @@ async fn run_inner(app: &AppHandle, run_id: &str, text: &str, history: Vec<Msg>)
 
         match chosen {
             None => {
-                thought(app, run_id, "✗ Aucun agent ne correspond. Je ne fais pas le travail moi-même : je l'explique.\n");
-                phase(app, run_id, "speaking", "Je réponds");
+                bilan.aucun_agent = true;
+                thought(out, run_id, "✗ Aucun agent ne correspond. Je ne fais pas le travail moi-même : je l'explique.\n");
+                phase(out, run_id, "speaking", "Je réponds");
                 answer = speak(
-                    app,
+                    out,
                     run_id,
                     &brain,
                     &format!(
@@ -144,30 +184,31 @@ Si une partie de la demande relève de la simple discussion, tu peux y répondre
             Some((m, source, reason)) => {
                 if agents::get_installed(&paths, &m.id).is_none() {
                     agents::install(&paths, &m)?;
-                    thought(app, run_id, format!("⬇ {} installé depuis {} (manifeste enregistré dans agents/installes).\n", m.name, source));
+                    thought(out, run_id, format!("⬇ {} installé depuis {} (manifeste enregistré dans agents/installes).\n", m.name, source));
                 }
                 memory::ensure_agent_memory(&paths, &m)?;
-                emit(app, Event::AgentAttached { run_id: run_id.into(), agent: m.clone(), source: source.clone(), reason });
+                bilan.agent = Some(m.id.clone());
+                emit(out, Event::AgentAttached { run_id: run_id.into(), agent: m.clone(), source: source.clone(), reason });
 
                 // 4. Délégation
-                phase(app, run_id, "delegating", &format!("Je confie la mission à {}", m.name));
+                phase(out, run_id, "delegating", &format!("Je confie la mission à {}", m.name));
                 let mission = if analysis.mission.trim().is_empty() { text.to_string() } else { analysis.mission.clone() };
-                emit(app, Event::AgentStatus { run_id: run_id.into(), agent_id: m.id.clone(), status: "running".into(), detail: mission.clone() });
-                phase(app, run_id, "working", &format!("{} travaille", m.name));
+                emit(out, Event::AgentStatus { run_id: run_id.into(), agent_id: m.id.clone(), status: "running".into(), detail: mission.clone() });
+                phase(out, run_id, "working", &format!("{} travaille", m.name));
 
-                let result = run_agent(app, run_id, &brain, &cfg, &paths, &http, &m, &mission, text).await;
+                let result = run_agent(out, run_id, &brain, &cfg, &paths, &http, &m, &mission, text).await;
                 match result {
                     Ok((outcome, tools_used)) => {
-                        emit(app, Event::AgentStatus { run_id: run_id.into(), agent_id: m.id.clone(), status: "done".into(), detail: short(&outcome, 160) });
+                        emit(out, Event::AgentStatus { run_id: run_id.into(), agent_id: m.id.clone(), status: "done".into(), detail: short(&outcome, 160) });
                         let line = memory::append_agent_mission(&paths, &m, &mission, &outcome, &tools_used)?;
-                        emit(app, Event::Memorized { run_id: run_id.into(), file: format!("agents/{}.md", m.id), section: "Missions".into(), line });
+                        emit(out, Event::Memorized { run_id: run_id.into(), file: format!("agents/{}.md", m.id), section: "Missions".into(), line });
                         let trust_line = memory::record_trust(&paths, &need, &m)?;
-                        emit(app, Event::Memorized { run_id: run_id.into(), file: "orchestra.md".into(), section: "Agents de confiance".into(), line: trust_line });
+                        emit(out, Event::Memorized { run_id: run_id.into(), file: "orchestra.md".into(), section: "Agents de confiance".into(), line: trust_line });
 
                         // 5. Restitution supervisée
-                        phase(app, run_id, "speaking", "Je restitue le résultat");
+                        phase(out, run_id, "speaking", "Je restitue le résultat");
                         answer = speak(
-                            app,
+                            out,
                             run_id,
                             &brain,
                             &format!(
@@ -184,12 +225,13 @@ N'invente rien qui ne soit pas dans le résultat. Si l'agent a échoué ou n'a p
                         used_agent = Some(m);
                     }
                     Err(e) => {
-                        emit(app, Event::AgentStatus { run_id: run_id.into(), agent_id: m.id.clone(), status: "error".into(), detail: e.to_string() });
+                        bilan.agent_en_echec = true;
+                        emit(out, Event::AgentStatus { run_id: run_id.into(), agent_id: m.id.clone(), status: "error".into(), detail: e.to_string() });
                         let line = memory::append_agent_mission(&paths, &m, &mission, &format!("ÉCHEC : {e}"), &[])?;
-                        emit(app, Event::Memorized { run_id: run_id.into(), file: format!("agents/{}.md", m.id), section: "Missions".into(), line });
-                        phase(app, run_id, "speaking", "Je réponds");
+                        emit(out, Event::Memorized { run_id: run_id.into(), file: format!("agents/{}.md", m.id), section: "Missions".into(), line });
+                        phase(out, run_id, "speaking", "Je réponds");
                         answer = speak(
-                            app,
+                            out,
                             run_id,
                             &brain,
                             &format!("{ORCHESTRA_IDENTITY}\n\nL'agent « {} » a échoué sur la mission « {} » avec l'erreur : {e}. Explique-le brièvement à l'utilisateur et propose une piste.", m.name, mission),
@@ -205,9 +247,9 @@ N'invente rien qui ne soit pas dans le résultat. Si l'agent a échoué ou n'a p
         }
     } else {
         // Discussion ou recherche : Orchestra répond lui-même
-        phase(app, run_id, "speaking", "Je réponds");
+        phase(out, run_id, "speaking", "Je réponds");
         answer = speak(
-            app,
+            out,
             run_id,
             &brain,
             &format!("{ORCHESTRA_IDENTITY}\n\nRéponds directement à l'utilisateur. Sois clair et concis ; développe seulement si la question le demande. Utilise les souvenirs ci-dessous quand ils sont pertinents, sans les réciter."),
@@ -219,13 +261,14 @@ N'invente rien qui ne soit pas dans le résultat. Si l'agent a échoué ou n'a p
     }
 
     // 6. Mémorisation
-    phase(app, run_id, "memorizing", "Je retiens l'essentiel");
-    memorize(app, run_id, &brain, &paths, text, &answer, used_agent.as_ref()).await;
+    phase(out, run_id, "memorizing", "Je retiens l'essentiel");
+    memorize(out, run_id, &brain, &paths, text, &answer, used_agent.as_ref()).await;
     memory::archive(&paths, text, &answer, &analysis.intent, used_agent.as_ref().map(|m| m.name.as_str()));
 
-    emit(app, Event::Done { run_id: run_id.into(), answer, intent: analysis.intent });
-    phase(app, run_id, "idle", "");
-    Ok(())
+    bilan.reponse = answer.clone();
+    emit(out, Event::Done { run_id: run_id.into(), answer, intent: analysis.intent });
+    phase(out, run_id, "idle", "");
+    Ok(bilan)
 }
 
 fn short(s: &str, n: usize) -> String {
@@ -238,7 +281,7 @@ fn recent_history(history: &[Msg], n: usize) -> Vec<Msg> {
     history[start..].iter().map(|m| Msg { role: m.role.clone(), content: m.content.chars().take(2000).collect() }).collect()
 }
 
-async fn analyse(app: &AppHandle, run_id: &str, brain: &Brain, text: &str, history: &[Msg], memory_block: &str) -> anyhow::Result<Analysis> {
+async fn analyse(out: &dyn Sortie, run_id: &str, brain: &Brain, text: &str, history: &[Msg], memory_block: &str) -> anyhow::Result<Analysis> {
     let mut msgs = vec![Msg::system(format!(
         "{ORCHESTRA_IDENTITY}\n\nTa tâche ici : analyser la dernière demande de l'utilisateur. \
 Réfléchis à voix haute en 2 à 4 phrases courtes (en français), puis termine OBLIGATOIREMENT par une dernière ligne qui commence par `JSON:` suivie d'un objet JSON sur une seule ligne :\n\
@@ -251,9 +294,9 @@ Si la demande mélange les deux, privilégie « travail » si une action concrè
     msgs.push(Msg::user(text));
 
     let full = brain
-        .stream(&msgs, |c: Chunk| {
-            if !c.thinking.is_empty() { thought(app, run_id, c.thinking); }
-            if !c.content.is_empty() { thought(app, run_id, c.content); }
+        .stream("analyse", &msgs, |c: Chunk| {
+            if !c.thinking.is_empty() { thought(out, run_id, c.thinking); }
+            if !c.content.is_empty() { thought(out, run_id, c.content); }
         })
         .await?;
 
@@ -297,14 +340,14 @@ fn extract_json(s: &str) -> Option<Value> {
     None
 }
 
-async fn speak(app: &AppHandle, run_id: &str, brain: &Brain, system: &str, history: &[Msg], text: &str, memory_block: &str) -> anyhow::Result<String> {
+async fn speak(out: &dyn Sortie, run_id: &str, brain: &Brain, system: &str, history: &[Msg], text: &str, memory_block: &str) -> anyhow::Result<String> {
     let mut msgs = vec![Msg::system(format!("{system}\n\nSouvenirs pertinents :\n{memory_block}"))];
     msgs.extend(recent_history(history, 10));
     msgs.push(Msg::user(text));
     let full = brain
-        .stream(&msgs, |c: Chunk| {
-            if !c.thinking.is_empty() { thought(app, run_id, c.thinking); }
-            if !c.content.is_empty() { emit(app, Event::Token { run_id: run_id.into(), text: c.content }); }
+        .stream("reponse", &msgs, |c: Chunk| {
+            if !c.thinking.is_empty() { thought(out, run_id, c.thinking); }
+            if !c.content.is_empty() { emit(out, Event::Token { run_id: run_id.into(), text: c.content }); }
         })
         .await?;
     Ok(full)
@@ -312,7 +355,7 @@ async fn speak(app: &AppHandle, run_id: &str, brain: &Brain, system: &str, histo
 
 /// Boucle d'exécution d'un agent : le modèle agit par outils, un à la fois.
 async fn run_agent(
-    app: &AppHandle,
+    out: &dyn Sortie,
     run_id: &str,
     brain: &Brain,
     cfg: &crate::config::Config,
@@ -331,7 +374,7 @@ async fn run_agent(
         let mut c = cfg.clone();
         c.provider = prov.to_string();
         c.model = model.to_string();
-        agent_brain = Brain::new(c, http.clone());
+        agent_brain = Brain::new(c, http.clone()).avec_releve(brain.releve.clone());
         &agent_brain
     };
 
@@ -354,43 +397,43 @@ Extrait de ta mémoire :\n{}",
 
     for step in 0..cfg.max_agent_steps.max(1) {
         let content = b
-            .stream(&msgs, |c: Chunk| {
-                if !c.thinking.is_empty() { thought(app, run_id, format!("{prefix}{}", c.thinking)); }
-                if !c.content.is_empty() { thought(app, run_id, c.content); }
+            .stream("agent", &msgs, |c: Chunk| {
+                if !c.thinking.is_empty() { thought(out, run_id, format!("{prefix}{}", c.thinking)); }
+                if !c.content.is_empty() { thought(out, run_id, c.content); }
             })
             .await?;
-        thought(app, run_id, "\n");
+        thought(out, run_id, "\n");
 
         match extract_tool_call(&content) {
             None => return Ok((content, tools_used)),
             Some((tool, input)) => {
                 if !m.tools.iter().any(|t| t == &tool) {
-                    let out = format!("outil « {tool} » non autorisé pour cet agent");
-                    emit(app, Event::ToolCall { run_id: run_id.into(), agent_id: m.id.clone(), tool: tool.clone(), input: input.clone(), output: out.clone() });
+                    let resultat = format!("outil « {tool} » non autorisé pour cet agent");
+                    emit(out, Event::ToolCall { run_id: run_id.into(), agent_id: m.id.clone(), tool: tool.clone(), input: input.clone(), output: resultat.clone() });
                     msgs.push(Msg::assistant(content));
-                    msgs.push(Msg::user(format!("Résultat de l'outil {tool} : {out}")));
+                    msgs.push(Msg::user(format!("Résultat de l'outil {tool} : {resultat}")));
                     continue;
                 }
-                let out = match tools::execute(&tool, &input, paths, http).await {
+                let resultat = match tools::execute(&tool, &input, paths, http).await {
                     Ok(o) => o,
                     Err(e) => format!("ERREUR : {e}"),
                 };
-                emit(app, Event::ToolCall { run_id: run_id.into(), agent_id: m.id.clone(), tool: tool.clone(), input: input.clone(), output: out.clone() });
+                emit(out, Event::ToolCall { run_id: run_id.into(), agent_id: m.id.clone(), tool: tool.clone(), input: input.clone(), output: resultat.clone() });
                 if !tools_used.contains(&tool) {
                     tools_used.push(tool.clone());
                 }
                 msgs.push(Msg::assistant(content));
                 let remaining = cfg.max_agent_steps.saturating_sub(step + 1);
                 msgs.push(Msg::user(format!(
-                    "Résultat de l'outil {tool} :\n{out}\n\n(Il te reste {remaining} action(s) outil. Si la mission est terminée, donne ton rapport final sans bloc tool.)"
+                    "Résultat de l'outil {tool} :\n{resultat}\n\n(Il te reste {remaining} action(s) outil. Si la mission est terminée, donne ton rapport final sans bloc tool.)"
                 )));
             }
         }
     }
     // dernier tour : rapport forcé
     msgs.push(Msg::user("Limite d'actions atteinte. Donne maintenant ton rapport final, sans bloc tool."));
-    let content = b.stream(&msgs, |c: Chunk| {
-        if !c.content.is_empty() { thought(app, run_id, c.content); }
+    let content = b.stream("agent", &msgs, |c: Chunk| {
+        if !c.content.is_empty() { thought(out, run_id, c.content); }
     }).await?;
     Ok((content, tools_used))
 }
@@ -421,7 +464,7 @@ fn extract_tool_call(content: &str) -> Option<(String, Value)> {
     None
 }
 
-async fn memorize(app: &AppHandle, run_id: &str, brain: &Brain, paths: &crate::paths::Paths, text: &str, answer: &str, agent: Option<&Manifest>) {
+async fn memorize(out: &dyn Sortie, run_id: &str, brain: &Brain, paths: &crate::paths::Paths, text: &str, answer: &str, agent: Option<&Manifest>) {
     let prompt = format!(
         "Tu es la mémoire d'Orchestra. Voici un échange. Extrais 0 à 3 faits DURABLES et utiles pour les prochaines conversations : \
 qui est l'utilisateur, ce qu'il aime ou n'aime pas, ses projets, des informations stables. \
@@ -431,7 +474,7 @@ Utilisateur : {}\n\nOrchestra : {}",
         text.chars().take(4000).collect::<String>(),
         answer.chars().take(2000).collect::<String>()
     );
-    let res = brain.complete(&[Msg::user(prompt)]).await.unwrap_or_default();
+    let res = brain.complete("memorisation", &[Msg::user(prompt)]).await.unwrap_or_default();
     let arr = res.find('[').and_then(|i| {
         let tail = &res[i..];
         let end = tail.rfind(']')?;
@@ -448,7 +491,7 @@ Utilisateur : {}\n\nOrchestra : {}",
             if memory::read_main(paths).contains(fact) { continue; }
             if let Ok(line) = memory::append_fact(paths, section, fact) {
                 count += 1;
-                emit(app, Event::Memorized { run_id: run_id.into(), file: "orchestra.md".into(), section: section.into(), line });
+                emit(out, Event::Memorized { run_id: run_id.into(), file: "orchestra.md".into(), section: section.into(), line });
             }
         }
     }
@@ -458,13 +501,13 @@ Utilisateur : {}\n\nOrchestra : {}",
             if let Some(first) = items.first().and_then(|f| f["fact"].as_str()) {
                 if first.len() > 4 {
                     if let Ok(line) = memory::append_agent_learning(paths, m, &format!("Contexte utilisateur : {first}")) {
-                        emit(app, Event::Memorized { run_id: run_id.into(), file: format!("agents/{}.md", m.id), section: "Apprentissages".into(), line });
+                        emit(out, Event::Memorized { run_id: run_id.into(), file: format!("agents/{}.md", m.id), section: "Apprentissages".into(), line });
                     }
                 }
             }
         }
     }
     if count == 0 {
-        emit(app, Event::NothingToMemorize { run_id: run_id.into() });
+        emit(out, Event::NothingToMemorize { run_id: run_id.into() });
     }
 }
