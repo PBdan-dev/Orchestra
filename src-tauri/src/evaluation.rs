@@ -31,6 +31,21 @@ pub struct QuestionMemoire {
     pub attendu: String,
     /// Tous doivent figurer dans la réponse ; « a|b » = a ou b. Sans accents ni majuscules.
     pub mots_cles: Vec<String>,
+    /// Aucun ne doit figurer dans la réponse (piège : l'information voisine, ou l'ancienne).
+    #[serde(default)]
+    pub interdits: Vec<String>,
+    /// La réponse n'est pas en mémoire : Orchestra doit le dire au lieu d'inventer.
+    #[serde(default)]
+    pub hors_memoire: bool,
+    /// direct | reformulee | piege | modifie | absent
+    #[serde(default)]
+    pub r#type: String,
+}
+
+impl QuestionMemoire {
+    pub fn reussie(&self, reponse: &str) -> bool {
+        note_memoire(reponse, &self.mots_cles) && !self.interdits.iter().any(|i| note_memoire(reponse, std::slice::from_ref(i)))
+    }
 }
 
 /// Une demande type et la décision attendue.
@@ -222,7 +237,7 @@ pub async fn lancer(opts: Options, journal: impl Fn(&str)) -> anyhow::Result<Pat
         for q in &questions {
             journal(&format!("[{}/{}] mémoire {} · passage {p}", essais.len() + 1, total, q.id));
             let (t, souv, err, duree, mesures) = un_essai(&opts, &cfg, &http, &memoire_test, &dossier_mesures, &q.question).await;
-            let reussi = err.is_none() && note_memoire(&t.reponse, &q.mots_cles);
+            let reussi = err.is_none() && q.reussie(&t.reponse);
             essais.push(Essai { jeu: "memoire".into(), id: q.id.clone(), passage: p, entree: q.question.clone(), decision: decision(&t), reponse: t.reponse, reussi, souvenirs: souv, erreur: err, duree_ms: duree, mesures });
         }
         for tache in &taches {
@@ -334,6 +349,17 @@ fn rapport(opts: &Options, cfg: &Config, questions: &[QuestionMemoire], taches: 
         let essais_ok = essais.iter().filter(|e| e.jeu == "memoire" && e.reussi).count();
         let n = essais.iter().filter(|e| e.jeu == "memoire").count();
         s.push_str(&format!("| Mémoire (réussite majoritaire) | **{ok}/{}** |\n| Mémoire (tous passages) | {essais_ok}/{n} |\n", questions.len()));
+        // par type de question
+        let mut types: Vec<&str> = questions.iter().map(|q| q.r#type.as_str()).filter(|t| !t.is_empty()).collect();
+        types.sort();
+        types.dedup();
+        for ty in types {
+            let qs: Vec<&QuestionMemoire> = questions.iter().filter(|q| q.r#type == ty).collect();
+            let ok = qs.iter().filter(|q| majorite("memoire", &q.id).2).count();
+            s.push_str(&format!("| · questions « {ty} » | {ok}/{} |\n", qs.len()));
+        }
+        let mots: Vec<f64> = essais.iter().filter(|e| e.jeu == "memoire" && e.erreur.is_none()).map(|e| e.reponse.split_whitespace().count() as f64).collect();
+        s.push_str(&format!("| Longueur des réponses mémoire, médiane / moyenne (mots) | {} / {} |\n", f0(mediane(mots.clone())), f0(moyenne(&mots))));
     }
     if !taches.is_empty() {
         let ok = taches.iter().filter(|t| majorite("taches", &t.id).2).count();
@@ -470,8 +496,27 @@ mod tests {
         }
         // chaque réponse attendue se retrouve dans la mémoire de test
         let mem = std::fs::read_to_string(d.join("donnees").join("orchestra.md")).unwrap();
-        for q in &q {
+        for q in q.iter().filter(|q| !q.hors_memoire) {
             assert!(note_memoire(&mem, &q.mots_cles), "{} : mots-clés absents de la mémoire de test", q.id);
         }
+    }
+
+    #[test]
+    fn interdits_et_hors_memoire() {
+        let q = QuestionMemoire {
+            id: "x".into(),
+            question: "avocate ?".into(),
+            attendu: "21 novembre".into(),
+            mots_cles: vec!["21 novembre".into()],
+            interdits: vec!["14 novembre".into()],
+            hors_memoire: false,
+            r#type: "piege".into(),
+        };
+        assert!(q.reussie("Le 21 novembre, avec maître Duval."));
+        assert!(!q.reussie("Le 14 novembre."));
+        assert!(!q.reussie("Le 21 novembre, ou peut-être le 14 novembre."));
+        let absent = vec!["sais pas|n ai pas|aucune information".to_string()];
+        assert!(note_memoire("Je n'ai pas cette information en mémoire.", &absent));
+        assert!(!note_memoire("Ton frère s'appelle Marc.", &absent));
     }
 }

@@ -1,20 +1,21 @@
-{"id": "m01", "question": "Comment s'appelle mon ordinateur ?", "attendu": "Zeus", "mots_cles": ["zeus"]}
-{"id": "m02", "question": "Combien de mémoire a ma carte graphique ?", "attendu": "24 Go (RTX 3090)", "mots_cles": ["24 go|24go|24 gigaoctets"]}
-{"id": "m03", "question": "Tu te souviens du nom de mon chat ?", "attendu": "Moka", "mots_cles": ["moka"]}
-{"id": "m04", "question": "Qu'est-ce que je bois d'habitude, café ou autre chose ?", "attendu": "Du thé vert, jamais de café", "mots_cles": ["the vert"]}
-{"id": "m05", "question": "Quelles licences j'accepte pour mes projets commerciaux ?", "attendu": "Apache, MIT ou BSD", "mots_cles": ["apache", "mit", "bsd"]}
-{"id": "m06", "question": "Sur quel port tourne Ollama chez moi ?", "attendu": "11434", "mots_cles": ["11434"]}
-{"id": "m07", "question": "Sur quel port écoute le serveur voix ?", "attendu": "8765", "mots_cles": ["8765"]}
-{"id": "m08", "question": "Pourquoi est-ce qu'on a écarté Kokoro ?", "attendu": "Sa phonétisation française passe par espeak-ng, sous GPL", "mots_cles": ["gpl"]}
-{"id": "m09", "question": "À quelle version transformers est-il figé ?", "attendu": "5.15.1", "mots_cles": ["5 15 1"]}
-{"id": "m10", "question": "Dans quel dossier sont rangées les données d'Orchestra ?", "attendu": "C:\\Users\\pbdan\\Orchestra", "mots_cles": ["pbdan"]}
-{"id": "m11", "question": "C'est quand, la réunion d'équipe ?", "attendu": "Le mardi à 9 h 30", "mots_cles": ["mardi|mardis", "9 h 30|9h30|9 30|9 heures 30|neuf heures et demie|9 h et demie"]}
-{"id": "m12", "question": "Quand est mon prochain rendez-vous avec le comptable ?", "attendu": "Le 14 novembre", "mots_cles": ["14 novembre"]}
-{"id": "m13", "question": "Quel jour se fait la sauvegarde de Claude_Projects ?", "attendu": "Le dimanche", "mots_cles": ["dimanche|dimanches"]}
-{"id": "m14", "question": "Comment s'appelle mon agent qui trie mes mails ?", "attendu": "Mail Adagio", "mots_cles": ["adagio"]}
-{"id": "m15", "question": "Avec quel framework Orchestra est-il construit ?", "attendu": "Tauri 2", "mots_cles": ["tauri"]}
-{"id": "m16", "question": "Où est publié l'Agent Market ?", "attendu": "Sur GitHub Pages (dépôt PBdan-dev/Agent_Market)", "mots_cles": ["github"]}
-{"id": "m17", "question": "Quel modèle sert de cerveau au mode vocal ?", "attendu": "Qwen 3.5 9B", "mots_cles": ["9b|9 b|9 milliards"]}
-{"id": "m18", "question": "Combien de temps met la boucle vocale avant le premier son ?", "attendu": "Environ 1,8 seconde", "mots_cles": ["1 8"]}
-{"id": "m19", "question": "Quel ton dois-tu prendre pour mes mails professionnels ?", "attendu": "Cordial mais direct, signé PB", "mots_cles": ["cordial|cordiale", "direct|directe"]}
-{"id": "m20", "question": "Quel est mon modèle de chat principal ?", "attendu": "qwen3.6:27b", "mots_cles": ["27b|27 b|27 milliards"]}
+// Jeu mémoire v2 (28/10/2026) : questions formulées sans les mots du fait, pièges proches, fait modifié, réponses absentes.
+{"id": "h01", "question": "Qu'est-ce que je prends comme boisson chaude le matin ?", "attendu": "Du thé vert (jamais de café)", "mots_cles": ["the vert"], "type": "reformulee"}
+{"id": "h02", "question": "Comment s'appelle mon ordinateur portable ?", "attendu": "Hermès", "mots_cles": ["hermes"], "type": "piege"}
+{"id": "h03", "question": "Combien de mémoire vive a mon portable ?", "attendu": "16 Go", "mots_cles": ["16 go|16go|16 gigaoctets"], "interdits": ["24 go"], "type": "piege"}
+{"id": "h04", "question": "Sur quel port écoute LM Studio ?", "attendu": "1234", "mots_cles": ["1234"], "type": "piege"}
+{"id": "h05", "question": "En décembre, quel jour aura lieu la réunion d'équipe ?", "attendu": "Le jeudi à 10 h (changement à partir de novembre)", "mots_cles": ["jeudi|jeudis"], "type": "modifie"}
+{"id": "h06", "question": "Comment s'appelle le chien de mes parents ?", "attendu": "Pixel", "mots_cles": ["pixel"], "type": "piege"}
+{"id": "h07", "question": "Quand est-ce que je vois mon avocate ?", "attendu": "Le 21 novembre (maître Duval)", "mots_cles": ["21 novembre"], "interdits": ["14 novembre"], "type": "piege"}
+{"id": "h08", "question": "Je fais du sport quel jour de la semaine ?", "attendu": "Le samedi matin (course, 10 km)", "mots_cles": ["samedi|samedis"], "type": "reformulee"}
+{"id": "h09", "question": "Est-ce que je peux manger des cacahuètes ?", "attendu": "Non, PB est allergique aux arachides", "mots_cles": ["allergique|allergie|allergies"], "type": "reformulee"}
+{"id": "h10", "question": "Comment je signe mes mails à ma famille ?", "attendu": "« Pierre » (en tutoyant)", "mots_cles": ["pierre"], "type": "piege"}
+{"id": "h11", "question": "Comment s'appelle mon frère ?", "attendu": "Inconnu : rien en mémoire (seule la sœur, Claire, est connue)", "mots_cles": ["sais pas|ne connais pas|aucune information|pas d information|n ai pas|ignore|pas en memoire|ne trouve pas|aucun souvenir|pas de souvenir|ne dispose pas|pas trace|n ai aucune|pas mentionne|je ne vois pas"], "hors_memoire": true, "type": "absent"}
+{"id": "h12", "question": "Quelle est la marque de mon téléphone ?", "attendu": "Inconnu : rien en mémoire", "mots_cles": ["sais pas|ne connais pas|aucune information|pas d information|n ai pas|ignore|pas en memoire|ne trouve pas|aucun souvenir|pas de souvenir|ne dispose pas|pas trace|n ai aucune|pas mentionne|je ne vois pas"], "hors_memoire": true, "type": "absent"}
+{"id": "h13", "question": "Où habite ma sœur et que fait-elle ?", "attendu": "Claire est architecte à Lyon", "mots_cles": ["lyon", "architecte"], "type": "direct"}
+{"id": "h14", "question": "Dans quelle ville je vis ?", "attendu": "Annecy", "mots_cles": ["annecy"], "type": "reformulee"}
+{"id": "h15", "question": "Quelle musique j'écoute quand je bosse ?", "attendu": "Du jazz, surtout Bill Evans", "mots_cles": ["jazz|bill evans"], "type": "reformulee"}
+{"id": "h16", "question": "Quelle est la solution de secours pour la voix ?", "attendu": "Moshi (plan B de la pile vocale)", "mots_cles": ["moshi"], "type": "reformulee"}
+{"id": "h17", "question": "Quelle taille fait le disque de sauvegarde ?", "attendu": "4 To", "mots_cles": ["4 to|4to|4 teraoctets|quatre teraoctets"], "type": "direct"}
+{"id": "h18", "question": "Quelle est la taille du contexte en mode voix ?", "attendu": "8 192 tokens", "mots_cles": ["8 192|8192"], "type": "piege"}
+{"id": "h19", "question": "Quand est-ce que je fête mon anniversaire ?", "attendu": "Le 3 mars", "mots_cles": ["3 mars"], "type": "direct"}
+{"id": "h20", "question": "Quel est le code du local à vélos ?", "attendu": "Pas en mémoire : il est dans le gestionnaire de mots de passe", "mots_cles": ["gestionnaire|mot de passe|mots de passe"], "type": "piege"}
