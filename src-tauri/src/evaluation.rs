@@ -145,6 +145,8 @@ pub struct Options {
     pub taches: bool,
     /// Nombre maximal de questions par jeu (essai rapide).
     pub limite: Option<usize>,
+    /// Seulement ces questions ou tâches (ex. t07,t08) ; vide = toutes.
+    pub ids: Vec<String>,
     /// Dossier de données réel (`C:\Users\…\Orchestra`) : on n'y écrit que dans `eval/`.
     pub racine: PathBuf,
     /// Dossier `eval/` du dépôt (jeux et mémoire de test).
@@ -208,11 +210,15 @@ pub async fn lancer(opts: Options, journal: impl Fn(&str)) -> anyhow::Result<Pat
     let mut cfg = Config { provider: "ollama".into(), model: opts.modele.clone(), ollama_url: reel.ollama_url.clone(), ..Config::default() };
     cfg.max_agent_steps = reel.max_agent_steps;
     cfg.eval_temperature = Some(opts.temperature);
-    let http = reqwest::Client::builder().user_agent("Orchestra-eval/0.1").build()?;
+    let http = reqwest::Client::builder().user_agent("Orchestra-eval/0.1").connect_timeout(crate::brain::DELAI_CONNEXION).build()?;
 
     let memoire_test = std::fs::read_to_string(opts.jeux.join("donnees").join("orchestra.md"))?;
     let mut questions: Vec<QuestionMemoire> = if opts.memoire { lire_jsonl(&opts.jeux.join("memoire.jsonl"))? } else { vec![] };
     let mut taches: Vec<Tache> = if opts.taches { lire_jsonl(&opts.jeux.join("taches.jsonl"))? } else { vec![] };
+    if !opts.ids.is_empty() {
+        questions.retain(|q| opts.ids.contains(&q.id));
+        taches.retain(|t| opts.ids.contains(&t.id));
+    }
     if let Some(n) = opts.limite {
         questions.truncate(n);
         taches.truncate(n);

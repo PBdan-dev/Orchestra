@@ -15,6 +15,29 @@ pub const ALL: &[(&str, &str)] = &[
     ("fetch_url", "Télécharge une page web et renvoie son texte (tronqué). Entrée : {\"url\": \"https://...\"}"),
 ];
 
+/// Les outils autorisés d'un agent, au format de l'appel d'outils natif (paramètres en schéma JSON).
+pub fn outils(tools: &[String]) -> Vec<crate::brain::Outil> {
+    let chaine = |d: &str| serde_json::json!({ "type": "string", "description": d });
+    ALL.iter()
+        .filter(|(n, _)| tools.iter().any(|t| t == n))
+        .map(|(n, d)| {
+            let (props, requis) = match *n {
+                "list_dir" => (serde_json::json!({ "path": chaine("dossier relatif à l'espace de travail, « . » pour la racine") }), vec!["path"]),
+                "read_file" => (serde_json::json!({ "path": chaine("fichier relatif à l'espace de travail") }), vec!["path"]),
+                "write_file" => (serde_json::json!({ "path": chaine("fichier relatif à l'espace de travail"), "content": chaine("contenu complet du fichier") }), vec!["path", "content"]),
+                "fetch_url" => (serde_json::json!({ "url": chaine("adresse http(s) de la page") }), vec!["url"]),
+                _ => (serde_json::json!({}), vec![]),
+            };
+            let description = d.split(" Entrée").next().unwrap_or(d).trim().to_string();
+            crate::brain::Outil {
+                nom: n.to_string(),
+                description,
+                parametres: serde_json::json!({ "type": "object", "properties": props, "required": requis }),
+            }
+        })
+        .collect()
+}
+
 pub fn describe(tools: &[String]) -> String {
     ALL.iter()
         .filter(|(n, _)| tools.iter().any(|t| t == n))

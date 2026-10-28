@@ -2,7 +2,7 @@
 //!
 //! Depuis `src-tauri/` :
 //!   cargo run --release --example evaluation -- --modele qwen3.6:27b
-//! Options : --passages 3 · --temperature 0 · --jeu tout|memoire|taches · --limite N
+//! Options : --passages 3 · --temperature 0 · --jeu tout|memoire|taches · --limite N · --ids t07,t08
 //!
 //! Le rapport est écrit dans `Orchestra/eval/rapport-<date>.md` (détail complet dans le `.jsonl` voisin).
 
@@ -20,6 +20,7 @@ async fn main() {
     let temperature = val("--temperature").and_then(|v| v.parse().ok()).unwrap_or(0.0);
     let jeu = val("--jeu").unwrap_or_else(|| "tout".into());
     let limite = val("--limite").and_then(|v| v.parse().ok());
+    let ids: Vec<String> = val("--ids").map(|v| v.split(',').map(|s| s.trim().to_string()).collect()).unwrap_or_default();
 
     let racine = match Paths::racine_par_defaut() {
         Ok(r) => r,
@@ -35,6 +36,7 @@ async fn main() {
         memoire: jeu == "tout" || jeu == "memoire",
         taches: jeu == "tout" || jeu == "taches",
         limite,
+        ids,
         racine,
         jeux: Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("eval"),
     };

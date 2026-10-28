@@ -4,12 +4,12 @@
 use std::sync::Arc;
 
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 
 use crate::{
     agents::{self, Manifest},
-    brain::{Brain, Chunk, Msg},
+    brain::{self, AppelOutil, Brain, Chunk, Demande, Msg},
     config::Config,
     events::{emit, Event, Sortie},
     market, memory,
@@ -278,66 +278,67 @@ fn short(s: &str, n: usize) -> String {
 
 fn recent_history(history: &[Msg], n: usize) -> Vec<Msg> {
     let start = history.len().saturating_sub(n);
-    history[start..].iter().map(|m| Msg { role: m.role.clone(), content: m.content.chars().take(2000).collect() }).collect()
+    history[start..].iter().map(|m| Msg::new(m.role.clone(), m.content.chars().take(2000).collect::<String>())).collect()
+}
+
+/// Schéma de l'analyse (sortie contrainte, lot F).
+fn schema_analyse() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "reflexion": { "type": "string", "description": "2 à 4 phrases courtes, en français, à voix haute" },
+            "intention": { "type": "string", "enum": ["discussion", "recherche", "travail"] },
+            "agent_necessaire": { "type": "boolean" },
+            "besoin": { "type": "string", "description": "besoin en 2 à 5 mots, vide si pas d'agent" },
+            "mission": { "type": "string", "description": "consigne précise et complète pour l'agent, vide si pas d'agent" }
+        },
+        "required": ["reflexion", "intention", "agent_necessaire", "besoin", "mission"]
+    })
 }
 
 async fn analyse(out: &dyn Sortie, run_id: &str, brain: &Brain, text: &str, history: &[Msg], memory_block: &str) -> anyhow::Result<Analysis> {
     let mut msgs = vec![Msg::system(format!(
         "{ORCHESTRA_IDENTITY}\n\nTa tâche ici : analyser la dernière demande de l'utilisateur. \
-Réfléchis à voix haute en 2 à 4 phrases courtes (en français), puis termine OBLIGATOIREMENT par une dernière ligne qui commence par `JSON:` suivie d'un objet JSON sur une seule ligne :\n\
-{{\"intent\": \"discussion\" | \"recherche\" | \"travail\", \"needs_agent\": true|false, \"need\": \"besoin en 2 à 5 mots (ex: rédiger un mail)\", \"mission\": \"consigne précise et complète pour l'agent, vide si pas d'agent\"}}\n\n\
+Réponds par un objet JSON : {{\"reflexion\": \"2 à 4 phrases courtes en français, à voix haute\", \"intention\": \"discussion\" | \"recherche\" | \"travail\", \
+\"agent_necessaire\": true|false, \"besoin\": \"besoin en 2 à 5 mots (ex: rédiger un mail)\", \"mission\": \"consigne précise et complète pour l'agent, vide si pas d'agent\"}}\n\n\
 Règles : « discussion » = échange, salutations, avis, questions sur toi. « recherche » = question de connaissance à laquelle tu réponds toi-même. \
-« travail » = action concrète à produire (rédiger, créer un fichier, organiser, lister des fichiers, résumer une page web, envoyer, etc.) → needs_agent = true. \
+« travail » = action concrète à produire (rédiger, créer un fichier, organiser, lister des fichiers, résumer une page web, envoyer, etc.) → agent_necessaire = true. \
 Si la demande mélange les deux, privilégie « travail » si une action concrète est attendue.\n\nSouvenirs disponibles :\n{memory_block}"
     ))];
     msgs.extend(recent_history(history, 6));
     msgs.push(Msg::user(text));
 
-    let full = brain
-        .stream("analyse", &msgs, |c: Chunk| {
+    let v = match brain
+        .json("analyse", &msgs, &schema_analyse(), |c: Chunk| {
             if !c.thinking.is_empty() { thought(out, run_id, c.thinking); }
-            if !c.content.is_empty() { thought(out, run_id, c.content); }
         })
-        .await?;
-
-    let json_line = full.rsplit("JSON:").next().filter(|_| full.contains("JSON:")).map(|s| s.trim().to_string());
-    let parsed: Option<Value> = json_line.as_deref().and_then(extract_json);
-    let v = parsed.unwrap_or_else(|| serde_json::json!({}));
-    let intent = v["intent"].as_str().unwrap_or("discussion").to_lowercase();
+        .await
+    {
+        Ok((v, natif)) => {
+            if !natif {
+                thought(out, run_id, "\n⚠ Ce cerveau ne gère pas les sorties contraintes : analyse lue dans le texte.\n");
+            }
+            v
+        }
+        Err(e) => {
+            // jamais de blocage silencieux : on le dit, puis on répond directement
+            thought(out, run_id, format!("\n⚠ Analyse impossible ({e}) : je réponds directement.\n"));
+            json!({})
+        }
+    };
+    let reflexion = v["reflexion"].as_str().unwrap_or("").trim();
+    if !reflexion.is_empty() {
+        thought(out, run_id, format!("\n{reflexion}\n"));
+    }
+    let intent = v["intention"].as_str().unwrap_or("discussion").to_lowercase();
     let intent = if ["discussion", "recherche", "travail"].contains(&intent.as_str()) { intent } else { "discussion".into() };
-    let needs_agent = v["needs_agent"].as_bool().unwrap_or(intent == "travail");
+    let needs_agent = v["agent_necessaire"].as_bool().unwrap_or(intent == "travail");
     Ok(Analysis {
         intent,
         needs_agent,
-        need: v["need"].as_str().unwrap_or("").trim().to_string(),
+        need: v["besoin"].as_str().unwrap_or("").trim().to_string(),
         mission: v["mission"].as_str().unwrap_or("").trim().to_string(),
     })
-}
-
-/// Extrait le premier objet JSON équilibré d'un texte.
-fn extract_json(s: &str) -> Option<Value> {
-    let start = s.find('{')?;
-    let mut depth = 0i32;
-    let mut in_str = false;
-    let mut esc = false;
-    for (i, c) in s[start..].char_indices() {
-        if in_str {
-            if esc { esc = false; } else if c == '\\' { esc = true; } else if c == '"' { in_str = false; }
-            continue;
-        }
-        match c {
-            '"' => in_str = true,
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return serde_json::from_str(&s[start..start + i + 1]).ok();
-                }
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 async fn speak(out: &dyn Sortie, run_id: &str, brain: &Brain, system: &str, history: &[Msg], text: &str, memory_block: &str) -> anyhow::Result<String> {
@@ -353,7 +354,26 @@ async fn speak(out: &dyn Sortie, run_id: &str, brain: &Brain, system: &str, hist
     Ok(full)
 }
 
-/// Boucle d'exécution d'un agent : le modèle agit par outils, un à la fois.
+/// Consignes d'outils de l'agent : appel natif, ou bloc ```tool``` en repli pour un modèle sans outils.
+fn consignes_agent(m: &Manifest, mem_tail: &str, repli_texte: bool) -> String {
+    let tool_doc = tools::describe(&m.tools);
+    let outils = if tool_doc.is_empty() { "(aucun)".to_string() } else { tool_doc };
+    let mode = if repli_texte {
+        "Pour utiliser un outil, réponds UNIQUEMENT avec ce bloc (un seul outil par réponse) :\n```tool\n{\"tool\": \"nom_outil\", \"input\": {...}}\n```\n\
+Tu recevras le résultat, puis tu continueras. Quand la mission est accomplie, réponds SANS bloc tool avec ton rapport final complet (le texte produit, les fichiers créés, ce qui n'a pas pu être fait)."
+    } else {
+        "Utilise les outils mis à ta disposition quand c'est nécessaire ; tu recevras leur résultat, puis tu continueras. \
+Quand la mission est accomplie, réponds sans appeler d'outil, avec ton rapport final complet (le texte produit, les fichiers créés, ce qui n'a pas pu être fait)."
+    };
+    format!(
+        "{}\n\nTu es activé par Orchestra, qui supervise ton travail. Tu réponds en français.\n\nOutils disponibles :\n{outils}\n\n{mode}\n\nExtrait de ta mémoire :\n{}",
+        m.system_prompt,
+        if mem_tail.trim().is_empty() { "(vide)" } else { mem_tail }
+    )
+}
+
+/// Boucle d'exécution d'un agent : le modèle agit par appels d'outils natifs (lot F).
+/// Repli sur la lecture du texte si le modèle ne gère pas les outils, signalé dans Conscience.
 async fn run_agent(
     out: &dyn Sortie,
     run_id: &str,
@@ -378,75 +398,100 @@ async fn run_agent(
         &agent_brain
     };
 
-    let tool_doc = tools::describe(&m.tools);
     let mem = memory::agent_memory_text(paths, &m.id);
     let mem_tail: String = mem.lines().rev().take(12).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
-    let system = format!(
-        "{}\n\nTu es activé par Orchestra, qui supervise ton travail. Tu réponds en français.\n\n\
-Outils disponibles :\n{}\n\n\
-Pour utiliser un outil, réponds UNIQUEMENT avec ce bloc (un seul outil par réponse) :\n```tool\n{{\"tool\": \"nom_outil\", \"input\": {{...}}}}\n```\n\
-Tu recevras le résultat, puis tu continueras. Quand la mission est accomplie, réponds SANS bloc tool avec ton rapport final complet (le texte produit, les fichiers créés, ce qui n'a pas pu être fait).\n\n\
-Extrait de ta mémoire :\n{}",
-        m.system_prompt,
-        if tool_doc.is_empty() { "(aucun)".to_string() } else { tool_doc },
-        if mem_tail.trim().is_empty() { "(vide)".to_string() } else { mem_tail }
-    );
-    let mut msgs = vec![Msg::system(system), Msg::user(format!("Mission confiée par Orchestra : {mission}\n\nDemande originale de l'utilisateur : « {original} »"))];
+    let outils = tools::outils(&m.tools);
+    let mut repli_texte = outils.is_empty();
+    let mut msgs = vec![
+        Msg::system(consignes_agent(m, &mem_tail, repli_texte)),
+        Msg::user(format!("Mission confiée par Orchestra : {mission}\n\nDemande originale de l'utilisateur : « {original} »")),
+    ];
     let mut tools_used: Vec<String> = vec![];
     let prefix = format!("[{}] ", m.name);
+    let max = cfg.max_agent_steps.max(1);
 
-    for step in 0..cfg.max_agent_steps.max(1) {
-        let content = b
-            .stream("agent", &msgs, |c: Chunk| {
+    let mut step = 0;
+    while step < max {
+        let demande = if repli_texte { Demande::repli() } else { Demande { outils: &outils, ..Default::default() } };
+        let rep = match b
+            .appeler("agent", &msgs, demande, |c: Chunk| {
                 if !c.thinking.is_empty() { thought(out, run_id, format!("{prefix}{}", c.thinking)); }
                 if !c.content.is_empty() { thought(out, run_id, c.content); }
             })
-            .await?;
+            .await
+        {
+            Err(e) if !repli_texte && brain::non_supporte(&e) => {
+                repli_texte = true;
+                msgs[0] = Msg::system(consignes_agent(m, &mem_tail, true));
+                thought(out, run_id, format!("\n⚠ {} ne gère pas l'appel d'outils natif : je lis les outils dans le texte.\n", b.model));
+                continue;
+            }
+            r => r?,
+        };
         thought(out, run_id, "\n");
+        step += 1;
 
-        match extract_tool_call(&content) {
-            None => return Ok((content, tools_used)),
-            Some((tool, input)) => {
-                if !m.tools.iter().any(|t| t == &tool) {
-                    let resultat = format!("outil « {tool} » non autorisé pour cet agent");
-                    emit(out, Event::ToolCall { run_id: run_id.into(), agent_id: m.id.clone(), tool: tool.clone(), input: input.clone(), output: resultat.clone() });
-                    msgs.push(Msg::assistant(content));
-                    msgs.push(Msg::user(format!("Résultat de l'outil {tool} : {resultat}")));
-                    continue;
+        // appels d'outils : natifs, ou lus dans le texte en repli
+        let appels: Vec<AppelOutil> = if repli_texte {
+            extract_tool_call(&rep.texte).map(|(nom, arguments)| vec![AppelOutil { id: format!("appel-{step}"), nom, arguments }]).unwrap_or_default()
+        } else {
+            rep.appels.clone()
+        };
+        if appels.is_empty() {
+            return Ok((rep.texte, tools_used));
+        }
+        if repli_texte {
+            msgs.push(Msg::assistant(rep.texte.clone()));
+        } else {
+            msgs.push(Msg::appels_outils(rep.texte.clone(), appels.clone()));
+        }
+        let remaining = max.saturating_sub(step);
+        for a in &appels {
+            let resultat = if !m.tools.iter().any(|t| t == &a.nom) {
+                format!("outil « {} » non autorisé pour cet agent", a.nom)
+            } else {
+                if !tools_used.contains(&a.nom) {
+                    tools_used.push(a.nom.clone());
                 }
-                let resultat = match tools::execute(&tool, &input, paths, http).await {
+                match tools::execute(&a.nom, &a.arguments, paths, http).await {
                     Ok(o) => o,
                     Err(e) => format!("ERREUR : {e}"),
-                };
-                emit(out, Event::ToolCall { run_id: run_id.into(), agent_id: m.id.clone(), tool: tool.clone(), input: input.clone(), output: resultat.clone() });
-                if !tools_used.contains(&tool) {
-                    tools_used.push(tool.clone());
                 }
-                msgs.push(Msg::assistant(content));
-                let remaining = cfg.max_agent_steps.saturating_sub(step + 1);
+            };
+            emit(out, Event::ToolCall { run_id: run_id.into(), agent_id: m.id.clone(), tool: a.nom.clone(), input: a.arguments.clone(), output: resultat.clone() });
+            if repli_texte {
                 msgs.push(Msg::user(format!(
-                    "Résultat de l'outil {tool} :\n{resultat}\n\n(Il te reste {remaining} action(s) outil. Si la mission est terminée, donne ton rapport final sans bloc tool.)"
+                    "Résultat de l'outil {} :\n{resultat}\n\n(Il te reste {remaining} action(s) outil. Si la mission est terminée, donne ton rapport final sans bloc tool.)",
+                    a.nom
                 )));
+            } else {
+                msgs.push(Msg::resultat_outil(a, resultat));
             }
         }
+        if !repli_texte {
+            // rappel du budget, sans casser l'enchaînement appel → résultat
+            msgs.push(Msg::user(format!("(Il te reste {remaining} étape(s). Si la mission est terminée, donne ton rapport final sans appeler d'outil.)")));
+        }
     }
-    // dernier tour : rapport forcé
-    msgs.push(Msg::user("Limite d'actions atteinte. Donne maintenant ton rapport final, sans bloc tool."));
-    let content = b.stream("agent", &msgs, |c: Chunk| {
-        if !c.content.is_empty() { thought(out, run_id, c.content); }
-    }).await?;
+    // dernier tour : rapport forcé, sans outils
+    msgs.push(Msg::user("Limite d'actions atteinte. Donne maintenant ton rapport final, sans appeler d'outil."));
+    let content = b
+        .stream("agent", &msgs, |c: Chunk| {
+            if !c.content.is_empty() { thought(out, run_id, c.content); }
+        })
+        .await?;
     Ok((content, tools_used))
 }
 
+/// Repli seulement (modèle sans appel d'outils natif) : bloc ```tool``` lu dans le texte.
 fn extract_tool_call(content: &str) -> Option<(String, Value)> {
-    // bloc ```tool … ``` ou ```json … ``` contenant "tool"
     let mut candidates: Vec<&str> = vec![];
     let mut rest = content;
     while let Some(i) = rest.find("```") {
         let after = &rest[i + 3..];
         let Some(j) = after.find("```") else { break };
         let block = &after[..j];
-        let body = block.splitn(2, '\n').nth(1).unwrap_or(block);
+        let body = block.split_once('\n').map(|x| x.1).unwrap_or(block);
         candidates.push(body);
         rest = &after[j + 3..];
     }
@@ -454,7 +499,7 @@ fn extract_tool_call(content: &str) -> Option<(String, Value)> {
         candidates.push(content);
     }
     for c in candidates {
-        if let Some(v) = extract_json(c) {
+        if let Some(v) = brain::lire_json_dans_texte(c) {
             if let Some(tool) = v["tool"].as_str() {
                 let input = v.get("input").cloned().unwrap_or(Value::Object(Default::default()));
                 return Some((tool.to_string(), input));
@@ -464,50 +509,101 @@ fn extract_tool_call(content: &str) -> Option<(String, Value)> {
     None
 }
 
+/// Schéma de la mémorisation (sortie contrainte, lot F).
+fn schema_memorisation() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "faits": {
+                "type": "array",
+                "maxItems": 3,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "section": { "type": "string", "enum": ["Utilisateur", "Préférences", "Projets", "Connaissances"] },
+                        "fait": { "type": "string" }
+                    },
+                    "required": ["section", "fait"]
+                }
+            }
+        },
+        "required": ["faits"]
+    })
+}
+
 async fn memorize(out: &dyn Sortie, run_id: &str, brain: &Brain, paths: &crate::paths::Paths, text: &str, answer: &str, agent: Option<&Manifest>) {
     let prompt = format!(
         "Tu es la mémoire d'Orchestra. Voici un échange. Extrais 0 à 3 faits DURABLES et utiles pour les prochaines conversations : \
 qui est l'utilisateur, ce qu'il aime ou n'aime pas, ses projets, des informations stables. \
 Ignore ce qui est éphémère, les simples questions, les salutations, et ne reformule pas la réponse d'Orchestra. \
-Réponds UNIQUEMENT avec un tableau JSON : [{{\"section\": \"Utilisateur\" | \"Préférences\" | \"Projets\" | \"Connaissances\", \"fact\": \"une phrase courte\"}}] ou [] s'il n'y a rien à retenir.\n\n\
+Réponds par un objet JSON : {{\"faits\": [{{\"section\": \"Utilisateur\" | \"Préférences\" | \"Projets\" | \"Connaissances\", \"fait\": \"une phrase courte\"}}]}}, avec une liste vide s'il n'y a rien à retenir.\n\n\
 Utilisateur : {}\n\nOrchestra : {}",
         text.chars().take(4000).collect::<String>(),
         answer.chars().take(2000).collect::<String>()
     );
-    let res = brain.complete("memorisation", &[Msg::user(prompt)]).await.unwrap_or_default();
-    let arr = res.find('[').and_then(|i| {
-        let tail = &res[i..];
-        let end = tail.rfind(']')?;
-        serde_json::from_str::<Value>(&tail[..=end]).ok()
-    });
-    let mut count = 0;
-    if let Some(Value::Array(items)) = arr {
-        for it in items.iter().take(3) {
-            let section = it["section"].as_str().unwrap_or("Connaissances").trim();
-            let section = match section { "Utilisateur" | "Préférences" | "Projets" | "Connaissances" => section, _ => "Connaissances" };
-            let fact = it["fact"].as_str().unwrap_or("").trim();
-            if fact.len() < 4 { continue; }
-            // évite les doublons exacts
-            if memory::read_main(paths).contains(fact) { continue; }
-            if let Ok(line) = memory::append_fact(paths, section, fact) {
-                count += 1;
-                emit(out, Event::Memorized { run_id: run_id.into(), file: "orchestra.md".into(), section: section.into(), line });
+    let faits: Vec<Value> = match brain.json("memorisation", &[Msg::user(prompt)], &schema_memorisation(), |_| {}).await {
+        Ok((v, natif)) => {
+            if !natif {
+                thought(out, run_id, "⚠ Mémorisation lue dans le texte (ce cerveau ne gère pas les sorties contraintes).\n");
             }
+            v["faits"].as_array().cloned().unwrap_or_default()
+        }
+        Err(e) => {
+            thought(out, run_id, format!("⚠ Mémorisation impossible : {e}\n"));
+            vec![]
+        }
+    };
+    let mut count = 0;
+    for it in faits.iter().take(3) {
+        let section = it["section"].as_str().unwrap_or("Connaissances").trim();
+        let section = match section { "Utilisateur" | "Préférences" | "Projets" | "Connaissances" => section, _ => "Connaissances" };
+        let fact = it["fait"].as_str().unwrap_or("").trim();
+        if fact.len() < 4 { continue; }
+        // évite les doublons exacts
+        if memory::read_main(paths).contains(fact) { continue; }
+        if let Ok(line) = memory::append_fact(paths, section, fact) {
+            count += 1;
+            emit(out, Event::Memorized { run_id: run_id.into(), file: "orchestra.md".into(), section: section.into(), line });
         }
     }
     if let Some(m) = agent {
         // un apprentissage côté agent si le modèle en a extrait un
-        if let Some(Value::Array(items)) = res.find('[').and_then(|i| serde_json::from_str::<Value>(&res[i..]).ok()) {
-            if let Some(first) = items.first().and_then(|f| f["fact"].as_str()) {
-                if first.len() > 4 {
-                    if let Ok(line) = memory::append_agent_learning(paths, m, &format!("Contexte utilisateur : {first}")) {
-                        emit(out, Event::Memorized { run_id: run_id.into(), file: format!("agents/{}.md", m.id), section: "Apprentissages".into(), line });
-                    }
+        if let Some(first) = faits.first().and_then(|f| f["fait"].as_str()) {
+            if first.len() > 4 {
+                if let Ok(line) = memory::append_agent_learning(paths, m, &format!("Contexte utilisateur : {first}")) {
+                    emit(out, Event::Memorized { run_id: run_id.into(), file: format!("agents/{}.md", m.id), section: "Apprentissages".into(), line });
                 }
             }
         }
     }
     if count == 0 {
         emit(out, Event::NothingToMemorize { run_id: run_id.into() });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repli_texte_bloc_tool() {
+        let t = "Je regarde.\n```tool\n{\"tool\": \"list_dir\", \"input\": {\"path\": \".\"}}\n```";
+        assert_eq!(extract_tool_call(t), Some(("list_dir".into(), json!({ "path": "." }))));
+        assert_eq!(extract_tool_call("Rapport final : tout est fait."), None);
+    }
+
+    #[test]
+    fn schemas_valides() {
+        let a = schema_analyse();
+        assert_eq!(a["required"].as_array().unwrap().len(), 5);
+        let m = schema_memorisation();
+        assert_eq!(m["properties"]["faits"]["maxItems"], 3);
+    }
+
+    #[test]
+    fn consignes_selon_le_mode() {
+        let m: Manifest = serde_json::from_value(json!({ "id": "a", "name": "A", "tools": ["now"], "system_prompt": "Tu es A." })).unwrap();
+        assert!(consignes_agent(&m, "", true).contains("```tool"));
+        assert!(!consignes_agent(&m, "", false).contains("```tool"));
     }
 }

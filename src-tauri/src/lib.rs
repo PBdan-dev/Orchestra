@@ -274,7 +274,7 @@ pub fn run() {
             }
             agents::seed_registry(&paths).map_err(|e| anyhow::anyhow!("registre : {e}"))?;
             memory::seed_main(&paths, &config.user_name).map_err(|e| anyhow::anyhow!("mémoire : {e}"))?;
-            let http = reqwest::Client::builder().user_agent("Orchestra/0.1").build().map_err(|e| anyhow::anyhow!("http : {e}"))?;
+            let http = reqwest::Client::builder().user_agent("Orchestra/0.1").connect_timeout(brain::DELAI_CONNEXION).build().map_err(|e| anyhow::anyhow!("http : {e}"))?;
             let state = AppState { config: Mutex::new(config), paths, http, busy: AtomicBool::new(false), voice: voice::VoiceProcess::default() };
             {
                 let cfg = state.config.lock().unwrap().clone();

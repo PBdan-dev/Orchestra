@@ -28,6 +28,15 @@ pub struct Mesure {
     /// Temps entre l'envoi de la requête et le premier fragment (réflexion ou réponse).
     pub premier_token_ms: Option<f64>,
     pub total_ms: f64,
+    /// Numéro de l'essai (2 = nouvel essai après une erreur passagère).
+    #[serde(default)]
+    pub essai: u32,
+    /// Appels d'outils natifs reçus dans la réponse.
+    #[serde(default)]
+    pub appels_outils: u32,
+    /// La sortie a dû être lue dans le texte (modèle sans outils ni sortie contrainte).
+    #[serde(default)]
+    pub repli_texte: bool,
     pub ok: bool,
     pub erreur: Option<String>,
 }
