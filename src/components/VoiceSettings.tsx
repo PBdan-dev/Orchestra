@@ -31,11 +31,9 @@ export function VoiceSettings({ form, set }: { form: Config; set: <K extends key
     <section className="card-section">
       <h2><I.mic size={16} /> Voix</h2>
       <p className="muted small">
-        Parle à Orchestra et elle te répond à l'oral. Tout tourne sur ton PC : Voxtral pour écouter, {form.voice_llm || "Qwen 3.5 9B"} pour
-        répondre vite, Qwen3-TTS pour la voix, reliés par Pipecat. Un travail concret dit à voix haute passe par la même boucle que le chat.
+        Les modèles, la voix et les consignes se choisissent dans le panneau du cœur (clic sur le cœur), et le passage
+        du chat à la voix avec le switch qui s'y trouve. Ici, seulement l'état du serveur voix et la façon de parler.
       </p>
-
-      <p className="muted small">Le passage du chat à la voix se fait avec le switch sous le cœur. Réglages avancés :</p>
 
       {(
         <>
@@ -72,37 +70,12 @@ export function VoiceSettings({ form, set }: { form: Config; set: <K extends key
             {form.voice_mode === "appuyer" && (
               <label><span>Touche à maintenir</span><input value={form.voice_ptt_key} onChange={(e) => set("voice_ptt_key", e.target.value)} placeholder="F2" /></label>
             )}
-            <label>
-              <span>Cerveau du mode vocal <span className="muted">(rapide)</span></span>
-              <input value={form.voice_llm} onChange={(e) => set("voice_llm", e.target.value)} placeholder="qwen3.5:9b" />
-            </label>
-            <label>
-              <span>Voix de Qwen3-TTS</span>
-              <select value={form.voice_speaker} onChange={(e) => set("voice_speaker", e.target.value)} disabled={!!form.voice_reference}>
-                {SPEAKERS.map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </label>
-            <label>
-              <span>Voix clonée <span className="muted">(fichier de voix\references, avec l'accord de la personne)</span></span>
-              <input value={form.voice_reference} onChange={(e) => set("voice_reference", e.target.value)} placeholder="vide = voix ci-dessus" />
-            </label>
           </div>
-          <label className="toggle">
-            <input type="checkbox" checked={form.voice_read_chat} onChange={(e) => set("voice_read_chat", e.target.checked)} />
-            <span>Lire aussi à voix haute les réponses aux messages tapés</span>
-            <span className="muted small">Quand le mode vocal est ouvert.</span>
-          </label>
           <label className="toggle">
             <input type="checkbox" checked={form.voice_barge_in} onChange={(e) => set("voice_barge_in", e.target.checked)} />
             <span>Pouvoir couper la parole à Orchestra en parlant</span>
             <span className="muted small">Le micro reste ouvert pendant qu'elle parle. Sans casque, si elle se coupe elle-même, décoche cette option.</span>
           </label>
-          <label className="toggle">
-            <input type="checkbox" checked={form.voice_autostart} onChange={(e) => set("voice_autostart", e.target.checked)} />
-            <span>Préparer la voix au lancement d'Orchestra</span>
-            <span className="muted small">Les modèles se chargent en arrière-plan (environ 10 Go de mémoire GPU), le micro reste fermé.</span>
-          </label>
-          <p className="muted small">Changer la voix ou le cerveau vocal : enregistrer, puis Arrêter et Démarrer le serveur voix.</p>
         </>
       )}
     </section>
