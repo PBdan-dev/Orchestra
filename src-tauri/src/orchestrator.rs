@@ -303,7 +303,8 @@ Réponds par un objet JSON : {{\"reflexion\": \"2 à 4 phrases courtes en franç
 \"agent_necessaire\": true|false, \"besoin\": \"besoin en 2 à 5 mots (ex: rédiger un mail)\", \"mission\": \"consigne précise et complète pour l'agent, vide si pas d'agent\"}}\n\n\
 Règles : « discussion » = échange, salutations, avis, questions sur toi. « recherche » = question de connaissance à laquelle tu réponds toi-même. \
 « travail » = action concrète à produire (rédiger, créer un fichier, organiser, lister des fichiers, résumer une page web, envoyer, etc.) → agent_necessaire = true. \
-Si la demande mélange les deux, privilégie « travail » si une action concrète est attendue.\n\nSouvenirs disponibles :\n{memory_block}"
+Si la demande mélange les deux, privilégie « travail » si une action concrète est attendue. \
+Si la demande est trop vague pour agir (on ne sait pas quoi produire, sur quoi ou pour qui), intention = « discussion » et agent_necessaire = false : tu demanderas une précision.\n\nSouvenirs disponibles :\n{memory_block}"
     ))];
     msgs.extend(recent_history(history, 6));
     msgs.push(Msg::user(text));
