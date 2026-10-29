@@ -31,7 +31,9 @@ pub enum Event {
     /// Rien à retenir de durable
     NothingToMemorize { run_id: String },
     /// Fin de traitement
-    Done { run_id: String, answer: String, intent: String },
+    Done { run_id: String, answer: String, intent: String, message_historique: String },
+    /// Coupe de texte (historique trop long, profil trop long) : jamais silencieuse
+    Coupe { run_id: String, quoi: String, detail: String },
     Error { run_id: String, message: String },
 }
 

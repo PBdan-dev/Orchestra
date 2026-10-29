@@ -32,6 +32,7 @@ from pipecat.frames.frames import (
     FunctionCallResultProperties,
     InputAudioRawFrame,
     InputTransportMessageFrame,
+    LLMContextFrame,
     LLMMessagesAppendFrame,
     LLMUpdateSettingsFrame,
     InterimTranscriptionFrame,
@@ -77,35 +78,130 @@ def maintenant() -> str:
     return f"{JOURS[d.weekday()]} {d.day} {MOIS[d.month - 1]} {d.year}, il est {d.hour} h {d.minute:02d}"
 
 
-def system_prompt() -> str:
-    memoire = ""
+# Bloc 1 du prompt vocal (lot A) : fixe, sans date ni mémoire, pour que son calcul reste en cache.
+BLOC_1 = (
+    "Tu es Orchestra, l'assistant local de l'utilisateur, en conversation vocale. "
+    "Réponds en français, à l'oral : phrases courtes et naturelles, une à trois en général ; va à l'essentiel. "
+    "Jamais de Markdown, de listes, d'emoji ni de code : tout ce que tu écris est lu à voix haute. "
+    "Écris les nombres et les sigles comme on les prononce. "
+    "Chaque message de l'utilisateur commence par la date et l'heure entre crochets : sers-t'en si on te les demande, sans les répéter sinon. "
+    "Quand on te demande un travail concret (écrire ou lire un fichier, rédiger un document, "
+    "utiliser un agent, chercher quelque chose), appelle l'outil confier_a_orchestra avec la tâche "
+    "formulée clairement. "
+    "Si une question demande vraiment de réfléchir (calcul, raisonnement en plusieurs étapes, "
+    "comparaison délicate, conseil important), appelle l'outil reflechir avec la question complète ; "
+    "pour tout le reste, réponds directement sans réfléchir longuement. "
+    "Tiens compte de toute la conversation qui précède : ce que l'utilisateur t'a déjà dit reste vrai, "
+    "ne le contredis pas et ne lui redemande pas. "
+    "N'invente jamais un fait sur l'utilisateur : si tu ne le sais pas, dis-le."
+)
+
+# Profil (bloc 2) : sections Utilisateur et Préférences d'orchestra.md, figé à la connexion de l'interface.
+PROFIL_MAX_CAR = 1050  # ≈ 300 tokens
+_profil: str | None = None
+
+
+def lire_profil() -> str:
     try:
-        memoire = C.MEMOIRE.read_text(encoding="utf-8")[-6000:]
+        texte = C.MEMOIRE.read_text(encoding="utf-8")
     except OSError:
-        pass
+        return ""
+    section, faits = "", []
+    for ligne in texte.splitlines():
+        t = ligne.strip()
+        if t.startswith("## "):
+            section = t[3:].strip()
+        elif t.startswith("- ") and section in ("Utilisateur", "Préférences"):
+            faits.append(t)
+    out, ecartes = [], 0
+    for f in faits:
+        if sum(len(x) + 1 for x in out) + len(f) > PROFIL_MAX_CAR:
+            ecartes += 1
+        else:
+            out.append(f)
+    if ecartes:
+        # jamais de coupe silencieuse
+        out.append(f"[… {ecartes} fait(s) du profil non repris ici, faute de place]")
+        logger.info(f"Profil vocal : {ecartes} fait(s) non repris (budget de {PROFIL_MAX_CAR} caractères)")
+    return "\n".join(out)
+
+
+def nouvelle_session():
+    """Début de conversation : le profil est relu puis figé."""
+    global _profil
+    _profil = lire_profil()
+
+
+def system_prompt() -> str:
     consignes = ""
     try:
-        # consignes écrites par PB dans le panneau des modèles (voix/consignes.txt), relues à chaque tour
-        consignes = (C.VOIX / "consignes.txt").read_text(encoding="utf-8").strip()[:3000]
+        # bloc 1b : consignes écrites par PB dans le panneau des modèles (voix/consignes.txt)
+        consignes = (C.VOIX / "consignes.txt").read_text(encoding="utf-8").strip()
     except OSError:
         pass
+    if len(consignes) > 3000:
+        logger.info(f"Consignes vocales coupées à 3 000 caractères (sur {len(consignes)})")
+        consignes = consignes[:3000] + " [… consignes coupées, trop longues]"
+    profil = _profil if _profil is not None else lire_profil()
     return (
-        f"Nous sommes le {maintenant()}. "
-        "Tu es Orchestra, l'assistant local de l'utilisateur, en conversation vocale. "
-        "Réponds en français, à l'oral : phrases courtes et naturelles, une à trois en général. "
-        "Jamais de Markdown, de listes, d'emoji ni de code : tout ce que tu écris est lu à voix haute. "
-        "Écris les nombres et les sigles comme on les prononce. "
-        "Quand on te demande un travail concret (écrire ou lire un fichier, rédiger un document, "
-        "utiliser un agent, chercher quelque chose), appelle l'outil confier_a_orchestra avec la tâche "
-        "formulée clairement. "
-        "Si une question demande vraiment de réfléchir (calcul, raisonnement en plusieurs étapes, "
-        "comparaison délicate, conseil important), appelle l'outil reflechir avec la question complète ; "
-        "pour tout le reste, réponds directement sans réfléchir longuement. "
-        "Tiens compte de toute la conversation qui précède : ce que l'utilisateur t'a déjà dit reste vrai, "
-        "ne le contredis pas et ne lui redemande pas.\n\n"
+        BLOC_1
+        + "\n\n"
         + (f"Consignes de l'utilisateur sur ta façon de répondre (à respecter en priorité) :\n{consignes}\n\n" if consignes else "")
-        + f"Ce que tu sais de l'utilisateur (ta mémoire) :\n{memoire}"
+        + "Ce que tu sais de l'utilisateur :\n"
+        + (profil or "(rien pour l'instant)")
     )
+
+
+def modele_derive(base: str) -> str:
+    """Même règle que `modele_vocal_derive` côté Rust : qwen3.5:9b → qwen3.5:9b-orchestra."""
+    if not base or base.endswith("-orchestra"):
+        return base
+    return f"{base}-orchestra" if ":" in base else f"{base}:latest-orchestra"
+
+
+async def modele_vocal(s: C.VoiceSettings, base: str) -> str:
+    """Modèle dérivé dans Ollama (mêmes poids, num_ctx réduit), créé s'il manque.
+
+    Le point d'accès /v1 utilisé par Pipecat ignore num_ctx (vérifié le 29/10) : sans ce modèle
+    dérivé, Ollama prend son contexte par défaut (64k) et la mémoire GPU déborde presque.
+    """
+    import httpx
+
+    nom = modele_derive(base)
+    api = s.ollama_url.removesuffix("/v1")
+    try:
+        async with httpx.AsyncClient(timeout=120) as c:
+            r = await c.post(f"{api}/api/show", json={"model": nom})
+            if r.status_code == 200 and f"num_ctx {s.num_ctx}" in " ".join(str(r.json().get("parameters", "")).split()):
+                return nom
+            r = await c.post(f"{api}/api/create", json={"model": nom, "from": base, "parameters": {"num_ctx": s.num_ctx}, "stream": False})
+            r.raise_for_status()
+        logger.info(f"Modèle vocal dérivé créé : {nom} (num_ctx {s.num_ctx})")
+        return nom
+    except Exception as e:
+        logger.warning(f"Modèle vocal dérivé impossible ({e}) : j'utilise {base} avec son contexte par défaut")
+        return base
+
+
+class DateDuTour(FrameProcessor):
+    """Bloc 5 : la date et l'heure en tête du dernier message de l'utilisateur, juste avant le cerveau.
+
+    Le prompt système ne change donc plus à chaque minute (cache), et la date reste exacte.
+    """
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, LLMContextFrame) and direction == FrameDirection.DOWNSTREAM:
+            msgs = frame.context.get_messages()
+            for m in reversed(msgs):
+                if not isinstance(m, dict) or m.get("role") == "system":
+                    continue
+                c = m.get("content")
+                if m.get("role") == "user" and isinstance(c, str) and not c.startswith("["):
+                    m["content"] = f"[{maintenant()}] {c}"
+                    frame.context.set_messages(msgs)
+                break
+        await self.push_frame(frame, direction)
 
 
 class LatencyLog:
@@ -256,7 +352,7 @@ class ClientCommands(FrameProcessor):
                 await self.push_frame(TTSSpeakFrame(text=str(m["text"])))
                 return
             if kind == "set_llm" and m.get("model"):
-                self._s.llm_model = str(m["model"])
+                self._s.llm_model = await modele_vocal(self._s, str(m["model"]))
                 await self.push_frame(LLMUpdateSettingsFrame(delta=OLLamaLLMService.Settings(model=self._s.llm_model)))
                 asyncio.create_task(garder_charge(self._s))
                 logger.info(f"Cerveau vocal : {self._s.llm_model}")
@@ -278,7 +374,7 @@ async def garder_charge(s: C.VoiceSettings):
     base = s.ollama_url.removesuffix("/v1")
     try:
         async with httpx.AsyncClient(timeout=120) as c:
-            await c.post(f"{base}/api/generate", json={"model": s.llm_model, "prompt": "", "keep_alive": "60m"})
+            await c.post(f"{base}/api/generate", json={"model": s.llm_model, "prompt": "", "keep_alive": -1})
         logger.info(f"{s.llm_model} chargé dans Ollama")
     except Exception as e:
         logger.warning(f"Préchargement de {s.llm_model} : {e}")
@@ -298,7 +394,7 @@ async def penser(s: C.VoiceSettings, messages: list, question: str, on_thought=N
     msgs.append({"role": "user", "content": f"{question}\n\nRéfléchis soigneusement, en français, puis donne une réponse orale claire, en quelques phrases, sans Markdown."})
     content, buf, last = [], [], time.monotonic()
     async with httpx.AsyncClient(timeout=170) as c:
-        async with c.stream("POST", f"{base}/api/chat", json={"model": s.llm_model, "messages": msgs, "think": True, "stream": True, "keep_alive": "60m"}) as r:
+        async with c.stream("POST", f"{base}/api/chat", json={"model": s.llm_model, "messages": msgs, "think": True, "stream": True, "keep_alive": -1}) as r:
             r.raise_for_status()
             async for line in r.aiter_lines():
                 if not line.strip():
@@ -361,6 +457,8 @@ async def main(s: C.VoiceSettings):
         return
 
     tts = build_tts(s, lat)
+    # cerveau vocal : modèle dérivé à contexte réduit (lot A), créé dans Ollama s'il manque
+    s.llm_model = await modele_vocal(s, s.llm_model)
     llm = OLLamaLLMService(
         base_url=s.ollama_url,
         settings=OLLamaLLMService.Settings(
@@ -446,6 +544,7 @@ async def main(s: C.VoiceSettings):
             VADProcessor(vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=s.vad_stop_secs))),
             stt,
             agg.user(),
+            DateDuTour(),
             llm,
             tts,
             transport.output(),
@@ -466,6 +565,7 @@ async def main(s: C.VoiceSettings):
     @transport.event_handler("on_client_connected")
     async def _connected(_transport, _ws):
         logger.info("Interface connectée")
+        nouvelle_session()
         context.set_messages([{"role": "system", "content": system_prompt()}])
         asyncio.create_task(garder_charge(s))
         await bridge.send({"type": "ready", "stt": "voxtral-mini-4b-realtime", "llm": s.llm_model, "tts": s.tts})
@@ -517,11 +617,12 @@ def cli():
     p.add_argument("--stt-model", default="", help="fichier GGUF de modeles/voxtral")
     p.add_argument("--tts-model", default="", help="dossier de modeles/qwen3-tts")
     p.add_argument("--mode", choices=["voix", "dictee"], default="voix", help="dictee : écoute seule, pour le chat")
+    p.add_argument("--num-ctx", type=int, default=8192, help="contexte du cerveau vocal (modèle dérivé dans Ollama)")
     a = p.parse_args()
     s = C.VoiceSettings(
         port=a.port, llm_model=a.llm, qwen3_speaker=a.speaker,
         qwen3_reference=a.reference, qwen3_reference_text=a.reference_text, vad_stop_secs=a.vad_stop,
-        stt_model=a.stt_model, tts_model=a.tts_model, mode=a.mode,
+        stt_model=a.stt_model, tts_model=a.tts_model, mode=a.mode, num_ctx=a.num_ctx,
     )
     asyncio.run(main(s))
 

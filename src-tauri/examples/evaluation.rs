@@ -2,7 +2,7 @@
 //!
 //! Depuis `src-tauri/` :
 //!   cargo run --release --example evaluation -- --modele qwen3.6:27b
-//! Options : --passages 3 · --temperature 0 · --jeu tout|memoire|taches · --limite N · --ids t07,t08
+//! Options : --passages 3 · --temperature 0 · --jeu tout|memoire|taches|conversation · --limite N · --ids t07,t08
 //!
 //! Le rapport est écrit dans `Orchestra/eval/rapport-<date>.md` (détail complet dans le `.jsonl` voisin).
 
@@ -35,6 +35,7 @@ async fn main() {
         temperature,
         memoire: jeu == "tout" || jeu == "memoire",
         taches: jeu == "tout" || jeu == "taches",
+        conversation: jeu == "tout" || jeu == "conversation",
         limite,
         ids,
         racine,

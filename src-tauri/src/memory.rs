@@ -94,6 +94,29 @@ pub fn read_main(paths: &Paths) -> String {
     std::fs::read_to_string(paths.main_memory()).unwrap_or_default()
 }
 
+/// Profil de l'utilisateur (bloc 2 du prompt) : faits des sections Utilisateur et Préférences.
+/// Renvoie le texte et le nombre de faits laissés de côté si le budget de caractères est dépassé.
+pub fn profil(paths: &Paths, max_car: usize) -> (String, usize) {
+    let faits: Vec<Fact> = parse_facts("orchestra.md", &read_main(paths))
+        .into_iter()
+        .filter(|f| f.section == "Utilisateur" || f.section == "Préférences")
+        .collect();
+    let mut out = String::new();
+    let mut ecartes = 0;
+    for f in &faits {
+        let ligne = format!("- {}\n", f.text);
+        if out.chars().count() + ligne.chars().count() > max_car {
+            ecartes += 1;
+        } else {
+            out.push_str(&ligne);
+        }
+    }
+    if ecartes > 0 {
+        out.push_str(&format!("[… {ecartes} fait(s) du profil non repris ici, faute de place : ils restent dans orchestra.md]\n"));
+    }
+    (out.trim_end().to_string(), ecartes)
+}
+
 pub fn parse_facts(file: &str, text: &str) -> Vec<Fact> {
     let mut section = String::from("Général");
     let mut out = vec![];

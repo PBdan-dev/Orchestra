@@ -45,6 +45,15 @@ pub struct Config {
     pub voice_stt_model: String,
     /// Modèle de synthèse : dossier de voix/modeles/qwen3-tts.
     pub voice_tts_model: String,
+    /// Taille du contexte du cerveau du chat (tokens), fixe pour garder le cache (lot A).
+    pub num_ctx: u32,
+    /// Taille du contexte du cerveau vocal (modèle dérivé `<modèle>-orchestra` dans Ollama).
+    pub voice_num_ctx: u32,
+    /// Historique du chat : au-delà du seuil haut, on retire les plus anciens échanges jusqu'au seuil bas (tokens estimés).
+    pub historique_seuil_haut: u32,
+    pub historique_seuil_bas: u32,
+    /// Réserve pour la réflexion et la réponse (tokens générés au plus par appel), §5.2.
+    pub reserve_reponse: u32,
     /// Température imposée (lanceur d'évaluation seulement, jamais enregistrée).
     #[serde(skip)]
     pub eval_temperature: Option<f32>,
@@ -77,6 +86,11 @@ impl Default for Config {
             voice_port: 8765,
             voice_stt_model: "Voxtral-Mini-4B-Realtime-2602-Q8_0.gguf".into(),
             voice_tts_model: "Qwen3-TTS-12Hz-1.7B-CustomVoice".into(),
+            num_ctx: 16384,
+            voice_num_ctx: 8192,
+            historique_seuil_haut: 8000,
+            historique_seuil_bas: 4000,
+            reserve_reponse: 4500,
             eval_temperature: None,
         }
     }

@@ -26,6 +26,8 @@ pub struct AppState {
     pub http: reqwest::Client,
     pub busy: AtomicBool,
     pub voice: voice::VoiceProcess,
+    /// Conversation en cours (profil figé, fenêtre de l'historique) : lot A.
+    pub session: std::sync::Arc<Mutex<orchestrator::Session>>,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -234,19 +236,25 @@ fn voice_restart(state: State<AppState>) -> CmdResult<voice::VoiceStatus> {
     Ok(state.voice.status(&state.paths, &cfg))
 }
 
-/// Ollama : charge `load` (gardé 30 min) et décharge `unload` pour libérer la mémoire GPU.
+/// Ollama : charge `load` (cerveau du chat, gardé tant qu'Orchestra est ouvert, avec le `num_ctx`
+/// des appels) et décharge `unload` (ainsi que sa variante vocale dérivée) pour libérer la mémoire GPU.
 #[tauri::command]
 async fn ollama_switch(state: State<'_, AppState>, load: Option<String>, unload: Option<String>) -> CmdResult<()> {
-    let base = state.config.lock().unwrap().ollama_url.trim_end_matches('/').to_string();
+    let (base, num_ctx) = {
+        let c = state.config.lock().unwrap();
+        (c.ollama_url.trim_end_matches('/').to_string(), c.num_ctx)
+    };
     if let Some(m) = unload.filter(|m| !m.is_empty()) {
-        let _ = state.http.post(format!("{base}/api/generate")).json(&serde_json::json!({ "model": m, "keep_alive": 0 })).send().await;
+        for nom in [m.clone(), brain::modele_vocal_derive(&m)] {
+            let _ = state.http.post(format!("{base}/api/generate")).json(&serde_json::json!({ "model": nom, "keep_alive": 0 })).send().await;
+        }
     }
     if let Some(m) = load.filter(|m| !m.is_empty()) {
         let r = state
             .http
             .post(format!("{base}/api/generate"))
             .timeout(std::time::Duration::from_secs(900))
-            .json(&serde_json::json!({ "model": m, "prompt": "", "keep_alive": "30m", "stream": false }))
+            .json(&serde_json::json!({ "model": m, "prompt": "", "keep_alive": brain::KEEP_ALIVE, "stream": false, "options": { "num_ctx": num_ctx } }))
             .send()
             .await
             .map_err(err)?;
@@ -275,7 +283,7 @@ pub fn run() {
             agents::seed_registry(&paths).map_err(|e| anyhow::anyhow!("registre : {e}"))?;
             memory::seed_main(&paths, &config.user_name).map_err(|e| anyhow::anyhow!("mémoire : {e}"))?;
             let http = reqwest::Client::builder().user_agent("Orchestra/0.1").connect_timeout(brain::DELAI_CONNEXION).build().map_err(|e| anyhow::anyhow!("http : {e}"))?;
-            let state = AppState { config: Mutex::new(config), paths, http, busy: AtomicBool::new(false), voice: voice::VoiceProcess::default() };
+            let state = AppState { config: Mutex::new(config), paths, http, busy: AtomicBool::new(false), voice: voice::VoiceProcess::default(), session: Default::default() };
             {
                 let cfg = state.config.lock().unwrap().clone();
                 if cfg.voice_enabled && cfg.voice_autostart {
@@ -317,7 +325,23 @@ pub fn run() {
         .run(|app, event| {
             // le serveur voix s'arrête avec Orchestra
             if let tauri::RunEvent::Exit = event {
-                app.state::<AppState>().voice.stop();
+                let state = app.state::<AppState>();
+                state.voice.stop();
+                // les modèles restent chargés tant qu'Orchestra est ouvert : on les libère en partant
+                let cfg = state.config.lock().unwrap().clone();
+                let base = cfg.ollama_url.trim_end_matches('/').to_string();
+                let http = state.http.clone();
+                let modeles = [cfg.model.clone(), cfg.voice_llm.clone(), brain::modele_vocal_derive(&cfg.voice_llm)];
+                tauri::async_runtime::block_on(async move {
+                    for m in modeles.iter().filter(|m| !m.is_empty()) {
+                        let _ = http
+                            .post(format!("{base}/api/generate"))
+                            .timeout(std::time::Duration::from_secs(3))
+                            .json(&serde_json::json!({ "model": m, "keep_alive": 0 }))
+                            .send()
+                            .await;
+                    }
+                });
             }
         });
 }

@@ -199,7 +199,7 @@ impl VoiceProcess {
         let mo = models(paths);
         let stt = if mo.stt.contains(&cfg.voice_stt_model) { cfg.voice_stt_model.clone() } else { mo.stt[0].clone() };
         let tts = if mo.tts.contains(&cfg.voice_tts_model) { cfg.voice_tts_model.clone() } else { mo.tts[0].clone() };
-        cmd.args(["--stt-model", &stt, "--tts-model", &tts, "--mode", mode]);
+        cmd.args(["--stt-model", &stt, "--tts-model", &tts, "--mode", mode, "--num-ctx", &cfg.voice_num_ctx.to_string()]);
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;

@@ -43,7 +43,7 @@ export type OrchestraEvent =
   | { type: "token"; run_id: string; text: string }
   | { type: "memorized"; run_id: string; file: string; section: string; line: string }
   | { type: "nothing_to_memorize"; run_id: string }
-  | { type: "done"; run_id: string; answer: string; intent: string }
+  | { type: "done"; run_id: string; answer: string; intent: string; message_historique?: string }
   | { type: "error"; run_id: string; message: string };
 
 export interface Config {
@@ -120,6 +120,8 @@ export interface ChatMessage {
   voice?: boolean;
   intent?: string;
   agent?: string;
+  /** version du message envoyée au cerveau (date et souvenirs compris), renvoyée telle quelle dans l'historique */
+  contexte?: string;
   at: number;
 }
 

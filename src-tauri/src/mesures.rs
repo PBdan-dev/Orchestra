@@ -54,6 +54,9 @@ impl Mesure {
 
     /// Statistiques du dernier fragment d'Ollama (`"done": true`) ; durées en nanosecondes.
     pub fn lire_ollama(&mut self, v: &Value) {
+        if v["done_reason"] == "length" {
+            self.erreur = Some("réserve de tokens atteinte (réponse coupée)".into());
+        }
         let ms = |k: &str| v[k].as_f64().map(|ns| ns / 1_000_000.0);
         self.prompt_eval_count = v["prompt_eval_count"].as_u64().or(self.prompt_eval_count);
         self.prompt_eval_ms = ms("prompt_eval_duration").or(self.prompt_eval_ms);

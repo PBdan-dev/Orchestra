@@ -16,7 +16,8 @@ let dictBusy = false;
 /** vrai quand le run en cours a été lancé par la voix : son résultat sera lu à voix haute */
 let voiceRun = false;
 export let voice: VoiceClient;
-const historyOf = (msgs: ChatMessage[]) => msgs.filter((m) => !m.streaming && !m.sim).map((m) => ({ role: m.role, content: m.content }));
+/** Historique renvoyé au cerveau : le message de l'utilisateur tel qu'Orchestra l'a envoyé (date et souvenirs compris), pour que le début du prompt reste identique d'un tour à l'autre (cache). */
+const historyOf = (msgs: ChatMessage[]) => msgs.filter((m) => !m.streaming && !m.sim).map((m) => ({ role: m.role, content: m.contexte ?? m.content }));
 
 /** Énergie partagée avec le canvas (lue à chaque frame, hors React). */
 export const live = {
@@ -265,7 +266,7 @@ export const useStore = create<State>((set, get) => ({
       return;
     }
     if (get().busy) return;
-    const history = get().messages.filter((m) => !m.streaming && !m.sim).map((m) => ({ role: m.role, content: m.content }));
+    const history = historyOf(get().messages);
     const userMsg: ChatMessage = { id: uid(), role: "user", content: t, at: Date.now() };
     const draft: ChatMessage = { id: uid(), role: "assistant", content: "", streaming: true, at: Date.now() };
     set((s) => ({
@@ -682,9 +683,13 @@ export const useStore = create<State>((set, get) => ({
         set((s) => ({
           busy: false,
           runId: null,
-          messages: s.messages.map((m) =>
-            m.streaming && !m.voice ? { ...m, streaming: false, content: m.content || e.answer, intent: e.intent, agent: agent?.manifest.name } : m,
-          ),
+          messages: s.messages.map((m, i, all) => {
+            if (m.streaming && !m.voice) return { ...m, streaming: false, content: m.content || e.answer, intent: e.intent, agent: agent?.manifest.name };
+            // le message de l'utilisateur juste avant la réponse : on garde la version envoyée au cerveau
+            const next = all[i + 1];
+            if (m.role === "user" && next?.streaming && !next.voice && e.message_historique) return { ...m, contexte: e.message_historique };
+            return m;
+          }),
         }));
         // réponse lue à voix haute : toujours si la demande venait de la voix, sinon selon le réglage
         if (e.run_id !== "sim" && voice?.connected && (voiceRun || get().config?.voice_read_chat)) {

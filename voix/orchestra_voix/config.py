@@ -58,6 +58,8 @@ class VoiceSettings:
     # cerveau du mode vocal
     ollama_url: str = "http://127.0.0.1:11434/v1"
     llm_model: str = "qwen3.5:9b"
+    # contexte du cerveau vocal (lot A) : modèle dérivé `<modèle>-orchestra` créé dans Ollama
+    num_ctx: int = 8192
     # voix
     tts: str = "qwen3"
     qwen3_speaker: str = "Ryan"

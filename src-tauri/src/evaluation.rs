@@ -16,7 +16,7 @@ use crate::{
     events::{Event, Sortie},
     memory,
     mesures::{Mesure, Releve},
-    orchestrator::{self, Contexte, Tour},
+    orchestrator::{self, Contexte, Session, Tour},
     paths::Paths,
 };
 
@@ -60,6 +60,13 @@ pub struct Tache {
     pub agent: String,
     #[serde(default)]
     pub note: String,
+}
+
+/// Un message du scénario de conversation (lot A).
+#[derive(Deserialize, Serialize, Clone, Debug)]
+pub struct MessageConversation {
+    pub id: String,
+    pub message: String,
 }
 
 pub fn lire_jsonl<T: for<'de> Deserialize<'de>>(p: &Path) -> anyhow::Result<Vec<T>> {
@@ -143,6 +150,8 @@ pub struct Options {
     pub temperature: f32,
     pub memoire: bool,
     pub taches: bool,
+    /// Scénario `eval/conversation.jsonl` : messages enchaînés dans une même conversation.
+    pub conversation: bool,
     /// Nombre maximal de questions par jeu (essai rapide).
     pub limite: Option<usize>,
     /// Seulement ces questions ou tâches (ex. t07,t08) ; vide = toutes.
@@ -179,17 +188,24 @@ fn preparer(dossier: &Path, memoire_test: &str) -> anyhow::Result<Paths> {
     Ok(paths)
 }
 
-async fn un_essai(opts: &Options, cfg: &Config, http: &reqwest::Client, memoire_test: &str, dossier_mesures: &Path, entree: &str) -> (Tour, Vec<String>, Option<String>, f64, Vec<Mesure>) {
+type Resultat = (Tour, Vec<String>, Option<String>, f64, Vec<Mesure>);
+
+async fn un_essai(opts: &Options, cfg: &Config, http: &reqwest::Client, memoire_test: &str, dossier_mesures: &Path, entree: &str) -> Resultat {
     let dossier = opts.racine.join("eval").join("donnees-test");
     let paths = match preparer(&dossier, memoire_test) {
         Ok(p) => p,
         Err(e) => return (Tour::default(), vec![], Some(format!("préparation : {e}")), 0.0, vec![]),
     };
+    un_tour(cfg, http, paths, dossier_mesures, entree, vec![], Default::default()).await
+}
+
+/// Un tour dans un dossier de test déjà prêt, avec l'historique donné.
+async fn un_tour(cfg: &Config, http: &reqwest::Client, paths: Paths, dossier_mesures: &Path, entree: &str, historique: Vec<crate::brain::Msg>, session: Arc<Mutex<Session>>) -> Resultat {
     let releve = Arc::new(Releve::vers(dossier_mesures.to_path_buf()));
-    let ctx = Contexte { cfg: cfg.clone(), paths, http: http.clone(), releve: releve.clone() };
+    let ctx = Contexte { cfg: cfg.clone(), paths, http: http.clone(), releve: releve.clone(), session };
     let sortie = Collecte::default();
     let debut = Instant::now();
-    let res = orchestrator::tour(&sortie, &ctx, "eval", entree, vec![]).await;
+    let res = orchestrator::tour(&sortie, &ctx, "eval", entree, historique).await;
     let duree = debut.elapsed().as_secs_f64() * 1000.0;
     let evs = sortie.0.lock().unwrap();
     let souvenirs = evs
@@ -219,6 +235,7 @@ pub async fn lancer(opts: Options, journal: impl Fn(&str)) -> anyhow::Result<Pat
         questions.retain(|q| opts.ids.contains(&q.id));
         taches.retain(|t| opts.ids.contains(&t.id));
     }
+    let conversation: Vec<MessageConversation> = if opts.conversation { lire_jsonl(&opts.jeux.join("conversation.jsonl"))? } else { vec![] };
     if let Some(n) = opts.limite {
         questions.truncate(n);
         taches.truncate(n);
@@ -238,7 +255,7 @@ pub async fn lancer(opts: Options, journal: impl Fn(&str)) -> anyhow::Result<Pat
 
     let debut = Instant::now();
     let mut essais: Vec<Essai> = vec![];
-    let total = (questions.len() + taches.len()) * opts.passages;
+    let total = (questions.len() + taches.len() + conversation.len()) * opts.passages;
     for p in 1..=opts.passages {
         for q in &questions {
             journal(&format!("[{}/{}] mémoire {} · passage {p}", essais.len() + 1, total, q.id));
@@ -252,6 +269,19 @@ pub async fn lancer(opts: Options, journal: impl Fn(&str)) -> anyhow::Result<Pat
             let d = decision(&t);
             let reussi = err.is_none() && note_tache(tache, &d);
             essais.push(Essai { jeu: "taches".into(), id: tache.id.clone(), passage: p, entree: tache.demande.clone(), decision: d, reponse: t.reponse, reussi, souvenirs: souv, erreur: err, duree_ms: duree, mesures });
+        }
+        if !conversation.is_empty() {
+            // une seule conversation : même dossier, l'historique s'allonge à chaque tour
+            let paths = preparer(&dossier_eval.join("donnees-test"), &memoire_test)?;
+            let mut historique: Vec<crate::brain::Msg> = vec![];
+            let session: Arc<Mutex<Session>> = Default::default();
+            for m in &conversation {
+                journal(&format!("[{}/{}] conversation {} · passage {p}", essais.len() + 1, total, m.id));
+                let (t, souv, err, duree, mesures) = un_tour(&cfg, &http, paths.clone(), &dossier_mesures, &m.message, historique.clone(), session.clone()).await;
+                historique.push(crate::brain::Msg::user(if t.message_historique.is_empty() { m.message.clone() } else { t.message_historique.clone() }));
+                historique.push(crate::brain::Msg::assistant(t.reponse.clone()));
+                essais.push(Essai { jeu: "conversation".into(), id: m.id.clone(), passage: p, entree: m.message.clone(), decision: decision(&t), reussi: err.is_none(), reponse: t.reponse, souvenirs: souv, erreur: err, duree_ms: duree, mesures });
+            }
         }
     }
     let duree_totale = debut.elapsed().as_secs_f64();
@@ -424,7 +454,35 @@ fn rapport(opts: &Options, cfg: &Config, questions: &[QuestionMemoire], taches: 
         }
         s.push('\n');
     }
-    s.push_str("Notation : mémoire = tous les mots-clés attendus figurent dans la réponse (sans accents ni majuscules). \
+    let conv: Vec<&Essai> = essais.iter().filter(|e| e.jeu == "conversation" && e.passage == 1).collect();
+    if !conv.is_empty() {
+        s.push_str("## Conversation enchaînée (cache)\n\nCalcul du prompt en ms, par appel (le nombre de tokens du prompt entre parenthèses). \
+Quand le cache sert, le calcul ne dépend plus que du nouveau message.\n\n\
+| # | Message | Analyse | Réponse | Agent (total) | Mémorisation | Durée du tour (ms) |\n|---|---|---|---|---|---|---|\n");
+        for e in conv {
+            let role = |r: &str| {
+                let m: Vec<&Mesure> = e.mesures.iter().filter(|m| m.role == r).collect();
+                if m.is_empty() {
+                    return "—".to_string();
+                }
+                let ms: f64 = m.iter().filter_map(|m| m.prompt_eval_ms).sum();
+                let n: u64 = m.iter().filter_map(|m| m.prompt_eval_count).sum();
+                format!("{ms:.0} ({n})")
+            };
+            s.push_str(&format!(
+                "| {} | {} | {} | {} | {} | {} | {:.0} |\n",
+                e.id,
+                cellule(&e.entree, 60),
+                role("analyse"),
+                role("reponse"),
+                role("agent"),
+                role("memorisation"),
+                e.duree_ms
+            ));
+        }
+        s.push('\n');
+    }
+    s.push_str("Notation : mémoire =tous les mots-clés attendus figurent dans la réponse (sans accents ni majuscules). \
 Routage : la décision du tour (déléguer à tel agent, aucun agent disponible, question posée à l'utilisateur, réponse directe) est comparée à l'attendu ; \
 « préciser » est reconnu à un point d'interrogation dans les 300 derniers caractères de la réponse ; \
 une tâche « répondre » est réussie dès qu'Orchestra répond lui-même (une question de politesse finale est admise).\n");

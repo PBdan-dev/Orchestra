@@ -26,6 +26,21 @@ pub const DELAI_SILENCE: Duration = Duration::from_secs(60);
 pub const DELAI_TOTAL: Duration = Duration::from_secs(600);
 /// Délai de connexion (à poser sur le client HTTP).
 pub const DELAI_CONNEXION: Duration = Duration::from_secs(10);
+/// Le modèle du mode actif reste chargé tant qu'Orchestra est ouvert (lot A) ; il est déchargé
+/// au changement de mode et à la fermeture.
+pub const KEEP_ALIVE: i64 = -1;
+
+/// Nom du modèle vocal dérivé (même poids, `num_ctx` réduit) : `qwen3.5:9b` → `qwen3.5:9b-orchestra`.
+/// Même règle dans `voix/orchestra_voix/server.py`.
+pub fn modele_vocal_derive(base: &str) -> String {
+    if base.ends_with("-orchestra") || base.is_empty() {
+        base.to_string()
+    } else if base.contains(':') {
+        format!("{base}-orchestra")
+    } else {
+        format!("{base}:latest-orchestra")
+    }
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Msg {
@@ -289,7 +304,8 @@ impl Brain {
         info
     }
 
-    /// Charge le modèle dans Ollama (requête vide + keep_alive) et le garde en mémoire 30 min.
+    /// Charge le modèle dans Ollama (requête vide), avec le même `num_ctx` que les appels : sinon
+    /// Ollama le recharge au premier vrai appel. Il reste chargé tant qu'Orchestra est ouvert.
     pub async fn load_ollama(&self) -> anyhow::Result<()> {
         if self.model.is_empty() {
             anyhow::bail!("aucun modèle à charger");
@@ -299,7 +315,7 @@ impl Brain {
             .http
             .post(format!("{base}/api/generate"))
             .timeout(Duration::from_secs(900))
-            .json(&json!({ "model": self.model, "prompt": "", "keep_alive": "30m", "stream": false }))
+            .json(&json!({ "model": self.model, "prompt": "", "keep_alive": KEEP_ALIVE, "stream": false, "options": { "num_ctx": self.cfg.num_ctx } }))
             .send()
             .await?;
         if !r.status().is_success() {
@@ -415,7 +431,7 @@ impl Brain {
             mesure.essai = essai;
             mesure.repli_texte = demande.texte_seul_en_repli;
             mesure.appels_outils = appels.len() as u32;
-            mesure.erreur = res.as_ref().err().map(|e| e.to_string());
+            if let Err(e) = &res { mesure.erreur = Some(e.to_string()); }
             self.releve.noter(mesure);
             match res {
                 Ok(()) => return Ok(Reponse { texte: full.trim().to_string(), appels }),
@@ -452,7 +468,8 @@ impl Brain {
     }
 
     fn options_ollama(&self) -> Value {
-        let mut options = json!({ "num_ctx": 16384 });
+        // num_predict : une réflexion qui tourne en rond ne peut pas dépasser la réserve (§5.2)
+        let mut options = json!({ "num_ctx": self.cfg.num_ctx, "num_predict": self.cfg.reserve_reponse });
         // évaluation : réponses reproductibles (température fixée, graine fixe)
         if let Some(t) = self.cfg.eval_temperature {
             options["temperature"] = json!(t);
@@ -463,7 +480,7 @@ impl Brain {
 
     async fn stream_ollama<F: FnMut(Chunk)>(&self, msgs: &[Msg], demande: Demande<'_>, on: &mut F, col: &mut Collecte<'_>) -> anyhow::Result<()> {
         let base = self.cfg.ollama_url.trim_end_matches('/');
-        let mut body = json!({ "model": self.model, "messages": msgs_ollama(msgs), "stream": true, "keep_alive": "30m", "options": self.options_ollama() });
+        let mut body = json!({ "model": self.model, "messages": msgs_ollama(msgs), "stream": true, "keep_alive": KEEP_ALIVE, "options": self.options_ollama() });
         if !demande.outils.is_empty() {
             body["tools"] = outils_openai(demande.outils);
         }
@@ -531,7 +548,10 @@ impl Brain {
     }
 
     async fn stream_claude<F: FnMut(Chunk)>(&self, msgs: &[Msg], demande: Demande<'_>, on: &mut F, col: &mut Collecte<'_>) -> anyhow::Result<()> {
-        let (system, rest) = msgs_claude(msgs);
+        let (system, mut rest) = msgs_claude(msgs);
+        marquer_cache_claude(&mut rest);
+        // marqueur de cache en fin de prompt système (blocs 1 à 3, lot A)
+        let system = json!([{ "type": "text", "text": system, "cache_control": { "type": "ephemeral" } }]);
         let mut body = json!({ "model": self.model, "max_tokens": 4096, "stream": true, "system": system, "messages": rest });
         if let Some(t) = self.cfg.eval_temperature {
             body["temperature"] = json!(t);
@@ -731,6 +751,23 @@ pub fn msgs_gemini(msgs: &[Msg]) -> (String, Vec<Value>) {
         }
     }
     (system, out)
+}
+
+/// Marqueur de cache Claude sur le dernier message de l'historique (avant le message du tour).
+pub fn marquer_cache_claude(messages: &mut [Value]) {
+    let n = messages.len();
+    if n < 2 {
+        return;
+    }
+    let m = &mut messages[n - 2];
+    if let Some(t) = m["content"].as_str().map(|t| t.to_string()) {
+        m["content"] = json!([{ "type": "text", "text": t }]);
+    }
+    if let Some(blocs) = m["content"].as_array_mut() {
+        if let Some(dernier) = blocs.last_mut() {
+            dernier["cache_control"] = json!({ "type": "ephemeral" });
+        }
+    }
 }
 
 pub fn outils_openai(outils: &[Outil]) -> Value {
@@ -1029,6 +1066,18 @@ mod tests {
         assert!(!ErreurCerveau::Silence.rejouable());
         let e: anyhow::Error = ErreurCerveau::NonSupporte("x".into()).into();
         assert!(non_supporte(&e));
+    }
+
+    #[test]
+    fn cache_claude_sur_le_dernier_message_d_historique() {
+        let (_, mut m) = msgs_claude(&[Msg::system("s"), Msg::user("a"), Msg::assistant("b"), Msg::user("c")]);
+        marquer_cache_claude(&mut m);
+        assert_eq!(m[1]["content"][0]["cache_control"]["type"], "ephemeral");
+        assert_eq!(m[1]["content"][0]["text"], "b");
+        assert_eq!(m[2]["content"], "c");
+        assert_eq!(modele_vocal_derive("qwen3.5:9b"), "qwen3.5:9b-orchestra");
+        assert_eq!(modele_vocal_derive("qwen3.5:9b-orchestra"), "qwen3.5:9b-orchestra");
+        assert_eq!(modele_vocal_derive("mistral"), "mistral:latest-orchestra");
     }
 
     #[test]
