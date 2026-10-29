@@ -42,8 +42,18 @@ Validé le 2026-10-28 : les 11 critères de `docs/CAHIER_DES_CHARGES.md` §13 (b
 - Constaté : `load_ollama` charge le modèle sans `num_ctx`, donc Ollama le recharge au premier vrai appel (18 s mesurées). À corriger avec le lot A (A5).
 - Tests : 11 tests unitaires Rust (`cargo test --lib`), pas encore d'intégration continue (lot F).
 
+## État actuel — Lot A terminé (2026-10-29)
+- Chat : un seul message système stable (règles, tâches, profil figé pour la session) partagé par l'analyse, la réponse et la mémorisation ; date et souvenirs dans le message de PB, gardé tel quel dans l'historique (`store.ts`) ; consigne de chaque appel ajoutée à la fin ; historique complet jusqu'à 8 000 tokens, coupe marquée au-delà ; règle « va à l'essentiel ».
+- `config.json` : `num_ctx` 16 384, `voice_num_ctx` 8 192, seuils 8 000 / 4 000, `reserve_reponse` 4 500. Chargement avec le même `num_ctx` (plus de rechargement de 18 s), modèle gardé tant qu'Orchestra est ouvert, déchargé à la fermeture.
+- Voix : prompt sans date ni mémoire variable, profil figé, date en tête du message (étape `DateDuTour`) ; modèle dérivé `qwen3.5:9b-orchestra` (num_ctx 8 192) créé automatiquement dans Ollama. Vérifié : le point d'accès /v1 ignore `num_ctx`.
+- Mesures (qwen3.6:27b, température 0, `Orchestra/eval/rapport-2026-10-29_0140.md`) : mémoire **19/20** (avant 15/20 : le profil dans le prompt répond aux questions reformulées), routage **13/15** (« Écris-le. » : réflexion en boucle), tour médian **20 s** (avant 35 s), réponses de **10 mots** en médiane (avant 34).
+- Cache sur Qwen 3.6 : partiel. Sur 10 tours, le calcul du prompt passe de 290 à 670 ms pendant que le prompt grandit de 1 550 à 3 000 tokens (≈ 2,5 s sans cache, soit ≈ 70 % d'économie), mais il ne reste pas constant comme le voulait le critère : l'architecture hybride de Qwen 3.6 ne réutilise qu'une partie du calcul. Mémorisation à ~230 ms stable.
+- Voix (test_boucle + test_dialogue) : VRAM **18,8 Go** (avant 21,1) ; cerveau vocal 5,5 Go (avant 7,6, contexte 64k) ; premier son 1,6 à 2,7 s (avant 1,7 à 2,7 s), inchangé.
+- Constaté : à température 0 (évaluation), Qwen 3.6 tombe parfois dans une réflexion sans fin ; la réserve de 4 500 tokens l'arrête et un message clair remplace la réponse vide. À température 0,6 (recommandée par Qwen), plus aucune boucle sur les mêmes demandes.
+- Limite à signaler : en voix, seule la partie profil (Utilisateur, Préférences) d'`orchestra.md` est dans le prompt ; Projets et Connaissances n'y sont plus jusqu'au lot D (rappel en voix).
+
 ## Prochaine action
-PB valide le plan du lot A (cache), présenté par Claude.
+PB décide : température de l'évaluation (0 ou 0,6 avec graine fixe), mémoire complète figée en voix d'ici au lot D, réglages Ollama (A7) à poser ; puis plan du lot B (un seul appel).
 
 ## Décisions
 - 2026-10-25 — Application de bureau Windows en Tauri 2 (Rust + React/TypeScript), installateur léger.
@@ -84,7 +94,8 @@ PB valide le plan du lot A (cache), présenté par Claude.
 - [ ] Mode vocal : essai au micro par PB, puis réduction de la latence vers 0,8 s
 - [x] Cahier des charges — Phase 0 : mesure, jeux d'évaluation, lanceur, référence sur qwen3.6:27b (2026-10-28)
 - [x] Cahier des charges — Lot F : fiabilisation (2026-10-28)
-- [ ] Cahier des charges — Lot A : cache (prochain)
+- [x] Cahier des charges — Lot A : cache (2026-10-29)
+- [ ] Cahier des charges — Lot B : un seul appel (prochain)
 - [ ] Cahier des charges — Lots A, B, T1 à T9, C, D, S, M2, M3, M1 (ordre de la section 11)
 - [x] Délégation sur le vrai Ollama vérifiée par l'évaluation (6 tâches déléguées au bon agent, 3/3)
 - [ ] PB teste une vraie délégation sur Ollama dans l'interface
@@ -94,6 +105,7 @@ PB valide le plan du lot A (cache), présenté par Claude.
 - [ ] Mémoire optimisée (index par embeddings, résumés, oubli)
 
 ## Blocages et questions ouvertes
+- Piste pour plus tard (proposée par PB le 29/10) : garder sur disque le calcul du début fixe du prompt entre deux chargements. Impossible avec Ollama ; possible avec llama-server (llama.cpp, MIT), qui sauvegarde et restaure ce calcul. Gain estimé faible (1 à 2 s de recalcul, contre 18 s de chargement du modèle) : non prioritaire.
 - Installation vocale : le garde-fou de Claude bloque l'installation de code externe ; PB lance lui-même `voix\installer.ps1` quand il faut.
 - Voix française : les voix préréglées de Qwen3-TTS ne sont pas natives en français. Une voix clonée (modèle Base, 4,5 Go de plus, avec consentement de la personne) sonnerait plus naturelle. À décider après écoute.
 - Proposition non validée : les étapes « Ajout autonome » et « Mémoire optimisée » viennent de l'objectif du projet ; leur ordre et leur périmètre restent à décider avec PB.
@@ -111,3 +123,4 @@ PB valide le plan du lot A (cache), présenté par Claude.
 - 2026-10-28 (soir) — Jeu mémoire durci (v2) : 15/20, les 5 échecs sont des questions reformulées (rappel par mots) ; faux positif de notation corrigé (h09) ; demande de PB de réponses plus synthétiques notée pour le lot A.
 - 2026-10-28 (nuit) — Lot F : outils natifs, sorties contraintes, délais et nouvel essai, intégration continue verte ; routage 12/15 sans la règle « demande vague », 14/15 avec (en attente de PB).
 - 2026-10-28 (nuit) — PB garde la règle « demande vague » : routage 14/15.
+- 2026-10-29 (nuit) — Lot A : pile stable, profil, concision, voix à 8 192 tokens ; mémoire 19/20, routage 13/15, tour médian 20 s, VRAM voix −2,3 Go ; cache partiel sur Qwen 3.6.
