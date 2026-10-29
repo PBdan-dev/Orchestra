@@ -126,10 +126,29 @@ def lire_profil() -> str:
     return "\n".join(out)
 
 
+# Mémoire complète (décision de PB, 29/10) : en attendant le rappel en voix (lot D), toute la mémoire
+# est donnée au cerveau vocal, figée en début de conversation pour ne pas casser le cache.
+MEMOIRE_MAX_CAR = 6000
+
+
+def lire_memoire() -> str:
+    try:
+        texte = C.MEMOIRE.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    # on saute l'en-tête explicatif : les faits commencent à la première section
+    i = texte.find("## ")
+    texte = (texte[i:] if i >= 0 else texte).strip()
+    if len(texte) > MEMOIRE_MAX_CAR:
+        logger.info(f"Mémoire vocale coupée à {MEMOIRE_MAX_CAR} caractères (sur {len(texte)})")
+        texte = texte[:MEMOIRE_MAX_CAR] + "\n[… mémoire coupée ici, faute de place : le reste est dans orchestra.md]"
+    return texte
+
+
 def nouvelle_session():
-    """Début de conversation : le profil est relu puis figé."""
+    """Début de conversation : la mémoire est relue puis figée."""
     global _profil
-    _profil = lire_profil()
+    _profil = lire_memoire()
 
 
 def system_prompt() -> str:
@@ -142,7 +161,7 @@ def system_prompt() -> str:
     if len(consignes) > 3000:
         logger.info(f"Consignes vocales coupées à 3 000 caractères (sur {len(consignes)})")
         consignes = consignes[:3000] + " [… consignes coupées, trop longues]"
-    profil = _profil if _profil is not None else lire_profil()
+    profil = _profil if _profil is not None else lire_memoire()
     return (
         BLOC_1
         + "\n\n"
