@@ -904,6 +904,9 @@ async fn stream_lines<F: FnMut(&str)>(resp: reqwest::Response, mut f: F) -> anyh
         let chunk = match tokio::time::timeout(attente, stream.next()).await {
             Err(_) => return Err(if recu { ErreurCerveau::Silence } else { ErreurCerveau::DelaiPremier }.into()),
             Ok(None) => break,
+            Ok(Some(Err(e))) if e.is_timeout() => {
+                return Err(ErreurCerveau::Fournisseur(format!("réponse trop longue : délai total de {} s dépassé", DELAI_TOTAL.as_secs())).into())
+            }
             Ok(Some(Err(e))) => return Err(ErreurCerveau::Fournisseur(format!("flux interrompu : {e}")).into()),
             Ok(Some(Ok(c))) => c,
         };

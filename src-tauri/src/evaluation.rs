@@ -285,6 +285,12 @@ pub async fn lancer(opts: Options, journal: impl Fn(&str)) -> anyhow::Result<Pat
         }
     }
     let duree_totale = debut.elapsed().as_secs_f64();
+    // le modèle reste chargé tant qu'Orchestra est ouvert (lot A) : le lanceur le libère en partant
+    let _ = http
+        .post(format!("{}/api/generate", cfg.ollama_url.trim_end_matches('/')))
+        .json(&serde_json::json!({ "model": cfg.model, "keep_alive": 0 }))
+        .send()
+        .await;
     let _ = std::fs::remove_dir_all(dossier_eval.join("donnees-test"));
 
     // Détail complet (réponses entières, mesures) en JSONL, rapport lisible en Markdown.
