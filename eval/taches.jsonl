@@ -7,7 +7,8 @@
 {"id": "t07", "demande": "Fais l'inventaire des fichiers de l'espace de travail et range-les par type.", "attendu": "deleguer", "agent": "agent-fichiers", "note": "fichiers"}
 {"id": "t08", "demande": "Crée un fichier notes.md avec la liste de mes trois projets en cours.", "attendu": "deleguer", "agent": "agent-fichiers", "note": "fichiers (création)"}
 {"id": "t09", "demande": "Transforme cette liste en planning daté pour la semaine prochaine : finir la phase 0, tester la voix au micro, écrire le lot F.", "attendu": "deleguer", "agent": "agent-planning", "note": "planning"}
-{"id": "t10", "demande": "Lis la page https://ollama.com/blog et fais-m'en une synthèse sourcée.", "attendu": "deleguer", "agent": "agent-veille", "note": "veille web"}
+{"id": "t10", "demande": "Lis la page https://ollama.com/blog et fais-m'en une synthèse sourcée.", "attendu": "repondre", "note": "recherche web : Orchestra lit la page et répond lui-même (décision de PB, 30/10)"}
+{"id": "t16", "demande": "Lis la page https://ollama.com/blog et enregistre une synthèse sourcée dans un fichier veille-ollama.md.", "attendu": "deleguer", "agent": "agent-veille", "note": "synthèse web avec fichier attendu : production, donc agent"}
 {"id": "t11", "demande": "Écris-le.", "attendu": "preciser", "note": "ambigu : quoi ?"}
 {"id": "t12", "demande": "Envoie-lui un message pour le prévenir.", "attendu": "preciser", "note": "ambigu : à qui, quoi, par quel moyen ?"}
 {"id": "t13", "demande": "Fais-moi un résumé.", "attendu": "preciser", "note": "ambigu : de quoi ?"}
