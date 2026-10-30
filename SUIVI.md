@@ -78,8 +78,16 @@ Validé le 2026-10-28 : les 11 critères de `docs/CAHIER_DES_CHARGES.md` §13 (b
 - Brouillon de mail demandé dans le chat : de bout en bout en 26 s (préparation de mission sans réflexion du modèle : 86 s → 3 s).
 - Mesure (`Orchestra/eval/rapport-2026-10-30_1858.md`) : mémoire 19/20, routage 16/18, tour médian 13 s (carte graphique à 46 tokens/s pendant la mesure, contre 63 au lot T1).
 
+## État actuel — Lot T3 (2026-10-30)
+- Projet choisi par PB dans la barre du haut (« Projet : divers ▾ », nouveau projet possible) ; missions et livrables dans `projets/<nom>/` ; le chat ne peut pas le changer (D36).
+- Dossier de mission complet : mission, échanges, pensée, `actions.jsonl` (actions observées par la porte, déclarées par l'agent), compte rendu ; `memoire/agents/<id>.md` renvoie au dossier ; le journal du jour contient début et fin de chaque mission.
+- Conscience : une carte par mission, en trois parties (Pensée, Actions observées ou déclarées, Livrables présents ou non), plus les changements de la mémoire propre de l'agent.
+- Validation des actions irréversibles (D28) : l'agent attend la réponse de PB (pas de délai pendant l'attente) ; « Oui, cette fois », « Oui, pour ce type d'action pendant la session », « Non », et, plus discrets avec confirmation, « tout pour la session » et « tout, permanent » ; autorisations listées et révocables dans le panneau Agents (`agents/autorisations.json` pour les permanentes). En mode voix, la voix annonce qu'une validation attend à l'écran (décision de PB).
+- Mémoire propre d'un agent : bouton « remettre sa mémoire à zéro » qui archive l'ancienne dans `agents/memoires-archivees/` (décision de PB).
+- Vérifié : suppression validée puis refusée avec le vrai agent-fichiers (`examples/essai_validation.rs`) ; interface vérifiée dans le navigateur avec le mode démo ; banc 29/29 ; 44 tests unitaires.
+
 ## Prochaine action
-PB lit le résumé du lot T2 ; puis plan du lot T3 (dossiers de mission et de projet, validation à 4 boutons, Conscience en trois parties).
+PB essaie la validation dans l'application (demander à Orchestra de supprimer un fichier du projet) ; puis plan du lot T4 (installation depuis l'Agent Market).
 
 ## Décisions
 - 2026-10-25 — Application de bureau Windows en Tauri 2 (Rust + React/TypeScript), installateur léger.
@@ -124,7 +132,8 @@ PB lit le résumé du lot T2 ; puis plan du lot T3 (dossiers de mission et de pr
 - [x] Cahier des charges — Lot B : un seul appel (2026-10-30)
 - [x] Cahier des charges — Lot T1 : contrat (2026-10-30)
 - [x] Cahier des charges — Lot T2 : porte du modèle (2026-10-30)
-- [ ] Cahier des charges — Lot T3 : dossiers de mission et de projet (prochain)
+- [x] Cahier des charges — Lot T3 : dossiers de mission et de projet (2026-10-30)
+- [ ] Cahier des charges — Lot T4 : installation (prochain)
 - [ ] Cahier des charges — Lots A, B, T1 à T9, C, D, S, M2, M3, M1 (ordre de la section 11)
 - [x] Délégation sur le vrai Ollama vérifiée par l'évaluation (6 tâches déléguées au bon agent, 3/3)
 - [ ] PB teste une vraie délégation sur Ollama dans l'interface
@@ -156,3 +165,4 @@ PB lit le résumé du lot T2 ; puis plan du lot T3 (dossiers de mission et de pr
 - 2026-10-30 — Lot B : un seul appel, lire_page, deleguer(besoin, mission, raison) ; tour médian 23 s → 7 s. Surchauffe de la carte graphique trouvée et corrigée par PB.
 - 2026-10-30 — Lot T1 : contrat stdio-json, manifeste 2.0, agents de démo retirés, agents de test installés ; banc 17/17.
 - 2026-10-30 (soir) — Lot T2 : porte du modèle, traces, contrôle des outils, limites, carte graphique ; banc 29/29 ; Mail Adagio par la porte (boîte de démonstration).
+- 2026-10-30 (nuit) — Lot T3 : projet choisi dans l'interface, carte de mission en trois parties, validation à 4 portées, mémoire propre des agents.
