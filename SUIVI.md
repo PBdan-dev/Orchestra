@@ -52,8 +52,15 @@ Validé le 2026-10-28 : les 11 critères de `docs/CAHIER_DES_CHARGES.md` §13 (b
 - Constaté : à température 0 (évaluation), Qwen 3.6 tombe parfois dans une réflexion sans fin ; la réserve de 4 500 tokens l'arrête et un message clair remplace la réponse vide. À température 0,6 (recommandée par Qwen), plus aucune boucle sur les mêmes demandes.
 - Limite à signaler : en voix, seule la partie profil (Utilisateur, Préférences) d'`orchestra.md` est dans le prompt ; Projets et Connaissances n'y sont plus jusqu'au lot D (rappel en voix).
 
+## État actuel — Lot B terminé (2026-10-30)
+- Un seul appel au cerveau pour décider et répondre : réponse directe, lecture d'une page web par Orchestra lui-même (`lire_page`, ajouté à la demande de PB), ou délégation par l'outil `deleguer(besoin, mission, raison)` ; Orchestra choisit l'agent (décision de PB : le prompt ne contient pas la liste des agents). Annonce dans Conscience avant le lancement (B2) ; appel invalide : un nouvel essai, puis réponse directe et avertissement (B3).
+- Mesures fiables (qwen3.6:27b, 0,6, carte graphique refroidie), avant → après : **tour médian 23,2 s → 7,4 s** ; appels par tour 3,3 → 2,5 ; premier mot de la réponse ≈ 0,8 s ; mémoire 19/20 → 19/20 ; routage 14/15 → 13/15 (avant / après recalculés avec la notation corrigée). Rapports : `Orchestra/eval/rapport-2026-10-30_1244.md` (avant), `rapport-2026-10-30_1309.md` (après).
+- Seule différence de routage : « Lis la page … et fais-m'en une synthèse sourcée » est maintenant traitée par Orchestra lui-même (lecture web) au lieu d'être déléguée à l'agent de veille. Décision attendue de PB.
+- Lenteurs du 29/10 : la RTX 3090 surchauffait (92 °C, bridée à 240 MHz, ventilateur à 43 %) ; corrigé par PB le 30/10 (≈ 70 °C sous charge). Réglages Ollama A7 posés par PB : effet quasi nul sur ce modèle (≈ 7 % plus lent, pas de gain de mémoire visible).
+- Cahier mis à jour par PB (PR #2, décisions D26 à D37) : à relire avant le lot T1.
+
 ## Prochaine action
-PB décide : température de l'évaluation (0 ou 0,6 avec graine fixe), mémoire complète figée en voix d'ici au lot D, réglages Ollama (A7) à poser ; puis plan du lot B (un seul appel).
+PB décide si une synthèse d'une page web est une recherche (Orchestra) ou une production (agent) ; puis Claude relit le cahier (D26 à D37) et présente le plan du lot T1 (contrat).
 
 ## Décisions
 - 2026-10-25 — Application de bureau Windows en Tauri 2 (Rust + React/TypeScript), installateur léger.
@@ -95,7 +102,8 @@ PB décide : température de l'évaluation (0 ou 0,6 avec graine fixe), mémoire
 - [x] Cahier des charges — Phase 0 : mesure, jeux d'évaluation, lanceur, référence sur qwen3.6:27b (2026-10-28)
 - [x] Cahier des charges — Lot F : fiabilisation (2026-10-28)
 - [x] Cahier des charges — Lot A : cache (2026-10-29)
-- [ ] Cahier des charges — Lot B : un seul appel (prochain)
+- [x] Cahier des charges — Lot B : un seul appel (2026-10-30)
+- [ ] Cahier des charges — Lot T1 : contrat (prochain)
 - [ ] Cahier des charges — Lots A, B, T1 à T9, C, D, S, M2, M3, M1 (ordre de la section 11)
 - [x] Délégation sur le vrai Ollama vérifiée par l'évaluation (6 tâches déléguées au bon agent, 3/3)
 - [ ] PB teste une vraie délégation sur Ollama dans l'interface
@@ -124,3 +132,4 @@ PB décide : température de l'évaluation (0 ou 0,6 avec graine fixe), mémoire
 - 2026-10-28 (nuit) — Lot F : outils natifs, sorties contraintes, délais et nouvel essai, intégration continue verte ; routage 12/15 sans la règle « demande vague », 14/15 avec (en attente de PB).
 - 2026-10-28 (nuit) — PB garde la règle « demande vague » : routage 14/15.
 - 2026-10-29 (nuit) — Lot A : pile stable, profil, concision, voix à 8 192 tokens ; mémoire 19/20, routage 13/15, tour médian 20 s, VRAM voix −2,3 Go ; cache partiel sur Qwen 3.6.
+- 2026-10-30 — Lot B : un seul appel, lire_page, deleguer(besoin, mission, raison) ; tour médian 23 s → 7 s. Surchauffe de la carte graphique trouvée et corrigée par PB.
