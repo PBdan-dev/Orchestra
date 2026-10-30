@@ -69,8 +69,17 @@ Validé le 2026-10-28 : les 11 critères de `docs/CAHIER_DES_CHARGES.md` §13 (b
 - Mail Adagio parle déjà le contrat 1 (`agent/mission.py`) : aucun écart vu à la lecture ; essai réel au lot T2.
 - Mesure (qwen3.6:27b, 0,6, `Orchestra/eval/rapport-2026-10-30_1617.md`) : mémoire 19/20, routage **15/18** (jeu de tâches mis à jour pour les agents de test : 3 échecs de comportement, dont un « Salut » délégué une fois, à surveiller), tour médian 8,5 s, 2,4 appels par tour. agent-brouillons répond « modèle indisponible » tant que la porte (T2) n'existe pas.
 
+## État actuel — Lot T2 (2026-10-30)
+- Porte du modèle (`porte.rs`) : point d'accès local propre à chaque mission (jeton, fermé à la fin), compatible Ollama et OpenAI ; traces `echanges.jsonl` et `pensee.md` dans le dossier de mission ; réflexion de l'agent affichée en direct dans Conscience ; outils non déclarés et actions sans raison signalés ; `num_ctx` d'Orchestra imposé (pas de rechargement).
+- Limites D29 comptées (pas, tokens, durée, boucle, 10 min sans progrès) : avertissement ; arrêt propre au plafond d'1 h (décision de PB du 30/10, en attendant les boutons du lot T7).
+- Carte graphique (D24, `modele.rs`) : modèle d'Orchestra prêté si l'agent l'admet, sinon modèle de l'agent chargé (voix arrêtée si besoin) puis modèle d'Orchestra rechargé ; refus si le modèle ne tient pas sur la carte.
+- Banc : **29/29** (dont les 12 tests d'agent-brouillons par le vrai modèle via la porte, mémoire propre et mail piégé compris).
+- Mail Adagio lancé sans modification par la porte (`examples/mission_directe.rs`) : aperçu de 10 mails de sa boîte de démonstration, 10 appels au modèle tracés, rien de changé. La vraie boîte Gmail attend les identifiants (D34, lot T4).
+- Brouillon de mail demandé dans le chat : de bout en bout en 26 s (préparation de mission sans réflexion du modèle : 86 s → 3 s).
+- Mesure (`Orchestra/eval/rapport-2026-10-30_1858.md`) : mémoire 19/20, routage 16/18, tour médian 13 s (carte graphique à 46 tokens/s pendant la mesure, contre 63 au lot T1).
+
 ## Prochaine action
-PB lit le résumé du lot T1 ; puis plan du lot T2 (porte du modèle, avec agent-brouillons et Mail Adagio).
+PB lit le résumé du lot T2 ; puis plan du lot T3 (dossiers de mission et de projet, validation à 4 boutons, Conscience en trois parties).
 
 ## Décisions
 - 2026-10-25 — Application de bureau Windows en Tauri 2 (Rust + React/TypeScript), installateur léger.
@@ -114,7 +123,8 @@ PB lit le résumé du lot T1 ; puis plan du lot T2 (porte du modèle, avec agent
 - [x] Cahier des charges — Lot A : cache (2026-10-29)
 - [x] Cahier des charges — Lot B : un seul appel (2026-10-30)
 - [x] Cahier des charges — Lot T1 : contrat (2026-10-30)
-- [ ] Cahier des charges — Lot T2 : porte du modèle (prochain)
+- [x] Cahier des charges — Lot T2 : porte du modèle (2026-10-30)
+- [ ] Cahier des charges — Lot T3 : dossiers de mission et de projet (prochain)
 - [ ] Cahier des charges — Lots A, B, T1 à T9, C, D, S, M2, M3, M1 (ordre de la section 11)
 - [x] Délégation sur le vrai Ollama vérifiée par l'évaluation (6 tâches déléguées au bon agent, 3/3)
 - [ ] PB teste une vraie délégation sur Ollama dans l'interface
@@ -145,3 +155,4 @@ PB lit le résumé du lot T1 ; puis plan du lot T2 (porte du modèle, avec agent
 - 2026-10-29 (nuit) — Lot A : pile stable, profil, concision, voix à 8 192 tokens ; mémoire 19/20, routage 13/15, tour médian 20 s, VRAM voix −2,3 Go ; cache partiel sur Qwen 3.6.
 - 2026-10-30 — Lot B : un seul appel, lire_page, deleguer(besoin, mission, raison) ; tour médian 23 s → 7 s. Surchauffe de la carte graphique trouvée et corrigée par PB.
 - 2026-10-30 — Lot T1 : contrat stdio-json, manifeste 2.0, agents de démo retirés, agents de test installés ; banc 17/17.
+- 2026-10-30 (soir) — Lot T2 : porte du modèle, traces, contrôle des outils, limites, carte graphique ; banc 29/29 ; Mail Adagio par la porte (boîte de démonstration).
