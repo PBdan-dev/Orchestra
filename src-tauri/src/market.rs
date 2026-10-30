@@ -36,15 +36,17 @@ pub async fn fetch_remote(http: &reqwest::Client, cfg: &Config) -> Result<Vec<Ma
         return Err(format!("Market a répondu {} ({url})", resp.status()));
     }
     let text = resp.text().await.map_err(|e| e.to_string())?;
-    let list = agents::parse_registry(&text);
-    if list.is_empty() {
-        return Err("Market : aucun agent lisible dans la réponse".into());
+    let l = agents::parse_registry(&text);
+    if l.agents.is_empty() {
+        let motifs = if l.ignores.is_empty() { String::new() } else { format!(" ({})", l.ignores.join(" ; ")) };
+        return Err(format!("Market : aucun agent lisible dans la réponse{motifs}"));
     }
-    Ok(list)
+    Ok(l.agents)
 }
 
-/// Cherche le meilleur agent pour un besoin. Renvoie aussi un petit journal
-/// de la recherche (pour l'afficher dans l'interface).
+/// Cherche le meilleur agent pour un besoin, parmi les agents installés (les seuls qu'Orchestra
+/// sait lancer). Le Market et le registre local sont consultés pour information : l'installation
+/// depuis le Market arrive au lot T4. Renvoie aussi le journal de la recherche, affiché dans Conscience.
 pub async fn find_agent(
     http: &reqwest::Client,
     cfg: &Config,
@@ -52,44 +54,44 @@ pub async fn find_agent(
     need: &str,
 ) -> (Option<Found>, Vec<String>) {
     let mut log = vec![];
-    let mut candidates: Vec<Found> = vec![];
-
-    // 1. Agents déjà installés
-    for m in agents::installed(paths) {
-        let s = agents::match_score(&m, need);
-        candidates.push(Found { manifest: m, source: "installé".into(), score: s });
+    let lecture = agents::installes(paths);
+    for i in &lecture.ignores {
+        log.push(format!("⚠ agent installé inutilisable : {i}"));
     }
-    log.push(format!("{} agent(s) déjà installé(s) examiné(s)", candidates.len()));
+    let mut candidates: Vec<Found> = lecture
+        .agents
+        .into_iter()
+        .map(|m| {
+            let score = agents::match_score(&m, need);
+            Found { manifest: m, source: "installé".into(), score }
+        })
+        .collect();
+    log.push(format!("{} agent(s) installé(s) examiné(s)", candidates.len()));
 
-    // 2. Agent Market distant
+    // Agent Market : pour information jusqu'au lot T4 (installation)
     match fetch_remote(http, cfg).await {
         Ok(list) => {
-            log.push(format!("Agent Market : {} agent(s) disponibles", list.len()));
-            for m in list {
-                let s = agents::match_score(&m, need);
-                candidates.push(Found { manifest: m, source: "Agent Market".into(), score: s });
+            let mieux: Vec<String> = list
+                .iter()
+                .filter(|m| !candidates.iter().any(|c| c.manifest.id == m.id) && agents::match_score(m, need) >= 1.0)
+                .map(|m| m.name.clone())
+                .collect();
+            log.push(format!("Agent Market : {} agent(s) au catalogue", list.len()));
+            if !mieux.is_empty() {
+                log.push(format!("  à installer pour ce besoin (lot T4) : {}", mieux.join(", ")));
             }
         }
-        Err(e) => log.push(format!("{e} → repli sur le registre local")),
+        Err(e) => log.push(e),
     }
-
-    // 3. Registre local
     let local = agents::local_registry(paths);
-    log.push(format!("Registre local : {} agent(s)", local.len()));
-    for m in local {
-        let s = agents::match_score(&m, need);
-        candidates.push(Found { manifest: m, source: "registre local".into(), score: s });
+    for i in &local.ignores {
+        log.push(format!("registre local, entrée ignorée : {i}"));
     }
 
-    // Déduplication par id (on garde le meilleur score / la source la plus proche)
     candidates.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-    let mut seen = std::collections::HashSet::new();
-    candidates.retain(|c| seen.insert(c.manifest.id.clone()));
-
     for c in candidates.iter().take(4) {
         log.push(format!("  {} ({}) : score {:.1}", c.manifest.name, c.source, c.score));
     }
-
     let best = candidates.into_iter().next().filter(|c| c.score >= 1.0);
     (best, log)
 }

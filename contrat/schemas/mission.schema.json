@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Mission envoyée par Orchestra à un agent (contrat 1)",
+  "type": "object",
+  "required": ["version", "id", "agent_id", "projet", "but", "critere_reussite", "contexte", "limites", "format_retour", "validation", "cree_le"],
+  "properties": {
+    "version": { "const": 1 },
+    "id": { "type": "string", "minLength": 1 },
+    "agent_id": { "type": "string", "minLength": 1 },
+    "projet": { "type": "string", "minLength": 1, "description": "Dossier du projet, choisi par l'utilisateur dans l'interface. Seul endroit où l'agent écrit ses livrables." },
+    "type_tache": { "type": "string", "description": "Type de tâche du manifeste (taches[].type)." },
+    "but": { "type": "string", "minLength": 1 },
+    "critere_reussite": { "type": "string", "minLength": 1 },
+    "contexte": { "type": "string" },
+    "donnees": { "type": "object", "description": "Demande conforme au modèle de demande du type de tâche." },
+    "limites": {
+      "type": "object",
+      "description": "Plafonds calculés par Orchestra (3 fois les mesures d'audit). Dépassement = pause et question, jamais arrêt forcé.",
+      "properties": {
+        "outils_interdits": { "type": "array", "items": { "type": "string" } },
+        "pas_max": { "type": "integer" },
+        "duree_max_s": { "type": "number" },
+        "budget_tokens": { "type": "integer" },
+        "budget_eur": { "type": "number" }
+      }
+    },
+    "format_retour": {
+      "type": "object", "required": ["type"],
+      "properties": { "type": { "enum": ["fichier", "texte", "tableau"] }, "destination": { "type": "string" } }
+    },
+    "validation": { "type": "array", "items": { "type": "string" } },
+    "manifeste": { "type": "object" },
+    "demande_originale": { "type": "string" },
+    "cree_le": { "type": "string" }
+  }
+}

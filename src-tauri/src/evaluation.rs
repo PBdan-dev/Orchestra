@@ -187,7 +187,29 @@ fn preparer(dossier: &Path, memoire_test: &str) -> anyhow::Result<Paths> {
     let paths = Paths::at(dossier.to_path_buf())?;
     std::fs::write(paths.main_memory(), memoire_test)?;
     agents::seed_registry(&paths)?;
+    // les agents installés pour de vrai (lot T1) sont recopiés : l'évaluation ne touche pas aux originaux
+    if let Some(reel) = dossier.parent().and_then(|eval| eval.parent()) {
+        copier_dossier(&reel.join("agents").join("installes"), &paths.installes)?;
+    }
     Ok(paths)
+}
+
+fn copier_dossier(src: &Path, dest: &Path) -> std::io::Result<()> {
+    if !src.is_dir() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dest)?;
+    for e in std::fs::read_dir(src)?.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            if e.file_name() != "__pycache__" {
+                copier_dossier(&p, &dest.join(e.file_name()))?;
+            }
+        } else {
+            std::fs::copy(&p, dest.join(e.file_name()))?;
+        }
+    }
+    Ok(())
 }
 
 type Resultat = (Tour, Vec<String>, Option<String>, f64, Vec<Mesure>);
@@ -293,7 +315,10 @@ pub async fn lancer(opts: Options, journal: impl Fn(&str)) -> anyhow::Result<Pat
         .json(&serde_json::json!({ "model": cfg.model, "keep_alive": 0 }))
         .send()
         .await;
-    let _ = std::fs::remove_dir_all(dossier_eval.join("donnees-test"));
+    // ORCHESTRA_EVAL_GARDER : garder le dossier de test (missions, livrables) pour l'examiner
+    if std::env::var_os("ORCHESTRA_EVAL_GARDER").is_none() {
+        let _ = std::fs::remove_dir_all(dossier_eval.join("donnees-test"));
+    }
 
     // Détail complet (réponses entières, mesures) en JSONL, rapport lisible en Markdown.
     let detail = dossier_eval.join(format!("rapport-{horodatage}.jsonl"));

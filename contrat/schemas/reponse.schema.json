@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Compte rendu d'un agent (contrat 1)",
+  "type": "object",
+  "required": ["mission_id", "etat", "resultat", "actions_declarees", "verification", "point_de_reprise"],
+  "properties": {
+    "mission_id": { "type": "string", "minLength": 1 },
+    "etat": { "enum": ["en_cours", "termine", "partiel", "bloque", "precision_requise", "en_pause", "arrete_proprement", "arrete_force", "echec"] },
+    "motif": { "type": "string", "description": "Obligatoire pour echec, bloque, precision_requise, partiel." },
+    "resultat": {
+      "type": "object", "required": ["texte", "fichiers"],
+      "properties": {
+        "texte": { "type": "string" },
+        "fichiers": { "type": "array", "items": { "type": "string" }, "description": "Liste exhaustive des fichiers écrits ou modifiés." }
+      }
+    },
+    "manquant": { "type": "array", "items": { "type": "string" }, "description": "État partiel : ce qui n'est pas fait." },
+    "actions_declarees": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["t", "action", "detail", "raison"],
+        "properties": {
+          "t": { "type": "string" },
+          "action": { "type": "string" },
+          "detail": { "type": "string" },
+          "raison": { "type": "string", "minLength": 1 },
+          "essai": { "type": "integer", "description": "1 pour le premier essai ; au plus 3 (2 nouveaux essais)." }
+        }
+      }
+    },
+    "memoire_modifiee": { "type": "array", "items": { "type": "string" }, "description": "Fichiers de agents/installes/<id>/memoire/ modifiés pendant la mission." },
+    "verification": {
+      "type": "object", "required": ["controle", "non_controle"],
+      "properties": {
+        "controle": { "type": "array", "items": { "type": "string" } },
+        "non_controle": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "point_de_reprise": {}
+  },
+  "allOf": [
+    { "if": { "properties": { "etat": { "const": "partiel" } } }, "then": { "required": ["motif", "manquant"] } },
+    { "if": { "properties": { "etat": { "enum": ["echec", "bloque", "precision_requise"] } } }, "then": { "required": ["motif"] } }
+  ]
+}

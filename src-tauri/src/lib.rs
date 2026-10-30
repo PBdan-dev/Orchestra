@@ -1,6 +1,8 @@
 pub mod agents;
+pub mod banc;
 pub mod brain;
 pub mod config;
+pub mod contrat;
 pub mod evaluation;
 pub mod events;
 mod journal;
@@ -9,6 +11,7 @@ pub mod memory;
 pub mod mesures;
 pub mod orchestrator;
 pub mod paths;
+pub mod schema;
 pub mod tools;
 mod voice;
 
@@ -71,22 +74,21 @@ async fn load_model(state: State<'_, AppState>) -> CmdResult<BrainInfo> {
 }
 
 #[tauri::command]
-fn install_agent(state: State<AppState>, id: String) -> CmdResult<Manifest> {
-    let m = agents::local_registry(&state.paths)
-        .into_iter()
-        .find(|m| m.id == id)
-        .ok_or_else(|| format!("agent {id} absent du registre"))?;
-    agents::install(&state.paths, &m).map_err(err)?;
-    memory::ensure_agent_memory(&state.paths, &m).map_err(err)?;
-    Ok(m)
+fn install_agent(_state: State<AppState>, id: String) -> CmdResult<Manifest> {
+    // paquet à télécharger, empreinte et certification à vérifier : lot T4
+    Err(format!("L'installation de {id} depuis le catalogue arrive avec le lot T4 (paquet vérifié par empreinte)."))
 }
 
-/// Désinstalle un agent : son manifeste est retiré, sa mémoire est conservée.
+/// Désinstalle un agent : son dossier est mis de côté dans `agents/desinstalles/` (rien n'est
+/// effacé), la mémoire tenue par Orchestra (`memoire/agents/<id>.md`) est conservée.
 #[tauri::command]
 fn uninstall_agent(state: State<AppState>, id: String) -> CmdResult<()> {
-    let p = state.paths.installed_manifest(&id);
+    let p = agents::dossier_installe(&state.paths, &id);
     if p.exists() {
-        std::fs::remove_file(p).map_err(err)?;
+        let dest = state.paths.agents.join("desinstalles");
+        std::fs::create_dir_all(&dest).map_err(err)?;
+        let nom = format!("{}_{}", paths::safe_name(&id), chrono::Local::now().format("%Y-%m-%d_%H%M%S"));
+        std::fs::rename(p, dest.join(nom)).map_err(err)?;
     }
     Ok(())
 }
@@ -112,7 +114,7 @@ struct AgentsList {
 
 #[tauri::command]
 fn list_agents(state: State<AppState>) -> AgentsList {
-    AgentsList { installed: agents::installed(&state.paths), registry: agents::local_registry(&state.paths) }
+    AgentsList { installed: agents::installed(&state.paths), registry: agents::local_registry(&state.paths).agents }
 }
 
 #[tauri::command]

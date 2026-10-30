@@ -9,7 +9,8 @@ use tauri::{AppHandle, Manager};
 
 use crate::{
     agents::{self, Manifest},
-    brain::{self, AppelOutil, Brain, Chunk, Demande, Msg, Outil},
+    brain::{self, Brain, Chunk, Demande, Msg, Outil},
+    contrat,
     config::Config,
     events::{emit, Event, Sortie},
     market, memory,
@@ -430,192 +431,192 @@ async fn deleguer_mission(
         thought(out, run_id, "✗ Aucun agent ne correspond. Je ne fais pas le travail moi-même : je l'explique.\n");
         return Ok(format!("Aucun agent disponible ne sait faire ce travail (besoin : « {besoin} »). Ni installé, ni sur l'Agent Market, ni dans le registre local."));
     };
-    if agents::get_installed(paths, &m.id).is_none() {
-        agents::install(paths, &m)?;
-        thought(out, run_id, format!("⬇ {} installé depuis {} (manifeste enregistré dans agents/installes).\n", m.name, source));
-    }
     memory::ensure_agent_memory(paths, &m)?;
     bilan.agent = Some(m.id.clone());
     // B2 : annonce avant l'exécution (agent, mission, raison), sans demande de validation (D7)
     emit(out, Event::AgentAttached { run_id: run_id.into(), agent: m.clone(), source: source.clone(), reason: format!("{raison} — {choix}") });
-    phase(out, run_id, "delegating", &format!("Je confie la mission à {}", m.name));
+    phase(out, run_id, "delegating", &format!("Je prépare la mission de {}", m.name));
+
+    // Mission du contrat (D33) : type de tâche, données conformes au modèle de demande, critère de réussite.
+    // Dossier du projet : `projets/divers/` jusqu'au choix par PB dans l'interface (lot T3, D36).
+    let projet = paths.projets.join("divers");
+    std::fs::create_dir_all(&projet)?;
+    let mission_json = match preparer_mission(out, run_id, brain, &m, mission, original, &projet).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(motif)) => {
+            // l'agent le plus proche ne sait pas faire ce travail : pas de mission (rien n'est lancé)
+            bilan.agent = None;
+            bilan.aucun_agent = true;
+            emit(out, Event::AgentStatus { run_id: run_id.into(), agent_id: m.id.clone(), status: "error".into(), detail: format!("ne convient pas : {motif}") });
+            thought(out, run_id, format!("✗ {} ne convient pas pour cette mission : {motif}\n", m.name));
+            return Ok(format!(
+                "Aucun agent disponible ne sait faire ce travail. L'agent le plus proche, « {} », ne convient pas : {motif}",
+                m.name
+            ));
+        }
+        Err(motif) => {
+            bilan.agent_en_echec = true;
+            emit(out, Event::AgentStatus { run_id: run_id.into(), agent_id: m.id.clone(), status: "error".into(), detail: motif.clone() });
+            avertir(out, run_id, format!("Mission non préparée pour {} : {motif}", m.name));
+            let line = memory::append_agent_mission(paths, &m, mission, &format!("ÉCHEC (mission non préparée) : {motif}"), &[])?;
+            emit(out, Event::Memorized { run_id: run_id.into(), file: format!("agents/{}.md", m.id), section: "Missions".into(), line });
+            *used_agent = Some(m.clone());
+            return Ok(format!("La mission n'a pas pu être préparée pour l'agent « {} » : {motif}", m.name));
+        }
+    };
+    let mission_id = mission_json["id"].as_str().unwrap_or("").to_string();
     emit(out, Event::AgentStatus { run_id: run_id.into(), agent_id: m.id.clone(), status: "running".into(), detail: mission.to_string() });
     phase(out, run_id, "working", &format!("{} travaille", m.name));
+    thought(out, run_id, format!("📋 Mission {mission_id} envoyée à {} (dossier missions/{mission_id})\n", m.name));
 
-    let resultat = match run_agent(out, run_id, brain, cfg, paths, http, &m, mission, original).await {
-        Ok((outcome, tools_used)) => {
-            emit(out, Event::AgentStatus { run_id: run_id.into(), agent_id: m.id.clone(), status: "done".into(), detail: short(&outcome, 160) });
-            let line = memory::append_agent_mission(paths, &m, mission, &outcome, &tools_used)?;
-            emit(out, Event::Memorized { run_id: run_id.into(), file: format!("agents/{}.md", m.id), section: "Missions".into(), line });
-            let trust_line = memory::record_trust(paths, besoin, &m)?;
-            emit(out, Event::Memorized { run_id: run_id.into(), file: "orchestra.md".into(), section: "Agents de confiance".into(), line: trust_line });
-            format!("L'agent « {} » a travaillé. Mission : {mission}\nRésultat rendu par l'agent :\n<donnees>\n{outcome}\n</donnees>", m.name)
+    // Exécution par le contrat stdio-json : événements en direct, validation refusée jusqu'au lot T3
+    let nom = m.name.clone();
+    let deroulement = contrat::executer(&m, &mission_json, &paths.missions.join(&mission_id), |ev| {
+        let type_ = ev["type"].as_str().unwrap_or("");
+        let texte = ev["message"].as_str().unwrap_or("");
+        thought(out, run_id, format!("[{nom}] {type_} : {texte}\n"));
+        emit(out, Event::AgentStatus { run_id: run_id.into(), agent_id: ev["agent_id"].as_str().unwrap_or("").into(), status: "running".into(), detail: texte.into() });
+        if type_ == "validation_requise" {
+            avertir(
+                out,
+                run_id,
+                format!(
+                    "{nom} demande à faire « {} » ({}). Refusé automatiquement : les boutons de validation arrivent au lot T3.",
+                    ev["action"].as_str().unwrap_or(""),
+                    ev["raison"].as_str().unwrap_or("")
+                ),
+            );
+            vec![contrat::reponse_validation(&mission_id, false, "cette_fois")]
+        } else {
+            vec![]
         }
-        Err(e) => {
-            bilan.agent_en_echec = true;
-            emit(out, Event::AgentStatus { run_id: run_id.into(), agent_id: m.id.clone(), status: "error".into(), detail: e.to_string() });
-            let line = memory::append_agent_mission(paths, &m, mission, &format!("ÉCHEC : {e}"), &[])?;
-            emit(out, Event::Memorized { run_id: run_id.into(), file: format!("agents/{}.md", m.id), section: "Missions".into(), line });
-            format!("L'agent « {} » a échoué sur la mission « {mission} » avec l'erreur : {e}", m.name)
+    })
+    .await;
+    let cr = match deroulement {
+        Ok(d) => {
+            for e in &d.ecarts {
+                avertir(out, run_id, format!("Écart au contrat de {} : {e}", m.name));
+            }
+            d.compte_rendu
         }
+        Err(e) => contrat::echec(&mission_id, &e.to_string()),
     };
-    *used_agent = Some(m);
-    Ok(resultat)
+
+    let etat = cr["etat"].as_str().unwrap_or("echec").to_string();
+    let motif = cr["motif"].as_str().unwrap_or("").to_string();
+    let texte = cr["resultat"]["texte"].as_str().unwrap_or("").to_string();
+    let liste = |k: &str| cr.pointer(k).and_then(|f| f.as_array()).map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default();
+    let fichiers = liste("/resultat/fichiers");
+    let manquant = liste("/manquant");
+    let reussi = etat == "termine" || etat == "partiel";
+    if !reussi {
+        bilan.agent_en_echec = true;
+    }
+    let resume = format!("{etat}{}{}", if motif.is_empty() { String::new() } else { format!(" ({motif})") }, if texte.is_empty() { String::new() } else { format!(" — {}", short(&texte, 300)) });
+    emit(out, Event::AgentStatus { run_id: run_id.into(), agent_id: m.id.clone(), status: if reussi { "done" } else { "error" }.into(), detail: short(&resume, 160) });
+    let line = memory::append_agent_mission(paths, &m, mission, &resume, &[])?;
+    emit(out, Event::Memorized { run_id: run_id.into(), file: format!("agents/{}.md", m.id), section: "Missions".into(), line });
+    if etat == "termine" {
+        let trust_line = memory::record_trust(paths, besoin, &m)?;
+        emit(out, Event::Memorized { run_id: run_id.into(), file: "orchestra.md".into(), section: "Agents de confiance".into(), line: trust_line });
+    }
+    *used_agent = Some(m.clone());
+    Ok(format!(
+        "Compte rendu de l'agent « {} » (état : {etat}{}). Mission : {mission}\n<donnees>\n{texte}\n{}{}</donnees>",
+        m.name,
+        if motif.is_empty() { String::new() } else { format!(", motif : {motif}") },
+        if fichiers.is_empty() { String::new() } else { format!("Fichiers : {fichiers}\n") },
+        if manquant.is_empty() { String::new() } else { format!("Non fait : {manquant}\n") },
+    ))
 }
 
-/// Consignes d'outils de l'agent : appel natif, ou bloc ```tool``` en repli pour un modèle sans outils.
-fn consignes_agent(m: &Manifest, mem_tail: &str, repli_texte: bool) -> String {
-    let tool_doc = tools::describe(&m.tools);
-    let outils = if tool_doc.is_empty() { "(aucun)".to_string() } else { tool_doc };
-    let mode = if repli_texte {
-        "Pour utiliser un outil, réponds UNIQUEMENT avec ce bloc (un seul outil par réponse) :\n```tool\n{\"tool\": \"nom_outil\", \"input\": {...}}\n```\n\
-Tu recevras le résultat, puis tu continueras. Quand la mission est accomplie, réponds SANS bloc tool avec ton rapport final complet (le texte produit, les fichiers créés, ce qui n'a pas pu être fait)."
-    } else {
-        "Utilise les outils mis à ta disposition quand c'est nécessaire ; tu recevras leur résultat, puis tu continueras. \
-Quand la mission est accomplie, réponds sans appeler d'outil, avec ton rapport final complet (le texte produit, les fichiers créés, ce qui n'a pas pu être fait)."
-    };
-    format!(
-        "{}\n\nTu es activé par Orchestra, qui supervise ton travail. Tu réponds en français.\n\nOutils disponibles :\n{outils}\n\n{mode}\n\nExtrait de ta mémoire :\n{}",
-        m.system_prompt,
-        if mem_tail.trim().is_empty() { "(vide)" } else { mem_tail }
-    )
-}
+/// Prépare la mission du contrat (section 9, D33) : choisit le type de tâche, remplit les données
+/// selon le modèle de demande de l'agent (sortie contrainte), puis valide le tout.
+#[allow(clippy::too_many_arguments)]
+/// `Ok(Err(motif))` : l'agent ne sait pas faire cette mission (rien n'est lancé) ; `Err` : échec de préparation.
+async fn preparer_mission(out: &dyn Sortie, run_id: &str, brain: &Brain, m: &Manifest, mission: &str, original: &str, projet: &std::path::Path) -> Result<Result<Value, String>, String> {
+    let fiche = |k: &str| m.brut.pointer(k).and_then(|a| a.as_array()).map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(" ; ")).unwrap_or_default();
+    let presentation = format!(
+        "Agent : {} — {}\nSait faire : {}\nNe sait pas faire : {}",
+        m.name,
+        m.description,
+        fiche("/fiche/sait_faire"),
+        fiche("/fiche/ne_sait_pas_faire")
+    );
+    let consigne = "Tu prépares, pour Orchestra, la mission d'un agent. D'abord, vérifie que l'agent sait faire ce que demande la mission \
+(compare avec ce qu'il sait faire et ne sait pas faire) : sinon, compatible = false et motif = pourquoi, sans donnees. \
+Sinon, compatible = true, motif vide, et remplis exactement le modèle de demande de l'agent à partir de la mission. \
+N'invente aucune donnée absente de la mission : laisse vides ou absents les champs facultatifs que tu ne connais pas ; \
+s'il manque une information indispensable (un nom de fichier, par exemple), compatible = false et motif = ce qui manque. \
+critere_reussite = une phrase courte et vérifiable. Réponds par l'objet JSON demandé.";
 
-/// Boucle d'exécution d'un agent : le modèle agit par appels d'outils natifs (lot F).
-/// Repli sur la lecture du texte si le modèle ne gère pas les outils, signalé dans Conscience.
-async fn run_agent(
-    out: &dyn Sortie,
-    run_id: &str,
-    brain: &Brain,
-    cfg: &crate::config::Config,
-    paths: &crate::paths::Paths,
-    http: &reqwest::Client,
-    m: &Manifest,
-    mission: &str,
-    original: &str,
-) -> anyhow::Result<(String, Vec<String>)> {
-    let agent_brain;
-    let b: &Brain = if m.model.is_empty() || m.model == "inherit" {
-        brain
-    } else {
-        // "provider:modèle" → cerveau dédié
-        let (prov, model) = m.model.split_once(':').unwrap_or(("ollama", &m.model));
-        let mut c = cfg.clone();
-        c.provider = prov.to_string();
-        c.model = model.to_string();
-        agent_brain = Brain::new(c, http.clone()).avec_releve(brain.releve.clone());
-        &agent_brain
+    // 1. type de tâche
+    let taches = m.taches();
+    let tache = match taches.len() {
+        0 => None,
+        1 => Some(taches[0].clone()),
+        _ => {
+            let types: Vec<&str> = taches.iter().map(|t| t.r#type.as_str()).collect();
+            let schema = json!({ "type": "object", "properties": { "type_tache": { "type": "string", "enum": types } }, "required": ["type_tache"] });
+            let msgs = [Msg::system(consigne), Msg::user(format!("{presentation}\nTypes de tâche : {}\n\nMission : {mission}\n\nChoisis le type de tâche.", types.join(", ")))];
+            let (v, _) = brain.json("mission", &msgs, &schema, |_| {}).await.map_err(|e| format!("choix du type de tâche impossible ({e})"))?;
+            let t = v["type_tache"].as_str().unwrap_or("");
+            Some(taches.iter().find(|x| x.r#type == t).cloned().ok_or_else(|| format!("type de tâche inconnu : {t}"))?)
+        }
+    };
+    let schema_demande = match &tache {
+        Some(t) => m.lire_modele(&t.modele_demande).ok_or_else(|| format!("modèle de demande illisible : {}", t.modele_demande))?,
+        None => json!({ "type": "object" }),
     };
 
-    let mem = memory::agent_memory_text(paths, &m.id);
-    let mem_tail: String = mem.lines().rev().take(12).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
-    let outils = tools::outils(&m.tools);
-    let mut repli_texte = outils.is_empty();
+    // 2. données conformes au modèle de demande (un nouvel essai avec les erreurs, au plus)
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "compatible": { "type": "boolean" },
+            "motif": { "type": "string" },
+            "critere_reussite": { "type": "string" },
+            "donnees": schema_demande
+        },
+        "required": ["compatible", "motif"]
+    });
     let mut msgs = vec![
-        Msg::system(consignes_agent(m, &mem_tail, repli_texte)),
-        Msg::user(format!("Mission confiée par Orchestra : {mission}\n\nDemande originale de l'utilisateur : « {original} »")),
+        Msg::system(consigne),
+        Msg::user(format!(
+            "{presentation}\nType de tâche : {}\nModèle de demande (schéma JSON) : {schema_demande}\n\nMission : {mission}\n\nDemande originale de l'utilisateur :\n<donnees>\n{original}\n</donnees>",
+            tache.as_ref().map(|t| t.r#type.as_str()).unwrap_or("(aucun)")
+        )),
     ];
-    let mut tools_used: Vec<String> = vec![];
-    let prefix = format!("[{}] ", m.name);
-    let max = cfg.max_agent_steps.max(1);
-
-    let mut step = 0;
-    while step < max {
-        let demande = if repli_texte { Demande::repli() } else { Demande { outils: &outils, ..Default::default() } };
-        let rep = match b
-            .appeler("agent", &msgs, demande, |c: Chunk| {
-                if !c.thinking.is_empty() { thought(out, run_id, format!("{prefix}{}", c.thinking)); }
-                if !c.content.is_empty() { thought(out, run_id, c.content); }
-            })
-            .await
-        {
-            Err(e) if !repli_texte && brain::non_supporte(&e) => {
-                repli_texte = true;
-                msgs[0] = Msg::system(consignes_agent(m, &mem_tail, true));
-                thought(out, run_id, format!("\n⚠ {} ne gère pas l'appel d'outils natif : je lis les outils dans le texte.\n", b.model));
-                continue;
-            }
-            r => r?,
-        };
-        thought(out, run_id, "\n");
-        step += 1;
-
-        // appels d'outils : natifs, ou lus dans le texte en repli
-        let appels: Vec<AppelOutil> = if repli_texte {
-            extract_tool_call(&rep.texte).map(|(nom, arguments)| vec![AppelOutil { id: format!("appel-{step}"), nom, arguments }]).unwrap_or_default()
-        } else {
-            rep.appels.clone()
-        };
-        if appels.is_empty() {
-            return Ok((rep.texte, tools_used));
+    let mut derniere_erreur = String::new();
+    for essai in 0..2 {
+        let (v, _) = brain.json("mission", &msgs, &schema, |_| {}).await.map_err(|e| format!("préparation impossible ({e})"))?;
+        if v["compatible"].as_bool() == Some(false) {
+            return Ok(Err(v["motif"].as_str().filter(|s| !s.trim().is_empty()).unwrap_or("mission hors de ce que sait faire l'agent").to_string()));
         }
-        if repli_texte {
-            msgs.push(Msg::assistant(rep.texte.clone()));
-        } else {
-            msgs.push(Msg::appels_outils(rep.texte.clone(), appels.clone()));
+        let erreurs = crate::schema::erreurs(&v["donnees"], &schema_demande);
+        if erreurs.is_empty() {
+            return contrat::mission(
+                m,
+                contrat::Contenu {
+                    projet,
+                    type_tache: tache.as_ref().map(|t| t.r#type.clone()),
+                    but: mission,
+                    critere_reussite: v["critere_reussite"].as_str().filter(|s| !s.trim().is_empty()).unwrap_or(mission),
+                    contexte: "",
+                    donnees: v["donnees"].clone(),
+                    demande_originale: original,
+                },
+            )
+            .map(Ok);
         }
-        let remaining = max.saturating_sub(step);
-        for a in &appels {
-            let resultat = if !m.tools.iter().any(|t| t == &a.nom) {
-                format!("outil « {} » non autorisé pour cet agent", a.nom)
-            } else {
-                if !tools_used.contains(&a.nom) {
-                    tools_used.push(a.nom.clone());
-                }
-                match tools::execute(&a.nom, &a.arguments, paths, http).await {
-                    Ok(o) => o,
-                    Err(e) => format!("ERREUR : {e}"),
-                }
-            };
-            emit(out, Event::ToolCall { run_id: run_id.into(), agent_id: m.id.clone(), tool: a.nom.clone(), input: a.arguments.clone(), output: resultat.clone() });
-            if repli_texte {
-                msgs.push(Msg::user(format!(
-                    "Résultat de l'outil {} :\n{resultat}\n\n(Il te reste {remaining} action(s) outil. Si la mission est terminée, donne ton rapport final sans bloc tool.)",
-                    a.nom
-                )));
-            } else {
-                msgs.push(Msg::resultat_outil(a, resultat));
-            }
-        }
-        if !repli_texte {
-            // rappel du budget, sans casser l'enchaînement appel → résultat
-            msgs.push(Msg::user(format!("(Il te reste {remaining} étape(s). Si la mission est terminée, donne ton rapport final sans appeler d'outil.)")));
+        derniere_erreur = erreurs.join(" ; ");
+        if essai == 0 {
+            thought(out, run_id, format!("⚠ Données de mission non conformes ({derniere_erreur}) : je corrige.\n"));
+            msgs.push(Msg::assistant(v.to_string()));
+            msgs.push(Msg::user(format!("Ces données ne respectent pas le modèle de demande : {derniere_erreur}. Corrige-les.")));
         }
     }
-    // dernier tour : rapport forcé, sans outils
-    msgs.push(Msg::user("Limite d'actions atteinte. Donne maintenant ton rapport final, sans appeler d'outil."));
-    let content = b
-        .stream("agent", &msgs, |c: Chunk| {
-            if !c.content.is_empty() { thought(out, run_id, c.content); }
-        })
-        .await?;
-    Ok((content, tools_used))
-}
-
-/// Repli seulement (modèle sans appel d'outils natif) : bloc ```tool``` lu dans le texte.
-fn extract_tool_call(content: &str) -> Option<(String, Value)> {
-    let mut candidates: Vec<&str> = vec![];
-    let mut rest = content;
-    while let Some(i) = rest.find("```") {
-        let after = &rest[i + 3..];
-        let Some(j) = after.find("```") else { break };
-        let block = &after[..j];
-        let body = block.split_once('\n').map(|x| x.1).unwrap_or(block);
-        candidates.push(body);
-        rest = &after[j + 3..];
-    }
-    if candidates.is_empty() {
-        candidates.push(content);
-    }
-    for c in candidates {
-        if let Some(v) = brain::lire_json_dans_texte(c) {
-            if let Some(tool) = v["tool"].as_str() {
-                let input = v.get("input").cloned().unwrap_or(Value::Object(Default::default()));
-                return Some((tool.to_string(), input));
-            }
-        }
-    }
-    None
+    Err(format!("données non conformes au modèle de demande : {derniere_erreur}"))
 }
 
 /// Schéma de la mémorisation (sortie contrainte, lot F).
@@ -719,13 +720,6 @@ mod tests {
     }
 
     #[test]
-    fn repli_texte_bloc_tool() {
-        let t = "Je regarde.\n```tool\n{\"tool\": \"list_dir\", \"input\": {\"path\": \".\"}}\n```";
-        assert_eq!(extract_tool_call(t), Some(("list_dir".into(), json!({ "path": "." }))));
-        assert_eq!(extract_tool_call("Rapport final : tout est fait."), None);
-    }
-
-    #[test]
     fn schemas_valides() {
         let o = outils_orchestra();
         assert_eq!(o.iter().map(|o| o.nom.as_str()).collect::<Vec<_>>(), vec!["deleguer", "lire_page"]);
@@ -748,10 +742,4 @@ mod tests {
         assert!(BLOC_1.contains("deleguer") && BLOC_1.contains("lire_page"));
     }
 
-    #[test]
-    fn consignes_selon_le_mode() {
-        let m: Manifest = serde_json::from_value(json!({ "id": "a", "name": "A", "tools": ["now"], "system_prompt": "Tu es A." })).unwrap();
-        assert!(consignes_agent(&m, "", true).contains("```tool"));
-        assert!(!consignes_agent(&m, "", false).contains("```tool"));
-    }
 }

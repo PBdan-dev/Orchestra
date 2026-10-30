@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Événement émis par un agent pendant une mission (contrat 1)",
+  "type": "object",
+  "required": ["mission_id", "agent_id", "type", "message", "t"],
+  "properties": {
+    "mission_id": { "type": "string" },
+    "agent_id": { "type": "string" },
+    "type": { "enum": ["demarrage", "etape", "validation_requise", "blocage", "en_pause", "termine"] },
+    "message": { "type": "string" },
+    "t": { "type": "string" },
+    "action": { "type": "string", "description": "validation_requise : nom de la fonction action_sensitive_ concernée." },
+    "raison": { "type": "string", "description": "validation_requise : pourquoi l'agent veut faire cette action." }
+  },
+  "if": { "properties": { "type": { "const": "validation_requise" } } },
+  "then": { "required": ["action", "raison"] }
+}
