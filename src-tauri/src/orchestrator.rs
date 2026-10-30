@@ -29,6 +29,8 @@ pub struct Contexte {
     pub session: Arc<std::sync::Mutex<Session>>,
     /// Arrête le serveur voix pour libérer la carte graphique quand un agent charge un autre modèle (D24).
     pub arreter_voix: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Validations des actions irréversibles (D28) ; `None` sans interface (refus automatique).
+    pub validations: Option<Arc<crate::validations::Validations>>,
 }
 
 /// Ce qu'un tour a décidé et produit.
@@ -103,6 +105,7 @@ pub async fn run(app: AppHandle, run_id: String, text: String, history: Vec<Msg>
             http: state.http.clone(),
             releve: Arc::new(Releve::vers(state.paths.mesures.clone())),
             session: state.session.clone(),
+            validations: Some(state.validations.clone()),
             arreter_voix: {
                 let a = app.clone();
                 Some(Arc::new(move || {
@@ -302,7 +305,7 @@ pub async fn tour(out: &dyn Sortie, ctx: &Contexte, run_id: &str, text: &str, hi
                         intention = "travail".into();
                         bilan.agent_necessaire = true;
                         bilan.besoin = besoin.clone();
-                        let r = deleguer_mission(out, run_id, &brain, &cfg, &paths, &http, &besoin, &mission, &raison, text, &mut bilan, &mut used_agent, ctx.arreter_voix.as_deref()).await?;
+                        let r = deleguer_mission(out, run_id, &brain, &cfg, &paths, &http, &besoin, &mission, &raison, text, &mut bilan, &mut used_agent, ctx.arreter_voix.as_deref(), ctx.validations.as_deref()).await?;
                         phase(out, run_id, "speaking", "Je restitue le résultat");
                         r
                     }
@@ -421,6 +424,7 @@ async fn deleguer_mission(
     bilan: &mut Tour,
     used_agent: &mut Option<Manifest>,
     arreter_voix: Option<&(dyn Fn() + Send + Sync)>,
+    validations: Option<&crate::validations::Validations>,
 ) -> anyhow::Result<String> {
     thought(out, run_id, format!("\n→ Je délègue · besoin : {besoin} · raison : {raison}\n"));
     phase(out, run_id, "searching_agent", "Je cherche l'agent qu'il faut");
@@ -462,8 +466,9 @@ async fn deleguer_mission(
     phase(out, run_id, "delegating", &format!("Je prépare la mission de {}", m.name));
 
     // Mission du contrat (D33) : type de tâche, données conformes au modèle de demande, critère de réussite.
-    // Dossier du projet : `projets/divers/` jusqu'au choix par PB dans l'interface (lot T3, D36).
-    let projet = paths.projets.join("divers");
+    // Dossier du projet : celui choisi par PB dans l'interface (D36), `projets/divers/` par défaut.
+    let projet_nom = crate::paths::safe_name(if cfg.projet_actif.trim().is_empty() { "divers" } else { cfg.projet_actif.trim() });
+    let projet = paths.projets.join(&projet_nom);
     std::fs::create_dir_all(&projet)?;
     let mission_json = match preparer_mission(out, run_id, brain, &m, mission, original, &projet).await {
         Ok(Ok(v)) => v,
@@ -493,24 +498,29 @@ async fn deleguer_mission(
     phase(out, run_id, "working", &format!("{} travaille", m.name));
     thought(out, run_id, format!("📋 Mission {mission_id} envoyée à {} (dossier missions/{mission_id})\n", m.name));
 
-    // Porte du modèle et exécution de la mission
-    let nom = m.name.clone();
     // Porte du modèle (lot T2) : modèle prêté ou chargé pour l'agent (D24), traces, contrôles, limites
+    let nom = m.name.clone();
     let dossier_mission = paths.missions.join(&mission_id);
     std::fs::create_dir_all(&dossier_mission)?;
+    emit(out, Event::MissionDebut {
+        run_id: run_id.into(),
+        mission_id: mission_id.clone(),
+        agent_id: m.id.clone(),
+        projet: projet_nom.clone(),
+        dossier_mission: dossier_mission.to_string_lossy().into(),
+        dossier_projet: projet.to_string_lossy().into(),
+    });
     let mut changement: Option<modele::Changement> = None;
     let mut porte_ouverte = None;
     if let Some(modele_agent) = modele::choisir(&m, &brain.model) {
         if modele_agent == brain.model {
-            thought(out, run_id, format!("🧠 {} utilise le modèle d'Orchestra ({modele_agent}), prêté par la porte.
-", m.name));
+            thought(out, run_id, format!("🧠 {} utilise le modèle d'Orchestra ({modele_agent}), prêté par la porte.\n", m.name));
         } else {
             phase(out, run_id, "loading", &format!("Je charge {modele_agent} pour {}", m.name));
             match modele::preparer(cfg, http, &modele_agent, &brain.model, arreter_voix).await {
                 Ok(c) => {
                     if let Some(c) = &c {
-                        thought(out, run_id, format!("🔁 Changement de modèle : {} → {} en {:.1} s.
-", c.modele_orchestra, c.modele_agent, c.duree.as_secs_f64()));
+                        thought(out, run_id, format!("🔁 Changement de modèle : {} → {} en {:.1} s.\n", c.modele_orchestra, c.modele_agent, c.duree.as_secs_f64()));
                     }
                     changement = c;
                 }
@@ -518,6 +528,7 @@ async fn deleguer_mission(
                     bilan.agent_en_echec = true;
                     avertir(out, run_id, format!("Modèle de {} indisponible : {motif}", m.name));
                     emit(out, Event::AgentStatus { run_id: run_id.into(), agent_id: m.id.clone(), status: "error".into(), detail: motif.clone() });
+                    emit(out, Event::MissionFin { run_id: run_id.into(), mission_id: mission_id.clone(), agent_id: m.id.clone(), etat: "echec".into(), motif: motif.clone() });
                     *used_agent = Some(m.clone());
                     return Ok(format!("L'agent « {} » n'a pas pu travailler : son modèle est indisponible ({motif}).", m.name));
                 }
@@ -529,37 +540,69 @@ async fn deleguer_mission(
     }
     let avec_porte = porte_ouverte.as_mut().map(|(p, n)| contrat::AvecPorte { porte: &*p, notes: n });
 
-    // Exécution par le contrat stdio-json : événements en direct, validation refusée jusqu'au lot T3
+    // Mémoire propre de l'agent (D32), avant la mission
+    let dossier_agent = m.dossier.clone().unwrap_or_default();
+    let memoire_avant = agents::instantane_memoire(&dossier_agent);
+
+    // Actions (D14) : « observée » par la porte, puis « déclarée » par le compte rendu → actions.jsonl
+    let actions = std::sync::Mutex::new(Vec::<Value>::new());
+    let noter_action = |nature: &str, action: &str, detail: &str, raison: &str| {
+        let mut a = actions.lock().unwrap();
+        let n = a.len() + 1;
+        a.push(json!({ "n": n, "t": chrono::Local::now().to_rfc3339(), "nature": nature, "outil": action, "entree": detail, "raison": raison }));
+        emit(out, Event::MissionAction { run_id: run_id.into(), mission_id: mission_id.clone(), agent_id: m.id.clone(), nature: nature.into(), action: action.into(), detail: detail.into(), raison: raison.into() });
+    };
+
+    // Validation des actions irréversibles (D28) : autorisation en cours, sinon question à PB ;
+    // sans interface (évaluation), refus automatique.
+    let (vers_agent, mut depuis_interface) = tokio::sync::mpsc::unbounded_channel::<Value>();
+    let compteur_validations = std::sync::atomic::AtomicU32::new(0);
+
     let deroulement = contrat::executer(
         &m,
         &mission_json,
         &dossier_mission,
         avec_porte,
+        Some(&mut depuis_interface),
         |ev| {
             let type_ = ev["type"].as_str().unwrap_or("");
             let texte = ev["message"].as_str().unwrap_or("");
-            thought(out, run_id, format!("[{nom}] {type_} : {texte}
-"));
+            thought(out, run_id, format!("[{nom}] {type_} : {texte}\n"));
             emit(out, Event::AgentStatus { run_id: run_id.into(), agent_id: ev["agent_id"].as_str().unwrap_or("").into(), status: "running".into(), detail: texte.into() });
-            if type_ == "validation_requise" {
-                avertir(
-                    out,
-                    run_id,
-                    format!(
-                        "{nom} demande à faire « {} » ({}). Refusé automatiquement : les boutons de validation arrivent au lot T3.",
-                        ev["action"].as_str().unwrap_or(""),
-                        ev["raison"].as_str().unwrap_or("")
-                    ),
-                );
-                vec![contrat::reponse_validation(&mission_id, false, "cette_fois")]
-            } else {
-                vec![]
+            if type_ != "validation_requise" {
+                return vec![];
+            }
+            let action = ev["action"].as_str().unwrap_or("").to_string();
+            let raison = ev["raison"].as_str().unwrap_or("").to_string();
+            let n = compteur_validations.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            let cle = format!("{mission_id}#{n}");
+            match validations {
+                Some(v) => {
+                    if let Some(portee) = v.autorise(&m.id, &action) {
+                        emit(out, Event::ValidationReglee { run_id: run_id.into(), cle, mission_id: mission_id.clone(), decision: "accepte".into(), portee: portee.into(), automatique: true });
+                        thought(out, run_id, format!("✅ « {action} » autorisé d'avance ({portee}).\n"));
+                        vec![contrat::reponse_validation(&mission_id, true, portee)]
+                    } else {
+                        v.attendre(&cle, &mission_id, &m.id, &action, vers_agent.clone());
+                        phase(out, run_id, "working", "J'attends ta validation");
+                        emit(out, Event::ValidationRequise { run_id: run_id.into(), cle, mission_id: mission_id.clone(), agent_id: m.id.clone(), action, raison });
+                        vec![]
+                    }
+                }
+                None => {
+                    avertir(out, run_id, format!("{nom} demande à faire « {action} » ({raison}). Refusé automatiquement : pas d'interface pour valider."));
+                    emit(out, Event::ValidationReglee { run_id: run_id.into(), cle, mission_id: mission_id.clone(), decision: "refuse".into(), portee: "cette_fois".into(), automatique: true });
+                    vec![contrat::reponse_validation(&mission_id, false, "cette_fois")]
+                }
             }
         },
         |note| match note {
             porte::Note::Pensee { texte } => {
-                thought(out, run_id, format!("[{nom} · modèle] {texte}
-"));
+                emit(out, Event::MissionPensee { run_id: run_id.into(), mission_id: mission_id.clone(), agent_id: m.id.clone(), texte: texte.clone() });
+                vec![]
+            }
+            porte::Note::Appel { nom: outil, arguments } => {
+                noter_action("observee", outil, &arguments.to_string(), arguments["raison"].as_str().unwrap_or(""));
                 vec![]
             }
             porte::Note::Ecart { texte } | porte::Note::Refus { texte } => {
@@ -574,16 +617,17 @@ async fn deleguer_mission(
         },
     )
     .await;
+    if let Some(v) = validations {
+        v.oublier_mission(&mission_id);
+    }
     if let Some((p, _)) = &porte_ouverte {
         let (pas, tokens) = p.compteurs();
-        thought(out, run_id, format!("🚪 Porte refermée : {pas} appel(s) au modèle, {tokens} tokens.
-"));
+        thought(out, run_id, format!("🚪 Porte refermée : {pas} appel(s) au modèle, {tokens} tokens.\n"));
     }
     drop(porte_ouverte);
     if let Some(c) = &changement {
         match modele::restaurer(cfg, http, c).await {
-            Ok(d) => thought(out, run_id, format!("🔁 Modèle d'Orchestra rechargé ({}) en {:.1} s.
-", c.modele_orchestra, d.as_secs_f64())),
+            Ok(d) => thought(out, run_id, format!("🔁 Modèle d'Orchestra rechargé ({}) en {:.1} s.\n", c.modele_orchestra, d.as_secs_f64())),
             Err(e) => avertir(out, run_id, format!("Rechargement du modèle d'Orchestra impossible : {e}")),
         }
     }
@@ -597,8 +641,36 @@ async fn deleguer_mission(
         Err(e) => contrat::echec(&mission_id, &e.to_string()),
     };
 
+    // Actions déclarées par l'agent (marquées comme telles), puis actions.jsonl
+    for a in cr["actions_declarees"].as_array().into_iter().flatten() {
+        noter_action("declaree", a["action"].as_str().unwrap_or(""), a["detail"].as_str().unwrap_or(""), a["raison"].as_str().unwrap_or(""));
+    }
+    {
+        let lignes: String = actions.lock().unwrap().iter().map(|a| format!("{a}\n")).collect();
+        let _ = std::fs::write(dossier_mission.join("actions.jsonl"), lignes);
+    }
+    // Livrables annoncés : présents sur le disque ? (vérification complète au lot T5)
+    let livrables: Vec<Value> = cr
+        .pointer("/resultat/fichiers")
+        .and_then(|f| f.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|f| f.as_str())
+        .map(|f| {
+            let p = if std::path::Path::new(f).is_absolute() { std::path::PathBuf::from(f) } else { projet.join(f) };
+            json!({ "chemin": f, "existe": p.exists() })
+        })
+        .collect();
+    emit(out, Event::MissionLivrables { run_id: run_id.into(), mission_id: mission_id.clone(), agent_id: m.id.clone(), fichiers: livrables });
+    // Mémoire propre de l'agent : ce qui a changé (D32)
+    let changements = agents::differences_memoire(&memoire_avant, &agents::instantane_memoire(&dossier_agent));
+    if !changements.is_empty() {
+        emit(out, Event::MemoireAgent { run_id: run_id.into(), mission_id: mission_id.clone(), agent_id: m.id.clone(), changements });
+    }
+
     let etat = cr["etat"].as_str().unwrap_or("echec").to_string();
     let motif = cr["motif"].as_str().unwrap_or("").to_string();
+    emit(out, Event::MissionFin { run_id: run_id.into(), mission_id: mission_id.clone(), agent_id: m.id.clone(), etat: etat.clone(), motif: motif.clone() });
     let texte = cr["resultat"]["texte"].as_str().unwrap_or("").to_string();
     let liste = |k: &str| cr.pointer(k).and_then(|f| f.as_array()).map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default();
     let fichiers = liste("/resultat/fichiers");
@@ -607,9 +679,10 @@ async fn deleguer_mission(
     if !reussi {
         bilan.agent_en_echec = true;
     }
-    let resume = format!("{etat}{}{}", if motif.is_empty() { String::new() } else { format!(" ({motif})") }, if texte.is_empty() { String::new() } else { format!(" — {}", short(&texte, 300)) });
+    let resume = format!("{etat}{}{}", if motif.is_empty() { String::new() } else { format!(" ({motif})") }, if texte.is_empty() { String::new() } else { format!(" — {}", short(&texte, 160)) });
     emit(out, Event::AgentStatus { run_id: run_id.into(), agent_id: m.id.clone(), status: if reussi { "done" } else { "error" }.into(), detail: short(&resume, 160) });
-    let line = memory::append_agent_mission(paths, &m, mission, &resume, &[])?;
+    // memoire/agents/<id>.md : résumé et lien vers le dossier de la mission
+    let line = memory::append_agent_mission(paths, &m, mission, &format!("{resume} · dossier : missions/{mission_id}"), &[])?;
     emit(out, Event::Memorized { run_id: run_id.into(), file: format!("agents/{}.md", m.id), section: "Missions".into(), line });
     if etat == "termine" {
         let trust_line = memory::record_trust(paths, besoin, &m)?;
@@ -627,7 +700,6 @@ async fn deleguer_mission(
 
 /// Prépare la mission du contrat (section 9, D33) : choisit le type de tâche, remplit les données
 /// selon le modèle de demande de l'agent (sortie contrainte), puis valide le tout.
-#[allow(clippy::too_many_arguments)]
 /// `Ok(Err(motif))` : l'agent ne sait pas faire cette mission (rien n'est lancé) ; `Err` : échec de préparation.
 async fn preparer_mission(out: &dyn Sortie, run_id: &str, brain: &Brain, m: &Manifest, mission: &str, original: &str, projet: &std::path::Path) -> Result<Result<Value, String>, String> {
     let fiche = |k: &str| m.brut.pointer(k).and_then(|a| a.as_array()).map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(" ; ")).unwrap_or_default();

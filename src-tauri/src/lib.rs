@@ -15,6 +15,7 @@ pub mod porte;
 pub mod modele;
 pub mod schema;
 pub mod tools;
+pub mod validations;
 mod voice;
 
 use std::sync::{atomic::AtomicBool, Mutex};
@@ -33,6 +34,8 @@ pub struct AppState {
     pub voice: voice::VoiceProcess,
     /// Conversation en cours (profil figé, fenêtre de l'historique) : lot A.
     pub session: std::sync::Arc<Mutex<orchestrator::Session>>,
+    /// Validations des actions irréversibles et autorisations (D28).
+    pub validations: std::sync::Arc<validations::Validations>,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -188,6 +191,8 @@ fn open_folder(app: AppHandle, state: State<AppState>, which: String) -> CmdResu
         "agents" => state.paths.agents.clone(),
         "workspace" => state.paths.workspace.clone(),
         "journal" => state.paths.journal.clone(),
+        "projet" => state.paths.projets.join(paths::safe_name(&state.config.lock().unwrap().projet_actif)),
+        m if m.starts_with("mission:") => state.paths.missions.join(paths::safe_name(&m["mission:".len()..])),
         _ => state.paths.root.clone(),
     };
     app.opener().open_path(p.to_string_lossy().to_string(), None::<&str>).map_err(err)
@@ -269,6 +274,71 @@ async fn ollama_switch(state: State<'_, AppState>, load: Option<String>, unload:
     Ok(())
 }
 
+/// Réponse de PB à une demande de validation (D28).
+#[tauri::command]
+fn repondre_validation(app: AppHandle, state: State<AppState>, cle: String, accepte: bool, portee: String) -> CmdResult<()> {
+    let (mission_id, _agent) = state.validations.repondre(&cle, accepte, &portee)?;
+    events::emit(&app, events::Event::ValidationReglee {
+        run_id: String::new(),
+        cle,
+        mission_id,
+        decision: if accepte { "accepte" } else { "refuse" }.into(),
+        portee,
+        automatique: false,
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn lister_autorisations(state: State<AppState>) -> Vec<validations::Autorisation> {
+    state.validations.lister()
+}
+
+#[tauri::command]
+fn retirer_autorisation(state: State<AppState>, autorisation: validations::Autorisation) -> CmdResult<()> {
+    state.validations.retirer(&autorisation).map_err(err)
+}
+
+/// Remet à zéro la mémoire propre d'un agent (D32) : l'ancienne est archivée, jamais effacée.
+#[tauri::command]
+fn reinitialiser_memoire_agent(state: State<AppState>, id: String) -> CmdResult<String> {
+    agents::archiver_memoire(&state.paths, &id).map(|p| p.to_string_lossy().to_string()).map_err(err)
+}
+
+/// Projets (D36) : dossiers de `projets/`, et le projet actif.
+#[derive(Serialize)]
+struct Projets {
+    actif: String,
+    liste: Vec<String>,
+}
+
+#[tauri::command]
+fn lister_projets(state: State<AppState>) -> Projets {
+    let actif = state.config.lock().unwrap().projet_actif.clone();
+    let mut liste: Vec<String> = std::fs::read_dir(&state.paths.projets)
+        .map(|rd| rd.flatten().filter(|e| e.path().is_dir()).map(|e| e.file_name().to_string_lossy().to_string()).collect())
+        .unwrap_or_default();
+    if !liste.contains(&actif) {
+        liste.push(actif.clone());
+    }
+    liste.sort();
+    Projets { actif, liste }
+}
+
+/// Choisit (et crée au besoin) le projet où iront les missions ; seulement depuis l'interface (D36).
+#[tauri::command]
+fn choisir_projet(state: State<AppState>, nom: String) -> CmdResult<String> {
+    let nom = paths::safe_name(nom.trim());
+    if nom.is_empty() || nom.chars().all(|c| c == '-') {
+        return Err("nom de projet vide".into());
+    }
+    std::fs::create_dir_all(state.paths.projets.join(&nom)).map_err(err)?;
+    let mut cfg = state.config.lock().unwrap();
+    cfg.projet_actif = nom.clone();
+    cfg.save(&state.paths).map_err(err)?;
+    Ok(nom)
+}
+
 #[tauri::command]
 fn voice_log(state: State<AppState>) -> String {
     voice::VoiceProcess::log_tail(&state.paths, 40)
@@ -287,7 +357,8 @@ pub fn run() {
             agents::seed_registry(&paths).map_err(|e| anyhow::anyhow!("registre : {e}"))?;
             memory::seed_main(&paths, &config.user_name).map_err(|e| anyhow::anyhow!("mémoire : {e}"))?;
             let http = reqwest::Client::builder().user_agent("Orchestra/0.1").connect_timeout(brain::DELAI_CONNEXION).build().map_err(|e| anyhow::anyhow!("http : {e}"))?;
-            let state = AppState { config: Mutex::new(config), paths, http, busy: AtomicBool::new(false), voice: voice::VoiceProcess::default(), session: Default::default() };
+            let paths_autorisations = paths.agents.join("autorisations.json");
+            let state = AppState { config: Mutex::new(config), paths, http, busy: AtomicBool::new(false), voice: voice::VoiceProcess::default(), session: Default::default(), validations: std::sync::Arc::new(validations::Validations::new(paths_autorisations)) };
             {
                 let cfg = state.config.lock().unwrap().clone();
                 if cfg.voice_enabled && cfg.voice_autostart {
@@ -323,6 +394,12 @@ pub fn run() {
             voice_start_mode,
             voice_restart,
             ollama_switch,
+            repondre_validation,
+            lister_autorisations,
+            retirer_autorisation,
+            reinitialiser_memoire_agent,
+            lister_projets,
+            choisir_projet,
         ])
         .build(tauri::generate_context!())
         .expect("erreur au lancement d'Orchestra")

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useStore } from "../store";
 import { api } from "../tauri";
@@ -19,6 +19,21 @@ export function AgentsPanel() {
   const installAgent = useStore((s) => s.installAgent);
   const uninstallAgent = useStore((s) => s.uninstallAgent);
   const setAgentsPanel = useStore((s) => s.setAgentsPanel);
+  const autorisations = useStore((s) => s.autorisations);
+  const retirerAutorisation = useStore((s) => s.retirerAutorisation);
+  const reinitialiserMemoire = useStore((s) => s.reinitialiserMemoire);
+  const refreshAutorisations = useStore((s) => s.refreshAutorisations);
+  useEffect(() => { refreshAutorisations().catch(() => {}); }, [refreshAutorisations]);
+  const remettreAZero = async (m: Manifest) => {
+    if (!window.confirm(`Remettre à zéro la mémoire de ${m.name} ? L'ancienne mémoire est archivée (agents/memoires-archivees/), pas effacée.`)) return;
+    try {
+      const archive = await reinitialiserMemoire(m.id);
+      window.alert(`Mémoire de ${m.name} remise à zéro. Ancienne mémoire : ${archive}`);
+    } catch (e) {
+      window.alert(String(e));
+    }
+  };
+  const PORTEE: Record<string, string> = { type_session: "pour la session", tout_session: "tout, pour la session", permanent: "tout, permanent" };
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const all: Manifest[] = [...installed, ...registry.filter((r) => !installed.some((i) => i.id === r.id))];
@@ -49,6 +64,7 @@ export function AgentsPanel() {
                 <button className={`glass-btn sm ${onStage ? "active" : ""}`} onClick={() => (onStage ? unplug(m.id) : plug(m))}>
                   {onStage ? <><I.unplug size={11} /> Débrancher</> : <><I.plug size={11} /> Brancher</>}
                 </button>
+                {isInstalled && <button className="link-btn" disabled={busyId === m.id} onClick={() => wrap(m.id, () => remettreAZero(m))}>remettre sa mémoire à zéro</button>}
                 {isInstalled ? (
                   <button className="link-btn danger" disabled={busyId === m.id} onClick={() => wrap(m.id, () => uninstallAgent(m.id))}>désinstaller</button>
                 ) : (
@@ -58,6 +74,16 @@ export function AgentsPanel() {
             </div>
           );
         })}
+      </div>
+      <div className="ap-autorisations">
+        <div><I.alert size={12} /> Actions irréversibles autorisées sans question</div>
+        {autorisations.length === 0 && <div className="muted small">aucune : chaque action irréversible te sera demandée</div>}
+        {autorisations.map((a) => (
+          <div key={`${a.agent_id}-${a.action}-${a.portee}`} className="ap-aut">
+            <span>{a.agent_id} · {a.action ? <code>{a.action}</code> : "toutes"} · <span className="muted">{PORTEE[a.portee] ?? a.portee}</span></span>
+            <button className="link-btn danger" onClick={() => retirerAutorisation(a)}>retirer</button>
+          </div>
+        ))}
       </div>
       <footer className="ap-foot">
         <button className="link-btn" onClick={() => api.openFolder("agents")}><I.external size={11} /> ouvrir le dossier agents</button>

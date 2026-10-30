@@ -73,14 +73,51 @@ async function scenario(run_id: string, text: string) {
   emit({ type: "phase", run_id, phase: "idle", label: "" });
 }
 
+/** Démo navigateur : une mission d'agent-fichiers avec une suppression à valider (lot T3). */
+let missionDemo: { run_id: string } | null = null;
+async function scenarioMission(run_id: string) {
+  const mission_id = "2026-10-30_2230_agent-fichiers_demo";
+  missionDemo = { run_id };
+  emit({ type: "phase", run_id, phase: "delegating", label: "Je prépare la mission de Agent Fichiers" });
+  emit({ type: "agent_attached", run_id, agent: fichiers, source: "installé", reason: "supprimer un fichier demandé — meilleur score (4.0)" });
+  emit({ type: "mission_debut", run_id, mission_id, agent_id: fichiers.id, projet: "divers", dossier_mission: "", dossier_projet: "" });
+  emit({ type: "phase", run_id, phase: "working", label: "Agent Fichiers travaille" });
+  await sleep(500);
+  emit({ type: "mission_pensee", run_id, mission_id, agent_id: fichiers.id, texte: "La mission demande de supprimer brouillon.md : c'est irréversible, je demande la validation." });
+  emit({ type: "mission_action", run_id, mission_id, agent_id: fichiers.id, nature: "observee", action: "action_sensitive_supprimer", detail: "{\"source\":\"brouillon.md\"}", raison: "fichier obsolète" });
+  emit({ type: "phase", run_id, phase: "working", label: "J'attends ta validation" });
+  emit({ type: "validation_requise", run_id, cle: `${mission_id}#1`, mission_id, agent_id: fichiers.id, action: "action_sensitive_supprimer", raison: "brouillon.md est obsolète (demandé par PB)" });
+}
+
+async function finMissionDemo(cle: string, accepte: boolean, portee: string) {
+  const run_id = missionDemo?.run_id ?? "demo";
+  const mission_id = cle.split("#")[0];
+  emit({ type: "validation_reglee", run_id, cle, mission_id, decision: accepte ? "accepte" : "refuse", portee, automatique: false });
+  await sleep(400);
+  emit({ type: "mission_action", run_id, mission_id, agent_id: fichiers.id, nature: "declaree", action: accepte ? "action_sensitive_supprimer" : "rien", detail: accepte ? "brouillon.md supprimé" : "suppression refusée", raison: "fichier obsolète" });
+  emit({ type: "mission_livrables", run_id, mission_id, agent_id: fichiers.id, fichiers: accepte ? [{ chemin: "brouillon.md", existe: false }] : [] });
+  emit({ type: "memoire_agent", run_id, mission_id, agent_id: fichiers.id, changements: [{ fichier: "memoire/habitudes.md", etat: "modifié", ajoutees: ["PB valide les suppressions de brouillons"], retirees: [] }] });
+  emit({ type: "mission_fin", run_id, mission_id, agent_id: fichiers.id, etat: accepte ? "termine" : "partiel", motif: accepte ? "" : "suppression refusée par PB" });
+  emit({ type: "agent_status", run_id, agent_id: fichiers.id, status: "done", detail: accepte ? "brouillon.md supprimé" : "rien supprimé" });
+  emit({ type: "token", run_id, text: accepte ? "C'est fait : brouillon.md est supprimé." : "D'accord, je n'ai rien supprimé." });
+  emit({ type: "done", run_id, answer: "", intent: "travail" });
+  emit({ type: "phase", run_id, phase: "idle", label: "" });
+}
+
 export const mockApi = {
+  repondreValidation: async (cle: string, accepte: boolean, portee: string) => { setTimeout(() => finMissionDemo(cle, accepte, portee), 100); },
+  listerAutorisations: async () => [],
+  retirerAutorisation: async () => {},
+  reinitialiserMemoireAgent: async () => "",
+  listerProjets: async () => ({ actif: "divers", liste: ["divers"] }),
+  choisirProjet: async (nom: string) => nom,
   getConfig: async () => config,
   saveConfig: async (c: Config) => { Object.assign(config, c); },
   detectBrain: async (): Promise<BrainInfo> => ({ provider: "ollama", model: "qwen3.5:9b", online: true, models: ["qwen3.5:9b", "qwen3.6:27b"], detail: mockLoaded ? "modèle chargé, prêt" : "modèle non chargé", loaded: mockLoaded, state: mockLoaded ? "ready" : "not_loaded" }),
   loadModel: async (): Promise<BrainInfo> => { await sleep(2500); mockLoaded = true; return mockApi.detectBrain(); },
   installAgent: async (id: string) => { const m = [redacteur, fichiers].find((a) => a.id === id)!; if (!mockInstalled.find((a) => a.id === id)) mockInstalled.push(m); return m; },
   uninstallAgent: async (id: string) => { mockInstalled = mockInstalled.filter((a) => a.id !== id); },
-  sendMessage: async (text: string) => { const id = Math.random().toString(36).slice(2, 8); setTimeout(() => scenario(id, text), 300); return id; },
+  sendMessage: async (text: string) => { const id = Math.random().toString(36).slice(2, 8); setTimeout(() => (/supprime/i.test(text) ? scenarioMission(id) : scenario(id, text)), 300); return id; },
   listAgents: async () => ({ installed: mockInstalled.slice(), registry: [redacteur, fichiers] }),
   marketPreview: async () => { throw new Error("démo : pas de Market"); },
   memoryTree: async (): Promise<MemoryFile[]> => [{ name: "orchestra.md", rel: "memoire/orchestra.md", kind: "principal", size: memory.length, modified: "26/10/2026 00:12" }],

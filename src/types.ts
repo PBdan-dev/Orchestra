@@ -46,6 +46,14 @@ export type OrchestraEvent =
   | { type: "done"; run_id: string; answer: string; intent: string; message_historique?: string }
   | { type: "coupe"; run_id: string; quoi: string; detail: string }
   | { type: "avertissement"; run_id: string; message: string }
+  | { type: "mission_debut"; run_id: string; mission_id: string; agent_id: string; projet: string; dossier_mission: string; dossier_projet: string }
+  | { type: "mission_pensee"; run_id: string; mission_id: string; agent_id: string; texte: string }
+  | { type: "mission_action"; run_id: string; mission_id: string; agent_id: string; nature: "observee" | "declaree"; action: string; detail: string; raison: string }
+  | { type: "mission_livrables"; run_id: string; mission_id: string; agent_id: string; fichiers: Livrable[] }
+  | { type: "memoire_agent"; run_id: string; mission_id: string; agent_id: string; changements: ChangementMemoire[] }
+  | { type: "mission_fin"; run_id: string; mission_id: string; agent_id: string; etat: string; motif: string }
+  | { type: "validation_requise"; run_id: string; cle: string; mission_id: string; agent_id: string; action: string; raison: string }
+  | { type: "validation_reglee"; run_id: string; cle: string; mission_id: string; decision: "accepte" | "refuse"; portee: string; automatique: boolean }
   | { type: "error"; run_id: string; message: string };
 
 export interface Config {
@@ -57,6 +65,8 @@ export interface Config {
   gemini_api_key: string;
   openrouter_api_key: string;
   market_url: string;
+  /** projet où vont les missions et les livrables (D36) */
+  projet_actif?: string;
   embeddings_enabled: boolean;
   embedding_model: string;
   user_name: string;
@@ -141,6 +151,28 @@ export interface AgentNode {
   parent?: string;
 }
 
+export interface Livrable { chemin: string; existe: boolean }
+export interface ChangementMemoire { fichier: string; etat: string; ajoutees: string[]; retirees: string[] }
+export interface ActionMission { nature: "observee" | "declaree"; action: string; detail: string; raison: string }
+export interface ValidationMission { cle: string; action: string; raison: string; etat: "attente" | "accepte" | "refuse"; portee?: string; automatique?: boolean }
+export interface MissionVue {
+  missionId: string;
+  agentId: string;
+  projet: string;
+  dossierMission: string;
+  dossierProjet: string;
+  pensees: string[];
+  actions: ActionMission[];
+  livrables: Livrable[] | null;
+  memoire: ChangementMemoire[];
+  validations: ValidationMission[];
+  etat?: string;
+  motif?: string;
+}
+/** Autorisation d'actions irréversibles (D28) */
+export interface Autorisation { agent_id: string; action: string; portee: "type_session" | "tout_session" | "permanent" }
+export interface Projets { actif: string; liste: string[] }
+
 export type Entry =
   | { kind: "phase"; id: string; runId: string; at: number; phase: Phase; label: string }
   | { kind: "thought"; id: string; runId: string; at: number; text: string }
@@ -151,7 +183,8 @@ export type Entry =
   | { kind: "memorized"; id: string; runId: string; at: number; file: string; section: string; line: string }
   | { kind: "nothing"; id: string; runId: string; at: number }
   | { kind: "error"; id: string; runId: string; at: number; message: string }
-  | { kind: "user"; id: string; runId: string; at: number; text: string };
+  | { kind: "user"; id: string; runId: string; at: number; text: string }
+  | ({ kind: "mission"; id: string; runId: string; at: number } & MissionVue);
 
 export interface MemoryFile {
   name: string;

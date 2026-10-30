@@ -143,7 +143,17 @@ pub struct AvecPorte<'a> {
 /// `sur_evenement` reçoit chaque événement valide et renvoie les messages à envoyer à l'agent
 /// (réponse à une validation, arrêt, pause…) ; `sur_note` reçoit ce que voit la porte du modèle
 /// (réflexion, écarts, limites) et peut aussi renvoyer des messages. Tout est noté dans `dossier_mission`.
-pub async fn executer<F, G>(m: &Manifest, mission: &Value, dossier_mission: &Path, mut porte: Option<AvecPorte<'_>>, mut sur_evenement: F, mut sur_note: G) -> anyhow::Result<Deroulement>
+/// `externes` : messages venus d'ailleurs pendant la mission (réponse de PB à une validation, D28).
+#[allow(clippy::too_many_arguments)]
+pub async fn executer<F, G>(
+    m: &Manifest,
+    mission: &Value,
+    dossier_mission: &Path,
+    mut porte: Option<AvecPorte<'_>>,
+    mut externes: Option<&mut tokio::sync::mpsc::UnboundedReceiver<Value>>,
+    mut sur_evenement: F,
+    mut sur_note: G,
+) -> anyhow::Result<Deroulement>
 where
     F: FnMut(&Value) -> Vec<Value>,
     G: FnMut(&crate::porte::Note) -> Vec<Value>,
@@ -187,11 +197,35 @@ where
     envoyer(&mut entree, &mut journal, mission).await?;
 
     let mut horloge = tokio::time::interval(Duration::from_secs(20));
+    // pendant qu'une validation attend PB, l'agent attend aussi : pas de délai de silence
+    let mut attente_validation = false;
     loop {
-        // notes de la porte et horloge des limites, en même temps que la sortie de l'agent
+        let delai = if attente_validation { Duration::from_secs(7 * 24 * 3600) } else { SILENCE_AGENT };
+        // messages venus de l'interface (validation), notes de la porte, horloge des limites,
+        // en même temps que la sortie de l'agent
+        if let Some(rx) = externes.as_mut() {
+            if let Ok(msg) = rx.try_recv() {
+                if msg["type"] == "validation" {
+                    attente_validation = false;
+                }
+                if valider_message(&msg).is_ok() && envoyer(&mut entree, &mut journal, &msg).await.is_err() {
+                    d.ecarts.push("message impossible à transmettre à l'agent".into());
+                }
+                continue;
+            }
+        }
         let lu = if let Some(p) = porte.as_mut() {
             tokio::select! {
-                l = tokio::time::timeout(SILENCE_AGENT, lignes.next_line()) => l,
+                l = tokio::time::timeout(delai, lignes.next_line()) => l,
+                Some(msg) = async { match externes.as_mut() { Some(rx) => rx.recv().await, None => std::future::pending().await } } => {
+                    if msg["type"] == "validation" {
+                        attente_validation = false;
+                    }
+                    if valider_message(&msg).is_ok() && envoyer(&mut entree, &mut journal, &msg).await.is_err() {
+                        d.ecarts.push("message impossible à transmettre à l'agent".into());
+                    }
+                    continue;
+                }
                 Some(note) = p.notes.recv() => {
                     for msg in sur_note(&note) {
                         if valider_message(&msg).is_ok() && envoyer(&mut entree, &mut journal, &msg).await.is_err() {
@@ -206,7 +240,18 @@ where
                 }
             }
         } else {
-            tokio::time::timeout(SILENCE_AGENT, lignes.next_line()).await
+            tokio::select! {
+                l = tokio::time::timeout(delai, lignes.next_line()) => l,
+                Some(msg) = async { match externes.as_mut() { Some(rx) => rx.recv().await, None => std::future::pending().await } } => {
+                    if msg["type"] == "validation" {
+                        attente_validation = false;
+                    }
+                    if valider_message(&msg).is_ok() && envoyer(&mut entree, &mut journal, &msg).await.is_err() {
+                        d.ecarts.push("message impossible à transmettre à l'agent".into());
+                    }
+                    continue;
+                }
+            }
         };
         let ligne = match lu {
             Err(_) => {
@@ -241,7 +286,13 @@ where
             if let Some(p) = porte.as_ref() {
                 p.porte.progres();
             }
+            if ev["type"] == "validation_requise" {
+                attente_validation = true;
+            }
             for msg in sur_evenement(ev) {
+                if msg["type"] == "validation" {
+                    attente_validation = false;
+                }
                 if valider_message(&msg).is_ok() && envoyer(&mut entree, &mut journal, &msg).await.is_err() {
                     d.ecarts.push("message impossible à transmettre à l'agent".into());
                 }

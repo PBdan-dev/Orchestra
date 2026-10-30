@@ -34,6 +34,8 @@ use crate::{
 pub enum Note {
     /// Réflexion ou réponse du modèle de l'agent.
     Pensee { texte: String },
+    /// Appel d'outil décidé par le modèle de l'agent, vu par la porte (action « observée », D14).
+    Appel { nom: String, arguments: Value },
     /// Écart au contrat vu par la porte (outil non déclaré, action sans raison…).
     Ecart { texte: String },
     /// Seuil de limite atteint (D29) : `arreter` = plafond d'1 h, arrêt propre demandé.
@@ -464,6 +466,11 @@ async fn chat(e: &Etat, mut corps: Value, chemin: &str) -> Result<Value, (u16, S
     }
     if !texte.trim().is_empty() {
         let _ = e.notes.send(Note::Pensee { texte: texte.clone() });
+    }
+    for c in rep.pointer("/message/tool_calls").and_then(|t| t.as_array()).into_iter().flatten() {
+        let nom = c.pointer("/function/name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+        let arguments = c.pointer("/function/arguments").cloned().unwrap_or(Value::Null);
+        let _ = e.notes.send(Note::Appel { nom, arguments });
     }
     for x in ecarts {
         let _ = e.notes.send(Note::Ecart { texte: x });

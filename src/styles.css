@@ -509,3 +509,27 @@ pre { margin: 0; font-family: var(--mono); font-size: 12px; white-space: pre-wra
 .vc-btn.stop.sm { font-size: 11px; padding: 2px 10px; }
 @keyframes stopPulse { 0% { box-shadow: 0 0 0 0 rgba(244,63,94,.55); } 100% { box-shadow: 0 0 0 12px rgba(244,63,94,0); } }
 .glass-icon.active { color: #04111f; background: linear-gradient(135deg, #a5f3fc, #7dd3fc); }
+
+/* Lot T3 : carte de mission, validation, différences de mémoire */
+.mission-card { display: flex; flex-direction: column; gap: 6px; }
+.mission-card.live { border-color: rgba(125, 211, 252, .45); }
+.mission-card.ko { border-color: rgba(248, 113, 113, .35); }
+.mission-card .right { margin-left: auto; }
+.mission-part { border-top: 1px solid var(--border); padding-top: 5px; }
+.mission-part-head { cursor: pointer; display: flex; align-items: center; gap: 5px; font-size: 12px; }
+.mission-action { font-size: 12px; margin: 3px 0 0 8px; }
+.mission-foot { display: flex; gap: 12px; border-top: 1px solid var(--border); padding-top: 5px; }
+.validation { border-radius: 10px; padding: 8px 10px; font-size: 12.5px; }
+.validation.attente { border: 1px solid rgba(251, 191, 36, .6); background: rgba(251, 191, 36, .08); }
+.validation.reglee { border: 1px solid var(--border); }
+.validation.reglee.refuse { color: #fca5a5; }
+.validation-boutons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.validation-discrets { display: flex; gap: 12px; margin-top: 6px; opacity: .75; font-size: 11px; }
+.glass-btn.danger { border-color: rgba(248, 113, 113, .5); }
+.diff-plus { color: #86efac; font-family: monospace; white-space: pre-wrap; margin-left: 8px; }
+.diff-moins { color: #fca5a5; font-family: monospace; white-space: pre-wrap; margin-left: 8px; }
+.warn { color: #fbbf24; }
+.projet-chip select { background: transparent; color: inherit; border: none; font: inherit; outline: none; cursor: pointer; }
+.projet-chip option { background: #0f172a; }
+.ap-autorisations { padding: 6px 14px; border-top: 1px solid var(--border); font-size: 12px; }
+.ap-autorisations .ap-aut { display: flex; justify-content: space-between; gap: 8px; margin: 3px 0; }

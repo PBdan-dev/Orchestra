@@ -222,6 +222,63 @@ pub fn get_installed(paths: &Paths, id: &str) -> Option<Manifest> {
     lire_installe(&dossier_installe(paths, id)).ok()
 }
 
+/// Contenu texte de la mémoire propre d'un agent (`<dossier>/memoire/`, D32), fichier par fichier.
+pub fn instantane_memoire(dossier_agent: &Path) -> std::collections::BTreeMap<String, String> {
+    let racine = dossier_agent.join("memoire");
+    let mut out = std::collections::BTreeMap::new();
+    fn parcourir(racine: &Path, d: &Path, out: &mut std::collections::BTreeMap<String, String>) {
+        for e in std::fs::read_dir(d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                parcourir(racine, &p, out);
+            } else {
+                let rel = p.strip_prefix(racine).unwrap_or(&p).to_string_lossy().replace('\\', "/");
+                let contenu = match std::fs::metadata(&p) {
+                    Ok(m) if m.len() > 1_000_000 => format!("[fichier de {} o, non comparé]", m.len()),
+                    _ => std::fs::read(&p).map(|b| String::from_utf8(b).unwrap_or_else(|e| format!("[contenu binaire de {} o]", e.as_bytes().len()))).unwrap_or_default(),
+                };
+                out.insert(rel, contenu);
+            }
+        }
+    }
+    parcourir(&racine, &racine, &mut out);
+    out
+}
+
+/// Ce qui a changé dans la mémoire de l'agent : fichier, état, lignes ajoutées et retirées.
+pub fn differences_memoire(avant: &std::collections::BTreeMap<String, String>, apres: &std::collections::BTreeMap<String, String>) -> Vec<Value> {
+    let mut out = vec![];
+    let fichiers: std::collections::BTreeSet<&String> = avant.keys().chain(apres.keys()).collect();
+    for f in fichiers {
+        let (a, b) = (avant.get(f), apres.get(f));
+        if a == b {
+            continue;
+        }
+        let la: Vec<&str> = a.map(|x| x.lines().collect()).unwrap_or_default();
+        let lb: Vec<&str> = b.map(|x| x.lines().collect()).unwrap_or_default();
+        let ajoutees: Vec<&str> = lb.iter().filter(|l| !la.contains(l)).copied().take(50).collect();
+        let retirees: Vec<&str> = la.iter().filter(|l| !lb.contains(l)).copied().take(50).collect();
+        let etat = match (a, b) { (None, Some(_)) => "ajouté", (Some(_), None) => "supprimé", _ => "modifié" };
+        out.push(json!({ "fichier": format!("memoire/{f}"), "etat": etat, "ajoutees": ajoutees, "retirees": retirees }));
+    }
+    out
+}
+
+/// Remise à zéro de la mémoire propre d'un agent (D32) : l'ancienne est archivée, jamais effacée
+/// (décision de PB du 30/10), dans `agents/memoires-archivees/<id>_<date>/`.
+pub fn archiver_memoire(paths: &Paths, id: &str) -> anyhow::Result<PathBuf> {
+    let src = dossier_installe(paths, id).join("memoire");
+    let dest = paths.agents.join("memoires-archivees").join(format!("{}_{}", crate::paths::safe_name(id), chrono::Local::now().format("%Y-%m-%d_%H%M%S")));
+    std::fs::create_dir_all(dest.parent().unwrap_or(&paths.agents))?;
+    if src.exists() {
+        std::fs::rename(&src, &dest)?;
+    } else {
+        std::fs::create_dir_all(&dest)?;
+    }
+    std::fs::create_dir_all(&src)?;
+    Ok(dest)
+}
+
 /// Score de correspondance entre un besoin exprimé et un agent (mots communs).
 pub fn match_score(m: &Manifest, need: &str) -> f32 {
     let need_words = crate::memory::keywords(need);
@@ -294,6 +351,22 @@ mod tests {
         assert_eq!(l.ignores.len(), 2);
         assert!(l.ignores.iter().any(|i| i.starts_with("Agent Faux") && i.contains("version")));
         assert!(l.ignores.iter().any(|i| i.contains("ancien format")));
+    }
+
+    #[test]
+    fn memoire_comparee() {
+        let mut a = std::collections::BTreeMap::new();
+        a.insert("ton.md".to_string(), "cordial
+signe PB".to_string());
+        let mut b = a.clone();
+        b.insert("ton.md".into(), "cordial
+signe Pierre".into());
+        b.insert("regles.md".into(), "x".into());
+        let d = differences_memoire(&a, &b);
+        assert_eq!(d.len(), 2);
+        let ton = d.iter().find(|x| x["fichier"] == "memoire/ton.md").unwrap();
+        assert_eq!(ton["ajoutees"], json!(["signe Pierre"]));
+        assert_eq!(ton["retirees"], json!(["signe PB"]));
     }
 
     #[test]

@@ -18,6 +18,16 @@ export function TopBar() {
   const brainLoading = useStore((s) => s.brainLoading);
   const phase = useStore((s) => s.phase);
   const status = brainStatus(brain, brainLoading);
+  const projets = useStore((s) => s.projets);
+  const choisirProjet = useStore((s) => s.choisirProjet);
+  const changerProjet = async (v: string) => {
+    if (v === "__nouveau__") {
+      const nom = window.prompt("Nom du nouveau projet (dossier dans Orchestra/projets/) :");
+      if (nom && nom.trim()) await choisirProjet(nom.trim()).catch((e) => window.alert(String(e)));
+      return;
+    }
+    await choisirProjet(v).catch((e) => window.alert(String(e)));
+  };
   return (
     <header className="topbar">
       <div className="brand">
@@ -37,6 +47,13 @@ export function TopBar() {
         })}
       </nav>
       <div className="topbar-right">
+        <label className="brain-chip glass projet-chip" title="Projet où vont les missions et les livrables des agents (choisi ici seulement)">
+          <I.folder size={13} />
+          <select value={projets?.actif ?? "divers"} onChange={(e) => changerProjet(e.target.value)}>
+            {(projets?.liste ?? ["divers"]).map((p) => <option key={p} value={p}>Projet : {p}</option>)}
+            <option value="__nouveau__">Nouveau projet…</option>
+          </select>
+        </label>
         <button className={`brain-chip glass ${status.tone}`} style={{ ["--c" as any]: status.color }} onClick={() => setView("settings")} title={brain?.detail}>
           <span className="pill-dot" />
           <span>{status.label}</span>

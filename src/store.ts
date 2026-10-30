@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { api, onEvent } from "./tauri";
 import { VoiceClient, type VoiceEvent } from "./voice";
 import type {
-  AgentNode, BrainInfo, ChatMessage, Config, Entry, Manifest, OrchestraEvent, PathsInfo, Phase, VoiceLatency, VoiceModels, VoiceStatus,
+  AgentNode, Autorisation, BrainInfo, ChatMessage, Config, Entry, Manifest, MissionVue, OrchestraEvent, PathsInfo, Phase, Projets, VoiceLatency, VoiceModels, VoiceStatus,
 } from "./types";
 
 export type View = "stage" | "memory" | "journal" | "settings";
@@ -57,6 +57,9 @@ interface State {
   paths: PathsInfo | null;
   registry: Manifest[];
   installed: Manifest[];
+  /** projets (D36) et autorisations d'actions irréversibles (D28) */
+  projets: Projets | null;
+  autorisations: Autorisation[];
   bootDone: boolean;
   memoryFocus: string | null;
   /** Taille du cœur (0.6 à 1.6) */
@@ -98,6 +101,12 @@ interface State {
   refreshBrain: () => Promise<void>;
   loadModel: () => Promise<void>;
   refreshAgents: () => Promise<void>;
+  refreshProjets: () => Promise<void>;
+  choisirProjet: (nom: string) => Promise<void>;
+  repondreValidation: (cle: string, accepte: boolean, portee: string) => Promise<void>;
+  refreshAutorisations: () => Promise<void>;
+  retirerAutorisation: (a: Autorisation) => Promise<void>;
+  reinitialiserMemoire: (id: string) => Promise<string>;
   saveConfig: (c: Config) => Promise<void>;
   /** `orchestrateur` : forcer la boucle centrale (délégation venue de la voix). */
   send: (text: string, orchestrateur?: boolean) => Promise<void>;
@@ -158,6 +167,8 @@ export const useStore = create<State>((set, get) => ({
   paths: null,
   registry: [],
   installed: [],
+  projets: null,
+  autorisations: [],
   bootDone: false,
   memoryFocus: null,
   coreScale: pref.get("coreScale", 1),
@@ -202,7 +213,7 @@ export const useStore = create<State>((set, get) => ({
         set({ config, paths });
         await onEvent((e) => get().handle(e));
         voice = new VoiceClient((e) => get().onVoice(e));
-        await Promise.all([get().refreshBrain(), get().refreshAgents(), get().refreshVoice(), get().refreshVoiceModels()]);
+        await Promise.all([get().refreshBrain(), get().refreshAgents(), get().refreshVoice(), get().refreshVoiceModels(), get().refreshProjets().catch(() => {}), get().refreshAutorisations().catch(() => {})]);
         set({ bootDone: true });
         // revérifie le cerveau régulièrement (Ollama lancé après Orchestra, modèle déchargé…)
         setInterval(() => {
@@ -242,6 +253,33 @@ export const useStore = create<State>((set, get) => ({
     const { installed, registry } = await api.listAgents();
     set({ installed, registry });
   },
+
+  refreshProjets: async () => {
+    set({ projets: await api.listerProjets() });
+  },
+
+  choisirProjet: async (nom) => {
+    const actif = await api.choisirProjet(nom);
+    const cfg = get().config;
+    if (cfg) set({ config: { ...cfg, projet_actif: actif } });
+    await get().refreshProjets();
+  },
+
+  repondreValidation: async (cle, accepte, portee) => {
+    await api.repondreValidation(cle, accepte, portee);
+    if (accepte && portee !== "cette_fois") await get().refreshAutorisations();
+  },
+
+  refreshAutorisations: async () => {
+    set({ autorisations: await api.listerAutorisations() });
+  },
+
+  retirerAutorisation: async (a) => {
+    await api.retirerAutorisation(a);
+    await get().refreshAutorisations();
+  },
+
+  reinitialiserMemoire: async (id) => api.reinitialiserMemoireAgent(id),
 
   saveConfig: async (config) => {
     await api.saveConfig(config);
@@ -587,6 +625,9 @@ export const useStore = create<State>((set, get) => ({
   handle: (e) => {
     const now = Date.now();
     const push = (entry: Entry) => set((s) => ({ entries: [...s.entries, entry] }));
+    /** met à jour la carte d'une mission (lot T3) */
+    const mission = (id: string, maj: (m: MissionVue) => Partial<MissionVue>) =>
+      set((s) => ({ entries: s.entries.map((x) => (x.kind === "mission" && x.missionId === id ? { ...x, ...maj(x) } : x)) }));
     switch (e.type) {
       case "phase": {
         set({ phase: e.phase, phaseLabel: e.label });
@@ -699,6 +740,46 @@ export const useStore = create<State>((set, get) => ({
         voiceRun = false;
         break;
       }
+      case "mission_debut":
+        push({
+          kind: "mission", id: uid(), runId: e.run_id, at: now, missionId: e.mission_id, agentId: e.agent_id, projet: e.projet,
+          dossierMission: e.dossier_mission, dossierProjet: e.dossier_projet, pensees: [], actions: [], livrables: null, memoire: [], validations: [],
+        });
+        break;
+      case "mission_pensee":
+        mission(e.mission_id, (m) => ({ pensees: [...m.pensees, e.texte] }));
+        live.pulse(0.1);
+        break;
+      case "mission_action":
+        mission(e.mission_id, (m) => ({ actions: [...m.actions, { nature: e.nature, action: e.action, detail: e.detail, raison: e.raison }] }));
+        live.pulse(0.3);
+        break;
+      case "mission_livrables":
+        mission(e.mission_id, () => ({ livrables: e.fichiers }));
+        break;
+      case "memoire_agent":
+        mission(e.mission_id, () => ({ memoire: e.changements }));
+        break;
+      case "mission_fin":
+        mission(e.mission_id, () => ({ etat: e.etat, motif: e.motif }));
+        break;
+      case "validation_requise":
+        mission(e.mission_id, (m) => ({ validations: [...m.validations, { cle: e.cle, action: e.action, raison: e.raison, etat: "attente" }] }));
+        live.pulse(0.9);
+        // en mode voix : prévenir à voix haute, la réponse se donne à l'écran (décision de PB, 30/10)
+        if (get().voiceOn && voice?.connected) voice.say("J'ai besoin de ta validation à l'écran.");
+        break;
+      case "validation_reglee":
+        mission(e.mission_id, (m) => {
+          const deja = m.validations.some((v) => v.cle === e.cle);
+          const v = { etat: e.decision, portee: e.portee, automatique: e.automatique } as const;
+          return {
+            validations: deja
+              ? m.validations.map((x) => (x.cle === e.cle ? { ...x, ...v } : x))
+              : [...m.validations, { cle: e.cle, action: "", raison: "", ...v }],
+          };
+        });
+        break;
       case "error": {
         push({ kind: "error", id: uid(), runId: e.run_id, at: now, message: e.message });
         set((s) => ({

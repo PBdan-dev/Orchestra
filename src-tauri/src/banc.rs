@@ -137,7 +137,7 @@ async fn un_test(cfg: &Config, http: &reqwest::Client, original: &agents::Manife
     }
     let avec_porte = porte_ouverte.as_mut().map(|(p, n)| contrat::AvecPorte { porte: &*p, notes: n });
     let mut ecarts_porte: Vec<String> = vec![];
-    let d = contrat::executer(m, &mission, &dossier_mission, avec_porte, |ev: &Value| {
+    let d = contrat::executer(m, &mission, &dossier_mission, avec_porte, None, |ev: &Value| {
         let type_ = ev["type"].as_str().unwrap_or("").to_string();
         let mut sortie = vec![];
         a_envoyer.retain(|msg| {

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useStore } from "../store";
-import { PHASE_COLOR, PHASE_LABEL, type Entry } from "../types";
+import { PHASE_COLOR, PHASE_LABEL, type Entry, type MissionVue, type ValidationMission } from "../types";
+import { api } from "../tauri";
 import { AgentGlyph, I } from "./Icons";
 
 /** La conscience : tout ce qu'Orchestra fait, pense, rappelle et retient, en direct. */
@@ -115,6 +116,8 @@ function EntryView({ e, streaming, agentName, agentIcon }: { e: Entry; streaming
       );
     case "nothing":
       return <div className="entry muted"><span className="t">{time(e.at)}</span><I.save size={12} /> Rien de durable à retenir de cet échange.</div>;
+    case "mission":
+      return <MissionCard m={e} name={agentName(e.agentId)} icon={agentIcon(e.agentId)} />;
     case "error":
       return <div className="card error"><div className="card-head"><I.alert size={13} /> Erreur</div><div className="small">{e.message}</div></div>;
   }
@@ -142,6 +145,130 @@ function ToolView({ e, name }: { e: Extract<Entry, { kind: "tool" }>; name: stri
       <div className="card-head"><I.tool size={13} /> <b>{name}</b> utilise <code>{e.tool}</code> <span className="muted small right">{open ? "réduire" : "détails"}</span></div>
       <div className="small mono clamp1">{input}</div>
       {open && <pre className="tool-out">{e.output}</pre>}
+    </div>
+  );
+}
+
+const ETATS: Record<string, string> = {
+  termine: "terminée", partiel: "partielle", echec: "échec", bloque: "bloquée", precision_requise: "précision demandée",
+  arrete_proprement: "arrêtée proprement", arrete_force: "arrêtée de force", en_pause: "en pause",
+};
+
+/**
+ * Carte d'une mission (lot T3, D14) : trois parties bien séparées.
+ * Pensée : ce que le modèle de l'agent a pensé et répondu, vu par la porte.
+ * Actions : « observée » (appel d'outil vu par la porte) ou « déclarée » (compte rendu de l'agent).
+ * Livrables : fichiers annoncés, et s'ils existent vraiment sur le disque.
+ */
+function MissionCard({ m, name, icon }: { m: MissionVue; name: string; icon: string }) {
+  const [penseeOuverte, setPenseeOuverte] = useState(false);
+  const enCours = !m.etat;
+  return (
+    <div className={`card mission-card ${enCours ? "live" : m.etat === "termine" ? "ok" : "ko"}`}>
+      <div className="card-head">
+        <AgentGlyph icon={icon} size={13} /> Mission de <b>{name}</b>
+        <span className="muted small"> · projet {m.projet}</span>
+        <span className={`tag right ${enCours ? "" : m.etat === "termine" ? "ok" : ""}`}>{enCours ? "en cours" : ETATS[m.etat!] ?? m.etat}</span>
+      </div>
+      {m.motif && <div className="small muted">{m.motif}</div>}
+
+      {m.validations.map((v) => <ValidationCard key={v.cle} v={v} agent={name} />)}
+
+      <div className="mission-part">
+        <div className="mission-part-head" onClick={() => setPenseeOuverte(!penseeOuverte)}>
+          <I.spark size={12} /> Pensée <span className="muted small">· {m.pensees.length} réponse(s) du modèle, vue(s) par la porte {m.pensees.length > 0 && (penseeOuverte ? "· replier" : "· déplier")}</span>
+        </div>
+        {penseeOuverte && m.pensees.map((p, i) => <pre key={i} className="thought-text">{p}</pre>)}
+        {m.pensees.length === 0 && <div className="small muted indent">aucun modèle utilisé, ou rien encore</div>}
+      </div>
+
+      <div className="mission-part">
+        <div className="mission-part-head"><I.tool size={12} /> Actions <span className="muted small">· {m.actions.length}</span></div>
+        {m.actions.map((a, i) => (
+          <div key={i} className="mission-action">
+            <span className={`tag ${a.nature === "observee" ? "ok" : ""}`} title={a.nature === "observee" ? "vue par la porte du modèle" : "déclarée par l'agent dans son compte rendu"}>{a.nature === "observee" ? "observée" : "déclarée"}</span>{" "}
+            <code>{a.action}</code> {a.raison && <span className="muted small">— {a.raison}</span>}
+            {a.detail && <div className="small muted indent clamp2">{a.detail}</div>}
+          </div>
+        ))}
+        {m.actions.length === 0 && <div className="small muted indent">aucune</div>}
+      </div>
+
+      <div className="mission-part">
+        <div className="mission-part-head"><I.save size={12} /> Livrables</div>
+        {m.livrables === null && <div className="small muted indent">{enCours ? "à la fin de la mission" : "aucun"}</div>}
+        {m.livrables?.length === 0 && <div className="small muted indent">aucun fichier annoncé</div>}
+        {m.livrables?.map((f, i) => (
+          <div key={i} className="small indent">{f.existe ? "✓" : "✗"} <code>{f.chemin}</code> {!f.existe && <span className="muted">absent du disque (supprimé ou déplacé ?)</span>}</div>
+        ))}
+      </div>
+
+      {m.memoire.length > 0 && (
+        <div className="mission-part">
+          <div className="mission-part-head"><I.memory size={12} /> Mémoire de l'agent modifiée</div>
+          {m.memoire.map((c, i) => (
+            <div key={i} className="small indent">
+              <code>{c.fichier}</code> <span className="muted">({c.etat})</span>
+              {c.ajoutees.map((l, j) => <div key={`a${j}`} className="diff-plus">+ {l}</div>)}
+              {c.retirees.map((l, j) => <div key={`r${j}`} className="diff-moins">− {l}</div>)}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="mission-foot">
+        <button className="link-btn" onClick={() => api.openFolder(`mission:${m.missionId}`)}><I.external size={11} /> dossier de la mission</button>
+        <button className="link-btn" onClick={() => api.openFolder("projet")}><I.folder size={11} /> dossier du projet</button>
+      </div>
+    </div>
+  );
+}
+
+const PORTEES: Record<string, string> = {
+  cette_fois: "cette fois",
+  type_session: "pour ce type d'action, pendant la session",
+  tout_session: "tout, pendant la session",
+  permanent: "tout, de façon permanente",
+};
+
+/** Validation d'une action irréversible (D28) : deux choix mis en avant, deux plus discrets avec confirmation. */
+function ValidationCard({ v, agent }: { v: ValidationMission; agent: string }) {
+  const repondre = useStore((s) => s.repondreValidation);
+  const [envoi, setEnvoi] = useState(false);
+  const [erreur, setErreur] = useState("");
+  const go = async (accepte: boolean, portee: string, confirmation?: string) => {
+    if (confirmation && !window.confirm(confirmation)) return;
+    setEnvoi(true);
+    setErreur("");
+    try {
+      await repondre(v.cle, accepte, portee);
+    } catch (e) {
+      setErreur(String(e));
+      setEnvoi(false);
+    }
+  };
+  if (v.etat !== "attente") {
+    return (
+      <div className={`validation reglee ${v.etat}`}>
+        {v.etat === "accepte" ? "✓ Autorisé" : "✗ Refusé"} {v.action && <code>{v.action}</code>} <span className="muted small">· {PORTEES[v.portee ?? ""] ?? v.portee}{v.automatique ? " (autorisation déjà donnée)" : ""}</span>
+      </div>
+    );
+  }
+  return (
+    <div className="validation attente">
+      <div className="card-head"><I.alert size={13} /> {agent} demande ta validation</div>
+      <div><code>{v.action}</code></div>
+      <div className="small">Raison : {v.raison || "non précisée"}</div>
+      <div className="validation-boutons">
+        <button className="glass-btn sm active" disabled={envoi} onClick={() => go(true, "cette_fois")}>Oui, cette fois</button>
+        <button className="glass-btn sm" disabled={envoi} onClick={() => go(true, "type_session")}>Oui, pour ce type d'action pendant la session</button>
+        <button className="glass-btn sm danger" disabled={envoi} onClick={() => go(false, "cette_fois")}>Non</button>
+      </div>
+      <div className="validation-discrets">
+        <button className="link-btn" disabled={envoi} onClick={() => go(true, "tout_session", `Autoriser ${agent} à faire TOUTES ses actions irréversibles sans te demander, jusqu'à la fermeture d'Orchestra ?`)}>tout autoriser pour la session</button>
+        <button className="link-btn" disabled={envoi} onClick={() => go(true, "permanent", `Autoriser ${agent} à faire TOUTES ses actions irréversibles sans te demander, de façon permanente ? Tu pourras retirer cette autorisation dans le panneau Agents.`)}>tout autoriser de façon permanente</button>
+      </div>
+      {erreur && <div className="small warn">{erreur}</div>}
     </div>
   );
 }

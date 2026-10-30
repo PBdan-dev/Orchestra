@@ -52,6 +52,8 @@ pub struct Config {
     /// Historique du chat : au-delà du seuil haut, on retire les plus anciens échanges jusqu'au seuil bas (tokens estimés).
     pub historique_seuil_haut: u32,
     pub historique_seuil_bas: u32,
+    /// Projet où vont les missions et les livrables (`projets/<nom>/`), choisi par PB dans l'interface (D36).
+    pub projet_actif: String,
     /// Réserve pour la réflexion et la réponse (tokens générés au plus par appel), §5.2.
     pub reserve_reponse: u32,
     /// Température imposée (lanceur d'évaluation seulement, jamais enregistrée).
@@ -91,6 +93,7 @@ impl Default for Config {
             historique_seuil_haut: 8000,
             historique_seuil_bas: 4000,
             reserve_reponse: 4500,
+            projet_actif: "divers".into(),
             eval_temperature: None,
         }
     }
