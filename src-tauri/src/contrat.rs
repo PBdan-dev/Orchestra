@@ -133,12 +133,20 @@ pub fn decouper_commande(c: &str) -> Vec<String> {
     out
 }
 
+/// Porte du modèle de la mission (lot T2) et ses notes, si l'agent utilise un modèle.
+pub struct AvecPorte<'a> {
+    pub porte: &'a crate::porte::Porte,
+    pub notes: &'a mut tokio::sync::mpsc::UnboundedReceiver<crate::porte::Note>,
+}
+
 /// Lance l'agent local, lui envoie la mission, relaie ses événements et renvoie son déroulement.
 /// `sur_evenement` reçoit chaque événement valide et renvoie les messages à envoyer à l'agent
-/// (réponse à une validation, arrêt, pause…). Tout est noté dans `dossier_mission`.
-pub async fn executer<F>(m: &Manifest, mission: &Value, dossier_mission: &Path, mut sur_evenement: F) -> anyhow::Result<Deroulement>
+/// (réponse à une validation, arrêt, pause…) ; `sur_note` reçoit ce que voit la porte du modèle
+/// (réflexion, écarts, limites) et peut aussi renvoyer des messages. Tout est noté dans `dossier_mission`.
+pub async fn executer<F, G>(m: &Manifest, mission: &Value, dossier_mission: &Path, mut porte: Option<AvecPorte<'_>>, mut sur_evenement: F, mut sur_note: G) -> anyhow::Result<Deroulement>
 where
     F: FnMut(&Value) -> Vec<Value>,
+    G: FnMut(&crate::porte::Note) -> Vec<Value>,
 {
     let mission_id = mission["id"].as_str().unwrap_or("").to_string();
     let dossier_agent: PathBuf = m.dossier.clone().ok_or_else(|| anyhow::anyhow!("agent {} non installé", m.id))?;
@@ -152,11 +160,15 @@ where
     std::fs::write(dossier_mission.join("mission.json"), serde_json::to_string_pretty(mission)?)?;
     let mut journal = std::fs::OpenOptions::new().create(true).append(true).open(dossier_mission.join("evenements.jsonl"))?;
 
-    let mut commande = tokio::process::Command::new(prog);
+    // un agent Python qui a son propre environnement (.venv) est lancé avec lui
+    let venv = dossier_agent.join(".venv").join("Scripts").join("python.exe");
+    let prog: String = if (prog == "python" || prog == "python3") && venv.exists() { venv.to_string_lossy().to_string() } else { prog.clone() };
+    let mut commande = tokio::process::Command::new(&prog);
     commande
         .args(args)
         .current_dir(&dossier_agent)
         .env("PYTHONIOENCODING", "utf-8")
+        .envs(porte.as_ref().map(|p| p.porte.env()).unwrap_or_default())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::from(std::fs::File::create(dossier_mission.join("sortie-erreur.log"))?))
@@ -174,8 +186,29 @@ where
     let mut d = Deroulement::default();
     envoyer(&mut entree, &mut journal, mission).await?;
 
+    let mut horloge = tokio::time::interval(Duration::from_secs(20));
     loop {
-        let ligne = match tokio::time::timeout(SILENCE_AGENT, lignes.next_line()).await {
+        // notes de la porte et horloge des limites, en même temps que la sortie de l'agent
+        let lu = if let Some(p) = porte.as_mut() {
+            tokio::select! {
+                l = tokio::time::timeout(SILENCE_AGENT, lignes.next_line()) => l,
+                Some(note) = p.notes.recv() => {
+                    for msg in sur_note(&note) {
+                        if valider_message(&msg).is_ok() && envoyer(&mut entree, &mut journal, &msg).await.is_err() {
+                            d.ecarts.push("message impossible à transmettre à l'agent".into());
+                        }
+                    }
+                    continue;
+                }
+                _ = horloge.tick() => {
+                    p.porte.verifier_durees();
+                    continue;
+                }
+            }
+        } else {
+            tokio::time::timeout(SILENCE_AGENT, lignes.next_line()).await
+        };
+        let ligne = match lu {
             Err(_) => {
                 let _ = enfant.kill().await;
                 d.compte_rendu = echec(&mission_id, &format!("l'agent ne répond plus depuis {} s", SILENCE_AGENT.as_secs()));
@@ -205,6 +238,9 @@ where
                 continue;
             }
             d.evenements.push(ev.clone());
+            if let Some(p) = porte.as_ref() {
+                p.porte.progres();
+            }
             for msg in sur_evenement(ev) {
                 if valider_message(&msg).is_ok() && envoyer(&mut entree, &mut journal, &msg).await.is_err() {
                     d.ecarts.push("message impossible à transmettre à l'agent".into());
@@ -222,6 +258,12 @@ where
         }
     }
     drop(entree);
+    // notes de la porte arrivées pendant la fin de la mission
+    if let Some(p) = porte.as_mut() {
+        while let Ok(note) = p.notes.try_recv() {
+            let _ = sur_note(&note);
+        }
+    }
     if tokio::time::timeout(FIN_AGENT, enfant.wait()).await.is_err() {
         let _ = enfant.kill().await;
     }

@@ -94,6 +94,8 @@ pub struct Demande<'a> {
     pub schema: Option<&'a Value>,
     /// Appel en texte seul parce que le modèle a refusé outils ou schéma (noté dans la mesure).
     pub texte_seul_en_repli: bool,
+    /// Réflexion du modèle coupée (Ollama `think: false`) : pour les sorties mécaniques et rapides.
+    pub sans_reflexion: bool,
 }
 
 impl Demande<'_> {
@@ -360,8 +362,13 @@ impl Brain {
 
     /// Sortie contrainte par un schéma JSON. Renvoie l'objet et `true` si la contrainte a été
     /// appliquée par le fournisseur, `false` si l'on a dû lire le JSON dans le texte (repli).
-    pub async fn json<F: FnMut(Chunk)>(&self, role: &str, msgs: &[Msg], schema: &Value, mut on: F) -> anyhow::Result<(Value, bool)> {
-        match self.appeler(role, msgs, Demande { schema: Some(schema), ..Default::default() }, &mut on).await {
+    pub async fn json<F: FnMut(Chunk)>(&self, role: &str, msgs: &[Msg], schema: &Value, on: F) -> anyhow::Result<(Value, bool)> {
+        self.json_avec(role, msgs, schema, false, on).await
+    }
+
+    /// Comme `json`, avec la réflexion du modèle coupée si `sans_reflexion` (préparation d'une mission…).
+    pub async fn json_avec<F: FnMut(Chunk)>(&self, role: &str, msgs: &[Msg], schema: &Value, sans_reflexion: bool, mut on: F) -> anyhow::Result<(Value, bool)> {
+        match self.appeler(role, msgs, Demande { schema: Some(schema), sans_reflexion, ..Default::default() }, &mut on).await {
             Ok(r) => {
                 // Claude rend la sortie contrainte sous forme d'appel d'outil imposé
                 let brut = r.appels.first().map(|a| a.arguments.to_string()).unwrap_or(r.texte);
@@ -486,6 +493,9 @@ impl Brain {
         }
         if let Some(s) = demande.schema {
             body["format"] = s.clone();
+        }
+        if demande.sans_reflexion {
+            body["think"] = json!(false);
         }
         let resp = self.envoyer(self.http.post(format!("{base}/api/chat")).json(&body), demande.contrainte()).await?;
         let mut err: Option<String> = None;

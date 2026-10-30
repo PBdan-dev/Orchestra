@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use serde_json::Value;
 
-use crate::{agents, contrat, paths::Paths};
+use crate::{agents, config::Config, contrat, modele, paths::Paths, porte};
 
 #[derive(Debug, Clone)]
 pub struct ResultatTest {
@@ -64,7 +64,8 @@ fn remplacer_projet(v: &mut Value, projet: &str) {
     }
 }
 
-async fn un_test(paths: &Paths, m: &agents::Manifest, fichier: &Path, dossier_banc: &Path) -> ResultatTest {
+async fn un_test(cfg: &Config, http: &reqwest::Client, original: &agents::Manifest, fichier: &Path, dossier_banc: &Path) -> ResultatTest {
+    let m = &mut original.clone();
     let nom = fichier.file_stem().unwrap_or_default().to_string_lossy().to_string();
     let mut r = ResultatTest { agent: m.id.clone(), test: nom.clone(), description: String::new(), etat: String::new(), controles: vec![], duree_ms: 0.0 };
     let t: Value = match std::fs::read_to_string(fichier).ok().and_then(|s| serde_json::from_str(&s).ok()) {
@@ -88,6 +89,22 @@ async fn un_test(paths: &Paths, m: &agents::Manifest, fichier: &Path, dossier_ba
         }
         let _ = std::fs::write(p, contenu.as_str().unwrap_or(""));
     }
+    // copie de l'agent (sans ses tests) : sa mémoire de test ne touche pas l'agent installé
+    let copie = base.join("agent");
+    if let Some(src) = &original.dossier {
+        if let Err(e) = copier_agent(src, &copie) {
+            r.controles.push((false, format!("copie de l'agent impossible : {e}")));
+            return r;
+        }
+    }
+    for (rel, contenu) in t["memoire_agent"].as_object().into_iter().flatten() {
+        let p = copie.join("memoire").join(rel);
+        if let Some(parent) = p.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(p, contenu.as_str().unwrap_or(""));
+    }
+    m.dossier = Some(copie.clone());
     let avant = instantane(&projet);
 
     let mut mission = t["mission"].clone();
@@ -103,7 +120,24 @@ async fn un_test(paths: &Paths, m: &agents::Manifest, fichier: &Path, dossier_ba
     let mission_id = mission["id"].as_str().unwrap_or("").to_string();
     let mut a_envoyer: Vec<Value> = t["messages"].as_array().cloned().unwrap_or_default();
     let debut = Instant::now();
-    let d = contrat::executer(m, &mission, &base.join("mission"), |ev| {
+    let dossier_mission = base.join("mission");
+    let _ = std::fs::create_dir_all(&dossier_mission);
+    // porte du modèle : le modèle d'Orchestra (prêté), ou la réponse fixe du test (`reponse_porte_test`)
+    let mut porte_ouverte = None;
+    if let Some(modele_agent) = modele::choisir(m, &cfg.model) {
+        let limites = porte::Limites::depuis(m, mission["type_tache"].as_str());
+        let reponse_fixe = t["reponse_porte_test"].as_str().map(String::from);
+        match porte::Porte::ouvrir(porte::Config_ { cfg: cfg.clone(), http: http.clone(), agent: m.clone(), modele: modele_agent, dossier: dossier_mission.clone(), limites, reponse_fixe }).await {
+            Ok(p) => porte_ouverte = Some(p),
+            Err(e) => {
+                r.controles.push((false, format!("porte du modèle impossible : {e}")));
+                return r;
+            }
+        }
+    }
+    let avec_porte = porte_ouverte.as_mut().map(|(p, n)| contrat::AvecPorte { porte: &*p, notes: n });
+    let mut ecarts_porte: Vec<String> = vec![];
+    let d = contrat::executer(m, &mission, &dossier_mission, avec_porte, |ev: &Value| {
         let type_ = ev["type"].as_str().unwrap_or("").to_string();
         let mut sortie = vec![];
         a_envoyer.retain(|msg| {
@@ -121,8 +155,15 @@ async fn un_test(paths: &Paths, m: &agents::Manifest, fichier: &Path, dossier_ba
             }
         });
         sortie
+    }, |note: &porte::Note| {
+        if let porte::Note::Ecart { texte } | porte::Note::Refus { texte } = note {
+            ecarts_porte.push(texte.clone());
+        }
+        vec![]
     })
     .await;
+    let pas = porte_ouverte.as_ref().map(|(p, _)| p.compteurs());
+    drop(porte_ouverte);
     r.duree_ms = debut.elapsed().as_secs_f64() * 1000.0;
     let d = match d {
         Ok(d) => d,
@@ -141,6 +182,9 @@ async fn un_test(paths: &Paths, m: &agents::Manifest, fichier: &Path, dossier_ba
         r.controles.push((vus.contains(&attendu), format!("événement « {attendu} » reçu")));
     }
     r.controles.push((d.ecarts.is_empty(), if d.ecarts.is_empty() { "aucun écart au contrat".into() } else { format!("écarts : {}", d.ecarts.join(" ; ")) }));
+    if let Some((n, tokens)) = pas {
+        r.controles.push((ecarts_porte.is_empty(), if ecarts_porte.is_empty() { format!("porte : {n} appel(s) au modèle, {tokens} tokens, aucun écart") } else { format!("porte : {}", ecarts_porte.join(" ; ")) }));
+    }
     if contrat::valider_compte_rendu(cr).is_ok() && cr["motif"].as_str().is_none_or(|m| !m.starts_with("compte rendu mal formé")) {
         r.controles.push((true, "compte rendu conforme au schéma".into()));
     } else {
@@ -151,13 +195,34 @@ async fn un_test(paths: &Paths, m: &agents::Manifest, fichier: &Path, dossier_ba
     let annonces: Vec<String> = cr.pointer("/resultat/fichiers").and_then(|f| f.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.replace('\\', "/"))).collect()).unwrap_or_default();
     let caches: Vec<&String> = changes.iter().filter(|c| !annonces.iter().any(|a| a.ends_with(c.as_str()) || c.ends_with(a.as_str()))).collect();
     r.controles.push((caches.is_empty(), if caches.is_empty() { format!("{} fichier(s) changé(s), tous annoncés", changes.len()) } else { format!("fichiers changés non annoncés : {caches:?}") }));
-    let _ = paths;
     r
+}
+
+fn copier_agent(src: &Path, dest: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dest)?;
+    for e in std::fs::read_dir(src)?.flatten() {
+        let nom = e.file_name();
+        if nom == "tests" || nom == "__pycache__" {
+            continue;
+        }
+        let p = e.path();
+        if p.is_dir() {
+            copier_agent(&p, &dest.join(&nom))?;
+        } else {
+            std::fs::copy(&p, dest.join(&nom))?;
+        }
+    }
+    Ok(())
 }
 
 /// Rejoue les tests des agents installés donnés (tous si la liste est vide) ; renvoie le rapport `.md`.
 pub async fn rejouer(paths: &Paths, ids: &[String], journal: impl Fn(&str)) -> anyhow::Result<(PathBuf, Vec<ResultatTest>)> {
     let dossier_banc = paths.root.join("eval").join("banc");
+    let mut cfg = Config::load(paths);
+    if cfg.model.trim().is_empty() {
+        cfg.model = "qwen3.6:27b".into();
+    }
+    let http = reqwest::Client::builder().connect_timeout(crate::brain::DELAI_CONNEXION).build()?;
     std::fs::create_dir_all(&dossier_banc)?;
     let mut resultats = vec![];
     for m in agents::installed(paths).into_iter().filter(|m| ids.is_empty() || ids.contains(&m.id)) {
@@ -166,11 +231,17 @@ pub async fn rejouer(paths: &Paths, ids: &[String], journal: impl Fn(&str)) -> a
         tests.sort();
         for f in tests {
             journal(&format!("{} · {}", m.id, f.file_name().unwrap_or_default().to_string_lossy()));
-            let r = un_test(paths, &m, &f, &dossier_banc).await;
+            let r = un_test(&cfg, &http, &m, &f, &dossier_banc).await;
             journal(&format!("   {} ({})", if r.reussi() { "réussi" } else { "ÉCHEC" }, r.etat));
             resultats.push(r);
         }
     }
+    // le modèle prêté par la porte reste chargé (keep_alive) : le banc le libère en partant
+    let _ = http
+        .post(format!("{}/api/generate", cfg.ollama_url.trim_end_matches('/')))
+        .json(&serde_json::json!({ "model": cfg.model, "keep_alive": 0 }))
+        .send()
+        .await;
     let ok = resultats.iter().filter(|r| r.reussi()).count();
     let mut md = format!(
         "# Banc d'essai des agents — {}\n\nTests livrés avec chaque agent, rejoués à travers le contrat d'Orchestra (stdio-json). **{ok}/{} réussis.**\n\n| Agent | Test | État | Résultat | Contrôles | Durée (ms) |\n|---|---|---|---|---|---|\n",

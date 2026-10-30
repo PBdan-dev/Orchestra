@@ -11,6 +11,8 @@ pub mod memory;
 pub mod mesures;
 pub mod orchestrator;
 pub mod paths;
+pub mod porte;
+pub mod modele;
 pub mod schema;
 pub mod tools;
 mod voice;

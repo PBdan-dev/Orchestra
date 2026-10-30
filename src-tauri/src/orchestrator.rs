@@ -10,7 +10,7 @@ use tauri::{AppHandle, Manager};
 use crate::{
     agents::{self, Manifest},
     brain::{self, Brain, Chunk, Demande, Msg, Outil},
-    contrat,
+    contrat, modele, porte,
     config::Config,
     events::{emit, Event, Sortie},
     market, memory,
@@ -27,6 +27,8 @@ pub struct Contexte {
     pub releve: Arc<Releve>,
     /// État de la conversation (profil figé, début de l'historique), partagé d'un tour à l'autre.
     pub session: Arc<std::sync::Mutex<Session>>,
+    /// Arrête le serveur voix pour libérer la carte graphique quand un agent charge un autre modèle (D24).
+    pub arreter_voix: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 /// Ce qu'un tour a décidé et produit.
@@ -101,6 +103,14 @@ pub async fn run(app: AppHandle, run_id: String, text: String, history: Vec<Msg>
             http: state.http.clone(),
             releve: Arc::new(Releve::vers(state.paths.mesures.clone())),
             session: state.session.clone(),
+            arreter_voix: {
+                let a = app.clone();
+                Some(Arc::new(move || {
+                    if let Some(st) = a.try_state::<AppState>() {
+                        st.voice.stop();
+                    }
+                }))
+            },
         }
     };
     if let Err(e) = tour(&app, &ctx, &run_id, &text, history).await {
@@ -292,7 +302,7 @@ pub async fn tour(out: &dyn Sortie, ctx: &Contexte, run_id: &str, text: &str, hi
                         intention = "travail".into();
                         bilan.agent_necessaire = true;
                         bilan.besoin = besoin.clone();
-                        let r = deleguer_mission(out, run_id, &brain, &cfg, &paths, &http, &besoin, &mission, &raison, text, &mut bilan, &mut used_agent).await?;
+                        let r = deleguer_mission(out, run_id, &brain, &cfg, &paths, &http, &besoin, &mission, &raison, text, &mut bilan, &mut used_agent, ctx.arreter_voix.as_deref()).await?;
                         phase(out, run_id, "speaking", "Je restitue le résultat");
                         r
                     }
@@ -410,6 +420,7 @@ async fn deleguer_mission(
     original: &str,
     bilan: &mut Tour,
     used_agent: &mut Option<Manifest>,
+    arreter_voix: Option<&(dyn Fn() + Send + Sync)>,
 ) -> anyhow::Result<String> {
     thought(out, run_id, format!("\n→ Je délègue · besoin : {besoin} · raison : {raison}\n"));
     phase(out, run_id, "searching_agent", "Je cherche l'agent qu'il faut");
@@ -482,29 +493,100 @@ async fn deleguer_mission(
     phase(out, run_id, "working", &format!("{} travaille", m.name));
     thought(out, run_id, format!("📋 Mission {mission_id} envoyée à {} (dossier missions/{mission_id})\n", m.name));
 
-    // Exécution par le contrat stdio-json : événements en direct, validation refusée jusqu'au lot T3
+    // Porte du modèle et exécution de la mission
     let nom = m.name.clone();
-    let deroulement = contrat::executer(&m, &mission_json, &paths.missions.join(&mission_id), |ev| {
-        let type_ = ev["type"].as_str().unwrap_or("");
-        let texte = ev["message"].as_str().unwrap_or("");
-        thought(out, run_id, format!("[{nom}] {type_} : {texte}\n"));
-        emit(out, Event::AgentStatus { run_id: run_id.into(), agent_id: ev["agent_id"].as_str().unwrap_or("").into(), status: "running".into(), detail: texte.into() });
-        if type_ == "validation_requise" {
-            avertir(
-                out,
-                run_id,
-                format!(
-                    "{nom} demande à faire « {} » ({}). Refusé automatiquement : les boutons de validation arrivent au lot T3.",
-                    ev["action"].as_str().unwrap_or(""),
-                    ev["raison"].as_str().unwrap_or("")
-                ),
-            );
-            vec![contrat::reponse_validation(&mission_id, false, "cette_fois")]
+    // Porte du modèle (lot T2) : modèle prêté ou chargé pour l'agent (D24), traces, contrôles, limites
+    let dossier_mission = paths.missions.join(&mission_id);
+    std::fs::create_dir_all(&dossier_mission)?;
+    let mut changement: Option<modele::Changement> = None;
+    let mut porte_ouverte = None;
+    if let Some(modele_agent) = modele::choisir(&m, &brain.model) {
+        if modele_agent == brain.model {
+            thought(out, run_id, format!("🧠 {} utilise le modèle d'Orchestra ({modele_agent}), prêté par la porte.
+", m.name));
         } else {
-            vec![]
+            phase(out, run_id, "loading", &format!("Je charge {modele_agent} pour {}", m.name));
+            match modele::preparer(cfg, http, &modele_agent, &brain.model, arreter_voix).await {
+                Ok(c) => {
+                    if let Some(c) = &c {
+                        thought(out, run_id, format!("🔁 Changement de modèle : {} → {} en {:.1} s.
+", c.modele_orchestra, c.modele_agent, c.duree.as_secs_f64()));
+                    }
+                    changement = c;
+                }
+                Err(motif) => {
+                    bilan.agent_en_echec = true;
+                    avertir(out, run_id, format!("Modèle de {} indisponible : {motif}", m.name));
+                    emit(out, Event::AgentStatus { run_id: run_id.into(), agent_id: m.id.clone(), status: "error".into(), detail: motif.clone() });
+                    *used_agent = Some(m.clone());
+                    return Ok(format!("L'agent « {} » n'a pas pu travailler : son modèle est indisponible ({motif}).", m.name));
+                }
+            }
         }
-    })
+        let limites = porte::Limites::depuis(&m, mission_json["type_tache"].as_str());
+        let config_porte = porte::Config_ { cfg: cfg.clone(), http: http.clone(), agent: m.clone(), modele: modele_agent, dossier: dossier_mission.clone(), limites, reponse_fixe: None };
+        porte_ouverte = Some(porte::Porte::ouvrir(config_porte).await?);
+    }
+    let avec_porte = porte_ouverte.as_mut().map(|(p, n)| contrat::AvecPorte { porte: &*p, notes: n });
+
+    // Exécution par le contrat stdio-json : événements en direct, validation refusée jusqu'au lot T3
+    let deroulement = contrat::executer(
+        &m,
+        &mission_json,
+        &dossier_mission,
+        avec_porte,
+        |ev| {
+            let type_ = ev["type"].as_str().unwrap_or("");
+            let texte = ev["message"].as_str().unwrap_or("");
+            thought(out, run_id, format!("[{nom}] {type_} : {texte}
+"));
+            emit(out, Event::AgentStatus { run_id: run_id.into(), agent_id: ev["agent_id"].as_str().unwrap_or("").into(), status: "running".into(), detail: texte.into() });
+            if type_ == "validation_requise" {
+                avertir(
+                    out,
+                    run_id,
+                    format!(
+                        "{nom} demande à faire « {} » ({}). Refusé automatiquement : les boutons de validation arrivent au lot T3.",
+                        ev["action"].as_str().unwrap_or(""),
+                        ev["raison"].as_str().unwrap_or("")
+                    ),
+                );
+                vec![contrat::reponse_validation(&mission_id, false, "cette_fois")]
+            } else {
+                vec![]
+            }
+        },
+        |note| match note {
+            porte::Note::Pensee { texte } => {
+                thought(out, run_id, format!("[{nom} · modèle] {texte}
+"));
+                vec![]
+            }
+            porte::Note::Ecart { texte } | porte::Note::Refus { texte } => {
+                avertir(out, run_id, format!("Porte du modèle, {nom} : {texte}"));
+                vec![]
+            }
+            porte::Note::Limite { texte, arreter } => {
+                avertir(out, run_id, format!("Limite de mission ({nom}) : {texte}"));
+                // décision de PB (30/10) : seul le plafond d'1 h demande un arrêt propre
+                if *arreter { vec![contrat::message(&mission_id, "arret")] } else { vec![] }
+            }
+        },
+    )
     .await;
+    if let Some((p, _)) = &porte_ouverte {
+        let (pas, tokens) = p.compteurs();
+        thought(out, run_id, format!("🚪 Porte refermée : {pas} appel(s) au modèle, {tokens} tokens.
+"));
+    }
+    drop(porte_ouverte);
+    if let Some(c) = &changement {
+        match modele::restaurer(cfg, http, c).await {
+            Ok(d) => thought(out, run_id, format!("🔁 Modèle d'Orchestra rechargé ({}) en {:.1} s.
+", c.modele_orchestra, d.as_secs_f64())),
+            Err(e) => avertir(out, run_id, format!("Rechargement du modèle d'Orchestra impossible : {e}")),
+        }
+    }
     let cr = match deroulement {
         Ok(d) => {
             for e in &d.ecarts {
@@ -572,7 +654,7 @@ critere_reussite = une phrase courte et vérifiable. Réponds par l'objet JSON d
             let types: Vec<&str> = taches.iter().map(|t| t.r#type.as_str()).collect();
             let schema = json!({ "type": "object", "properties": { "type_tache": { "type": "string", "enum": types } }, "required": ["type_tache"] });
             let msgs = [Msg::system(consigne), Msg::user(format!("{presentation}\nTypes de tâche : {}\n\nMission : {mission}\n\nChoisis le type de tâche.", types.join(", ")))];
-            let (v, _) = brain.json("mission", &msgs, &schema, |_| {}).await.map_err(|e| format!("choix du type de tâche impossible ({e})"))?;
+            let (v, _) = brain.json_avec("mission", &msgs, &schema, true, |_| {}).await.map_err(|e| format!("choix du type de tâche impossible ({e})"))?;
             let t = v["type_tache"].as_str().unwrap_or("");
             Some(taches.iter().find(|x| x.r#type == t).cloned().ok_or_else(|| format!("type de tâche inconnu : {t}"))?)
         }
@@ -602,7 +684,7 @@ critere_reussite = une phrase courte et vérifiable. Réponds par l'objet JSON d
     ];
     let mut derniere_erreur = String::new();
     for essai in 0..2 {
-        let (v, _) = brain.json("mission", &msgs, &schema, |_| {}).await.map_err(|e| format!("préparation impossible ({e})"))?;
+        let (v, _) = brain.json_avec("mission", &msgs, &schema, true, |_| {}).await.map_err(|e| format!("préparation impossible ({e})"))?;
         if v["compatible"].as_bool() == Some(false) {
             return Ok(Err(v["motif"].as_str().filter(|s| !s.trim().is_empty()).unwrap_or("mission hors de ce que sait faire l'agent").to_string()));
         }
