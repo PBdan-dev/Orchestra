@@ -59,8 +59,18 @@ Validé le 2026-10-28 : les 11 critères de `docs/CAHIER_DES_CHARGES.md` §13 (b
 - Lenteurs du 29/10 : la RTX 3090 surchauffait (92 °C, bridée à 240 MHz, ventilateur à 43 %) ; corrigé par PB le 30/10 (≈ 70 °C sous charge). Réglages Ollama A7 posés par PB : effet quasi nul sur ce modèle (≈ 7 % plus lent, pas de gain de mémoire visible).
 - Cahier mis à jour par PB (PR #2, décisions D26 à D37) : à relire avant le lot T1.
 
+## État actuel — Lot T1 (2026-10-30)
+- Contrat des agents en place : mission, événements, compte rendu et messages validés avec les 5 schémas de l'Agent Market (copiés dans `contrat/schemas/`) ; protocole stdio-json ; dossier de mission `Orchestra/missions/<id>/` (mission.json, evenements.jsonl, compte_rendu.json, sortie-erreur.log).
+- Manifeste 2.0 lu ; une entrée invalide du catalogue est ignorée avec son motif. Les 4 agents de démonstration (fiches exécutées par Orchestra) sont retirés, avec l'accord de PB ; l'ancien registre est gardé dans `agents/registre-local.v1.json`.
+- Agents de test installés à la main dans `agents/installes/` (agent-date, agent-fichiers, agent-brouillons, dépôt Orchestra_Agents 352db62), « Non certifié », en attendant le lot T4.
+- La mission est préparée par un appel contraint au modèle de demande de l'agent (D33) ; si l'agent ne sait pas faire la mission, rien n'est lancé et Orchestra le dit.
+- En attendant les lots suivants (décisions de PB du 30/10) : validation d'une action irréversible refusée automatiquement (boutons au lot T3) ; livrables dans `projets/divers/` (choix du projet au lot T3) ; agent-brouillons attend la porte du modèle (lot T2).
+- Banc des agents (`cargo run --release --example banc_agents`) : **17/17** tests d'agent-date et d'agent-fichiers réussis à travers Orchestra (dont validation, refus, pause, arrêt, contenu piégé, mission mal formée).
+- Mail Adagio parle déjà le contrat 1 (`agent/mission.py`) : aucun écart vu à la lecture ; essai réel au lot T2.
+- Mesure (qwen3.6:27b, 0,6, `Orchestra/eval/rapport-2026-10-30_1617.md`) : mémoire 19/20, routage **15/18** (jeu de tâches mis à jour pour les agents de test : 3 échecs de comportement, dont un « Salut » délégué une fois, à surveiller), tour médian 8,5 s, 2,4 appels par tour. agent-brouillons répond « modèle indisponible » tant que la porte (T2) n'existe pas.
+
 ## Prochaine action
-PB décide si une synthèse d'une page web est une recherche (Orchestra) ou une production (agent) ; puis Claude relit le cahier (D26 à D37) et présente le plan du lot T1 (contrat).
+PB lit le résumé du lot T1 ; puis plan du lot T2 (porte du modèle, avec agent-brouillons et Mail Adagio).
 
 ## Décisions
 - 2026-10-25 — Application de bureau Windows en Tauri 2 (Rust + React/TypeScript), installateur léger.
@@ -103,7 +113,8 @@ PB décide si une synthèse d'une page web est une recherche (Orchestra) ou une 
 - [x] Cahier des charges — Lot F : fiabilisation (2026-10-28)
 - [x] Cahier des charges — Lot A : cache (2026-10-29)
 - [x] Cahier des charges — Lot B : un seul appel (2026-10-30)
-- [ ] Cahier des charges — Lot T1 : contrat (prochain)
+- [x] Cahier des charges — Lot T1 : contrat (2026-10-30)
+- [ ] Cahier des charges — Lot T2 : porte du modèle (prochain)
 - [ ] Cahier des charges — Lots A, B, T1 à T9, C, D, S, M2, M3, M1 (ordre de la section 11)
 - [x] Délégation sur le vrai Ollama vérifiée par l'évaluation (6 tâches déléguées au bon agent, 3/3)
 - [ ] PB teste une vraie délégation sur Ollama dans l'interface
@@ -133,3 +144,4 @@ PB décide si une synthèse d'une page web est une recherche (Orchestra) ou une 
 - 2026-10-28 (nuit) — PB garde la règle « demande vague » : routage 14/15.
 - 2026-10-29 (nuit) — Lot A : pile stable, profil, concision, voix à 8 192 tokens ; mémoire 19/20, routage 13/15, tour médian 20 s, VRAM voix −2,3 Go ; cache partiel sur Qwen 3.6.
 - 2026-10-30 — Lot B : un seul appel, lire_page, deleguer(besoin, mission, raison) ; tour médian 23 s → 7 s. Surchauffe de la carte graphique trouvée et corrigée par PB.
+- 2026-10-30 — Lot T1 : contrat stdio-json, manifeste 2.0, agents de démo retirés, agents de test installés ; banc 17/17.

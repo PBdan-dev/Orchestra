@@ -310,6 +310,8 @@ pub async fn tour(out: &dyn Sortie, ctx: &Contexte, run_id: &str, text: &str, hi
             avertir(out, run_id, "Appel d'outil invalide deux fois de suite : je réponds directement.".to_string());
         }
     }
+    // le modèle recopie parfois une ligne de consigne (« [Tâche : …] ») : elle ne doit pas rester dans la réponse
+    answer = retirer_consignes(&answer);
     if answer.trim().is_empty() {
         // jamais de réponse vide sans explication (réflexion qui a épuisé la réserve, par exemple)
         avertir(out, run_id, "Le cerveau n'a produit aucune réponse (réflexion trop longue ou interrompue).".to_string());
@@ -339,6 +341,17 @@ fn short(s: &str, n: usize) -> String {
 /// Lectures de pages web au plus par demande, et étapes au plus pour une réponse.
 const MAX_LECTURES: usize = 3;
 const MAX_ETAPES_REPONSE: usize = 6;
+
+/// Retire les lignes de consigne interne (« [Tâche : …] ») recopiées par le modèle.
+pub fn retirer_consignes(texte: &str) -> String {
+    texte
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("[Tâche :"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
 
 /// Avertissement visible dans Conscience et noté au journal.
 fn avertir(out: &dyn Sortie, run_id: &str, message: String) {
@@ -734,6 +747,12 @@ mod tests {
         assert_eq!(ok.0, "rédiger un mail");
         let e = valider_delegation(&json!({ "besoin": "x", "mission": "  " })).unwrap_err();
         assert!(e.contains("mission") && e.contains("raison") && !e.contains("besoin"));
+    }
+
+    #[test]
+    fn consigne_recopiee_retiree() {
+        assert_eq!(retirer_consignes("Salut PB !\n\n[Tâche : MÉMORISER]"), "Salut PB !");
+        assert_eq!(retirer_consignes("Texte normal [Tâche] gardé"), "Texte normal [Tâche] gardé");
     }
 
     #[test]
