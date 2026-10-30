@@ -34,6 +34,8 @@ pub enum Event {
     Done { run_id: String, answer: String, intent: String, message_historique: String },
     /// Coupe de texte (historique trop long, profil trop long) : jamais silencieuse
     Coupe { run_id: String, quoi: String, detail: String },
+    /// Avertissement visible dans Conscience et noté au journal (repli, appel invalide…)
+    Avertissement { run_id: String, message: String },
     Error { run_id: String, message: String },
 }
 

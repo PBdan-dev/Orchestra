@@ -44,6 +44,8 @@ export type OrchestraEvent =
   | { type: "memorized"; run_id: string; file: string; section: string; line: string }
   | { type: "nothing_to_memorize"; run_id: string }
   | { type: "done"; run_id: string; answer: string; intent: string; message_historique?: string }
+  | { type: "coupe"; run_id: string; quoi: string; detail: string }
+  | { type: "avertissement"; run_id: string; message: string }
   | { type: "error"; run_id: string; message: string };
 
 export interface Config {

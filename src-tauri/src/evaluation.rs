@@ -114,7 +114,9 @@ pub fn decision(t: &Tour) -> String {
 /// La réponse se termine-t-elle par une question à l'utilisateur ? (dernières phrases)
 pub fn pose_une_question(reponse: &str) -> bool {
     let fin: String = reponse.chars().rev().take(300).collect::<Vec<_>>().into_iter().rev().collect();
-    fin.contains('?')
+    // une question, ou une demande de précision à l'impératif (« Dis-moi le nom du destinataire. »)
+    let plie = format!(" {} ", memory::fold(&fin).split_whitespace().collect::<Vec<_>>().join(" "));
+    fin.contains('?') || [" dis moi ", " precise moi ", " precise ", " indique moi ", " donne moi "].iter().any(|m| plie.contains(m))
 }
 
 pub fn note_tache(t: &Tache, decision: &str) -> bool {
@@ -516,6 +518,8 @@ mod tests {
         let mut t = Tour { reponse: "Voici.".into(), ..Default::default() };
         assert_eq!(decision(&t), "repondre");
         t.reponse = "Tu veux le mail en français ou en anglais ?".into();
+        assert_eq!(decision(&t), "preciser");
+        t.reponse = "Je ne sais pas à qui tu penses. Dis-moi le nom du destinataire.".into();
         assert_eq!(decision(&t), "preciser");
         t.aucun_agent = true;
         assert_eq!(decision(&t), "hors_capacite");

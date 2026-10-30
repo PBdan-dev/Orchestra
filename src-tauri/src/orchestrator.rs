@@ -9,7 +9,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::{
     agents::{self, Manifest},
-    brain::{self, AppelOutil, Brain, Chunk, Demande, Msg},
+    brain::{self, AppelOutil, Brain, Chunk, Demande, Msg, Outil},
     config::Config,
     events::{emit, Event, Sortie},
     market, memory,
@@ -62,18 +62,19 @@ Tu es transparent : tu dis ce que tu fais et pourquoi.
 - La dernière ligne du message, « [Tâche : …] », te dit quoi faire.
 
 ## Tâches
-- ANALYSER : décide comment traiter la demande. Réponds par un objet JSON {\"reflexion\", \"intention\", \"agent_necessaire\", \"besoin\", \"mission\"}. \
-reflexion = 2 à 4 phrases courtes, à voix haute. intention : « discussion » = échange, salutations, avis, questions sur toi ; \
-« recherche » = question de connaissance à laquelle tu réponds toi-même ; « travail » = action concrète à produire (rédiger, créer un fichier, organiser, \
-lister des fichiers, résumer une page web, envoyer, etc.) → agent_necessaire = true, besoin = 2 à 5 mots (ex. : rédiger un mail), \
-mission = consigne précise et complète pour l'agent (vides sinon). Si la demande mélange les deux, privilégie « travail » si une action concrète est attendue. \
-Si la demande est trop vague pour agir (on ne sait pas quoi produire, sur quoi ou pour qui), intention = « discussion » et agent_necessaire = false : tu demanderas une précision.
-- RÉPONDRE : réponds directement à l'utilisateur.
-- RESTITUER : un agent a travaillé pour toi ; sa mission et son résultat suivent. Commence par une phrase qui dit ce que l'agent a fait, \
-puis donne le résultat utile (texte produit, fichiers créés). N'invente rien qui ne soit pas dans le résultat ; si l'agent a échoué ou n'a pas tout fait, dis-le simplement.
-- AUCUN AGENT : un travail est demandé, mais aucun agent disponible ne sait le faire. Ne fais pas le travail toi-même : explique-le en 2 à 4 phrases, \
-dis quel type d'agent il faudrait et qu'il pourra être ajouté depuis l'Agent Market ou le registre local. Réponds à la partie discussion s'il y en a une.
-- ÉCHEC D'AGENT : l'agent a échoué ; explique-le brièvement et propose une piste.
+- RÉPONDRE : selon la demande, tu fais l'une de ces trois choses.
+  1. Converser (discussion, avis, questions sur toi, questions de connaissance, questions sur l'utilisateur) : réponds directement.
+  2. Chercher en ligne : si la réponse dépend d'une page web, lis-la avec l'outil lire_page, puis réponds.
+  3. Produire : dès qu'il faut produire quelque chose (rédiger, créer ou modifier un fichier, organiser, planifier, envoyer, préparer un livrable…), \
+ne le fais pas toi-même : appelle l'outil deleguer avec besoin (2 à 5 mots, ex. : rédiger un mail), mission (consigne précise et complète pour l'agent) \
+et raison (pourquoi tu délègues, en une phrase).
+  Si la demande est trop vague pour agir (on ne sait pas quoi produire, sur quoi ou pour qui), n'appelle aucun outil : demande une précision.
+- Après deleguer, la réponse de l'outil te dit ce qui s'est passé :
+  - l'agent a travaillé : commence par une phrase qui dit ce qu'il a fait, puis donne le résultat utile (texte produit, fichiers créés). \
+N'invente rien qui ne soit pas dans le résultat ; s'il n'a pas tout fait, dis-le simplement ;
+  - aucun agent ne sait le faire : ne fais pas le travail toi-même ; explique-le en 2 à 4 phrases, dis quel type d'agent il faudrait \
+et qu'il pourra être ajouté depuis l'Agent Market ou le registre local ;
+  - l'agent a échoué : explique-le brièvement et propose une piste.
 - MÉMORISER : extrais du dernier échange 0 à 3 faits DURABLES et utiles pour les prochaines conversations (qui est l'utilisateur, ce qu'il aime ou n'aime pas, \
 ses projets, des informations stables). Ignore l'éphémère, les simples questions, les salutations, et ne reformule pas ta réponse. \
 Réponds par un objet JSON {\"faits\": [{\"section\": \"Utilisateur\" | \"Préférences\" | \"Projets\" | \"Connaissances\", \"fait\": \"une phrase courte\"}]}, liste vide s'il n'y a rien à retenir.";
@@ -87,13 +88,6 @@ pub struct Session {
     pub profil: Option<String>,
     /// Index du premier message de l'historique encore envoyé au cerveau.
     pub debut: usize,
-}
-
-struct Analysis {
-    intent: String,
-    needs_agent: bool,
-    need: String,
-    mission: String,
 }
 
 pub async fn run(app: AppHandle, run_id: String, text: String, history: Vec<Msg>) {
@@ -230,119 +224,108 @@ pub async fn tour(out: &dyn Sortie, ctx: &Contexte, run_id: &str, text: &str, hi
     };
     let message = bloc_5(&date_fr(chrono::Local::now()), &memory_block, text);
 
-    // 2. Analyse
-    phase(out, run_id, "thinking", "J'analyse la demande");
-    let analysis = analyse(out, run_id, &brain, &pile, &message).await?;
-    thought(
-        out,
-        run_id,
-        format!(
-            "\n→ Intention : {} · agent nécessaire : {}{}\n",
-            analysis.intent,
-            if analysis.needs_agent { "oui" } else { "non" },
-            if analysis.needs_agent { format!(" · besoin : {}", analysis.need) } else { String::new() }
-        ),
-    );
-
+    // 2. Un seul appel (lot B) : le cerveau répond, lit une page web, ou délègue la production
+    phase(out, run_id, "thinking", "Je réfléchis");
+    let message_reponse = format!("{message}\n\n[Tâche : RÉPONDRE]");
+    let mut msgs = pile.clone();
+    msgs.push(Msg::user(message_reponse.clone()));
+    let outils = outils_orchestra();
+    let mut answer = String::new();
     let mut used_agent: Option<Manifest> = None;
-    bilan.intention = analysis.intent.clone();
-    bilan.agent_necessaire = analysis.needs_agent;
-    bilan.besoin = analysis.need.clone();
-
-    // la consigne de la réponse, ajoutée à la fin du message (le début de la pile ne change pas)
-    let consigne: String = if analysis.needs_agent && analysis.intent == "travail" {
-        // 3. Recherche d'agent
-        phase(out, run_id, "searching_agent", "Je cherche l'agent qu'il faut");
-        let need = if analysis.need.is_empty() { text.to_string() } else { analysis.need.clone() };
-        let mut chosen: Option<(Manifest, String, String)> = None;
-
-        // 3a. mémoire : un agent de confiance pour ce besoin ?
-        let need_words = memory::keywords(&need);
-        for t in memory::trusted_agents(&paths) {
-            let tw = memory::keywords(&t.need);
-            let common = tw.iter().filter(|w| need_words.contains(w)).count();
-            if common > 0 {
-                if let Some(m) = agents::get_installed(&paths, &t.agent_id) {
-                    thought(out, run_id, format!("🧠 Ma mémoire dit : « {} » → {} (réussi {}×). Je le réutilise.\n", t.need, m.name, t.successes));
-                    chosen = Some((m, "mémoire".into(), format!("agent de confiance pour « {} »", t.need)));
-                    break;
+    let mut intention = "discussion".to_string();
+    let mut lectures = 0;
+    let mut invalides = 0;
+    let mut avec_outils = true;
+    let mut delegue = false;
+    for _ in 0..MAX_ETAPES_REPONSE {
+        let demande = if avec_outils { Demande { outils: &outils, ..Default::default() } } else { Demande::default() };
+        let rep = match brain
+            .appeler("reponse", &msgs, demande, |c: Chunk| {
+                if !c.thinking.is_empty() { thought(out, run_id, c.thinking); }
+                if !c.content.is_empty() { emit(out, Event::Token { run_id: run_id.into(), text: c.content }); }
+            })
+            .await
+        {
+            Err(e) if avec_outils && brain::non_supporte(&e) => {
+                avec_outils = false;
+                avertir(out, run_id, format!("{} ne gère pas l'appel d'outils : je réponds directement, sans délégation ni lecture web.", brain.model));
+                continue;
+            }
+            r => r?,
+        };
+        if !rep.texte.is_empty() {
+            if !answer.is_empty() {
+                answer.push_str("\n\n");
+                emit(out, Event::Token { run_id: run_id.into(), text: "\n\n".into() });
+            }
+            answer.push_str(&rep.texte);
+        }
+        if rep.appels.is_empty() {
+            break;
+        }
+        msgs.push(Msg::appels_outils(rep.texte.clone(), rep.appels.clone()));
+        for a in &rep.appels {
+            let resultat = match a.nom.as_str() {
+                "lire_page" if lectures < MAX_LECTURES => {
+                    lectures += 1;
+                    intention = "recherche".into();
+                    let url = a.arguments["url"].as_str().unwrap_or("").to_string();
+                    phase(out, run_id, "recalling", "Je lis une page web");
+                    thought(out, run_id, format!("\n🌐 Je lis {url}\n"));
+                    let r = match tools::execute("fetch_url", &json!({ "url": url }), &paths, &http).await {
+                        Ok(t) => format!("Contenu de la page :\n<donnees>\n{t}\n</donnees>"),
+                        Err(e) => format!("ERREUR : {e}"),
+                    };
+                    emit(out, Event::ToolCall { run_id: run_id.into(), agent_id: "orchestra".into(), tool: "lire_page".into(), input: a.arguments.clone(), output: short(&r, 400) });
+                    r
                 }
-            }
-        }
-
-        // 3b. sinon : installés → Agent Market → registre local
-        if chosen.is_none() {
-            let (found, log) = market::find_agent(&http, &cfg, &paths, &need).await;
-            for l in &log {
-                thought(out, run_id, format!("🔎 {l}\n"));
-            }
-            if let Some(f) = found {
-                let reason = format!("meilleur score ({:.1}) pour « {} »", f.score, need);
-                chosen = Some((f.manifest, f.source, reason));
-            }
-        }
-
-        match chosen {
-            None => {
-                bilan.aucun_agent = true;
-                thought(out, run_id, "✗ Aucun agent ne correspond. Je ne fais pas le travail moi-même : je l'explique.\n");
-                format!("[Tâche : AUCUN AGENT] Besoin : « {need} ».")
-            }
-            Some((m, source, reason)) => {
-                if agents::get_installed(&paths, &m.id).is_none() {
-                    agents::install(&paths, &m)?;
-                    thought(out, run_id, format!("⬇ {} installé depuis {} (manifeste enregistré dans agents/installes).\n", m.name, source));
+                "lire_page" => "Limite de lectures atteinte : réponds avec ce que tu as.".to_string(),
+                "deleguer" if delegue => "Une seule délégation par demande : restitue le résultat déjà obtenu.".to_string(),
+                "deleguer" => match valider_delegation(&a.arguments) {
+                    Err(motif) => {
+                        invalides += 1;
+                        format!("Appel invalide : {motif}. Rappelle deleguer avec besoin, mission et raison, ou réponds directement.")
+                    }
+                    Ok((besoin, mission, raison)) => {
+                        delegue = true;
+                        intention = "travail".into();
+                        bilan.agent_necessaire = true;
+                        bilan.besoin = besoin.clone();
+                        let r = deleguer_mission(out, run_id, &brain, &cfg, &paths, &http, &besoin, &mission, &raison, text, &mut bilan, &mut used_agent).await?;
+                        phase(out, run_id, "speaking", "Je restitue le résultat");
+                        r
+                    }
+                },
+                autre => {
+                    invalides += 1;
+                    format!("Outil inconnu : « {autre} ». Les outils disponibles sont deleguer et lire_page.")
                 }
-                memory::ensure_agent_memory(&paths, &m)?;
-                bilan.agent = Some(m.id.clone());
-                emit(out, Event::AgentAttached { run_id: run_id.into(), agent: m.clone(), source: source.clone(), reason });
-
-                // 4. Délégation
-                phase(out, run_id, "delegating", &format!("Je confie la mission à {}", m.name));
-                let mission = if analysis.mission.trim().is_empty() { text.to_string() } else { analysis.mission.clone() };
-                emit(out, Event::AgentStatus { run_id: run_id.into(), agent_id: m.id.clone(), status: "running".into(), detail: mission.clone() });
-                phase(out, run_id, "working", &format!("{} travaille", m.name));
-
-                let result = run_agent(out, run_id, &brain, &cfg, &paths, &http, &m, &mission, text).await;
-                let c = match result {
-                    Ok((outcome, tools_used)) => {
-                        emit(out, Event::AgentStatus { run_id: run_id.into(), agent_id: m.id.clone(), status: "done".into(), detail: short(&outcome, 160) });
-                        let line = memory::append_agent_mission(&paths, &m, &mission, &outcome, &tools_used)?;
-                        emit(out, Event::Memorized { run_id: run_id.into(), file: format!("agents/{}.md", m.id), section: "Missions".into(), line });
-                        let trust_line = memory::record_trust(&paths, &need, &m)?;
-                        emit(out, Event::Memorized { run_id: run_id.into(), file: "orchestra.md".into(), section: "Agents de confiance".into(), line: trust_line });
-                        format!("[Tâche : RESTITUER] Mission confiée à l'agent « {} » : {mission}\nRésultat rendu par l'agent :\n<donnees>\n{outcome}\n</donnees>", m.name)
-                    }
-                    Err(e) => {
-                        bilan.agent_en_echec = true;
-                        emit(out, Event::AgentStatus { run_id: run_id.into(), agent_id: m.id.clone(), status: "error".into(), detail: e.to_string() });
-                        let line = memory::append_agent_mission(&paths, &m, &mission, &format!("ÉCHEC : {e}"), &[])?;
-                        emit(out, Event::Memorized { run_id: run_id.into(), file: format!("agents/{}.md", m.id), section: "Missions".into(), line });
-                        format!("[Tâche : ÉCHEC D'AGENT] L'agent « {} » a échoué sur la mission « {mission} » avec l'erreur : {e}", m.name)
-                    }
-                };
-                used_agent = Some(m);
-                c
-            }
+            };
+            msgs.push(Msg::resultat_outil(a, resultat));
         }
-    } else {
-        // Discussion ou recherche : Orchestra répond lui-même
-        "[Tâche : RÉPONDRE]".to_string()
-    };
-
-    // 5. Réponse (ou restitution)
-    phase(out, run_id, "speaking", if used_agent.is_some() { "Je restitue le résultat" } else { "Je réponds" });
-    let message_reponse = format!("{message}\n\n{consigne}");
-    let answer = speak(out, run_id, &brain, &pile, &message_reponse).await?;
+        if invalides >= 2 && avec_outils {
+            // B3 : un seul nouvel essai, puis réponse directe et avertissement
+            avec_outils = false;
+            avertir(out, run_id, "Appel d'outil invalide deux fois de suite : je réponds directement.".to_string());
+        }
+    }
+    if answer.trim().is_empty() {
+        // jamais de réponse vide sans explication (réflexion qui a épuisé la réserve, par exemple)
+        avertir(out, run_id, "Le cerveau n'a produit aucune réponse (réflexion trop longue ou interrompue).".to_string());
+        answer = "Je n'ai pas réussi à formuler de réponse cette fois-ci. Peux-tu reformuler ou préciser ta demande ?".to_string();
+        emit(out, Event::Token { run_id: run_id.into(), text: answer.clone() });
+    }
+    bilan.intention = intention.clone();
+    thought(out, run_id, format!("\n→ {}\n", match intention.as_str() { "travail" => "Travail délégué", "recherche" => "Réponse après lecture web", _ => "Réponse directe" }));
 
     // 6. Mémorisation : même pile que la réponse, plus la réponse et la consigne
     phase(out, run_id, "memorizing", "Je retiens l'essentiel");
     memorize(out, run_id, &brain, &paths, &pile, &message_reponse, &answer, used_agent.as_ref()).await;
-    memory::archive(&paths, text, &answer, &analysis.intent, used_agent.as_ref().map(|m| m.name.as_str()));
+    memory::archive(&paths, text, &answer, &intention, used_agent.as_ref().map(|m| m.name.as_str()));
 
     bilan.reponse = answer.clone();
     bilan.message_historique = message.clone();
-    emit(out, Event::Done { run_id: run_id.into(), answer, intent: analysis.intent, message_historique: message });
+    emit(out, Event::Done { run_id: run_id.into(), answer, intent: intention, message_historique: message });
     phase(out, run_id, "idle", "");
     Ok(bilan)
 }
@@ -352,77 +335,132 @@ fn short(s: &str, n: usize) -> String {
     if one.chars().count() <= n { one } else { format!("{}…", one.chars().take(n).collect::<String>()) }
 }
 
-/// Schéma de l'analyse (sortie contrainte, lot F).
-fn schema_analyse() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "reflexion": { "type": "string", "description": "2 à 4 phrases courtes, en français, à voix haute" },
-            "intention": { "type": "string", "enum": ["discussion", "recherche", "travail"] },
-            "agent_necessaire": { "type": "boolean" },
-            "besoin": { "type": "string", "description": "besoin en 2 à 5 mots, vide si pas d'agent" },
-            "mission": { "type": "string", "description": "consigne précise et complète pour l'agent, vide si pas d'agent" }
-        },
-        "required": ["reflexion", "intention", "agent_necessaire", "besoin", "mission"]
-    })
+/// Lectures de pages web au plus par demande, et étapes au plus pour une réponse.
+const MAX_LECTURES: usize = 3;
+const MAX_ETAPES_REPONSE: usize = 6;
+
+/// Avertissement visible dans Conscience et noté au journal.
+fn avertir(out: &dyn Sortie, run_id: &str, message: String) {
+    thought(out, run_id, format!("\n⚠ {message}\n"));
+    emit(out, Event::Avertissement { run_id: run_id.into(), message });
 }
 
-async fn analyse(out: &dyn Sortie, run_id: &str, brain: &Brain, pile: &[Msg], message: &str) -> anyhow::Result<Analysis> {
-    let mut msgs = pile.to_vec();
-    msgs.push(Msg::user(format!("{message}\n\n[Tâche : ANALYSER]")));
+/// Outils du cerveau d'Orchestra (lot B) : déléguer la production, lire une page web.
+pub fn outils_orchestra() -> Vec<Outil> {
+    let chaine = |d: &str| json!({ "type": "string", "description": d });
+    vec![
+        Outil {
+            nom: "deleguer".into(),
+            description: "Confie à un agent spécialisé tout travail de production (rédiger, créer ou modifier un fichier, organiser, planifier, envoyer…). Orchestra choisit l'agent.".into(),
+            parametres: json!({
+                "type": "object",
+                "properties": {
+                    "besoin": chaine("le besoin en 2 à 5 mots, par exemple : rédiger un mail"),
+                    "mission": chaine("la consigne précise et complète pour l'agent"),
+                    "raison": chaine("pourquoi tu délègues, en une phrase")
+                },
+                "required": ["besoin", "mission", "raison"]
+            }),
+        },
+        Outil {
+            nom: "lire_page".into(),
+            description: "Lit une page web et renvoie son texte, pour répondre à une question qui en dépend.".into(),
+            parametres: json!({ "type": "object", "properties": { "url": chaine("adresse http(s) de la page") }, "required": ["url"] }),
+        },
+    ]
+}
 
-    let v = match brain
-        .json("analyse", &msgs, &schema_analyse(), |c: Chunk| {
-            if !c.thinking.is_empty() { thought(out, run_id, c.thinking); }
-        })
-        .await
-    {
-        Ok((v, natif)) => {
-            if !natif {
-                thought(out, run_id, "\n⚠ Ce cerveau ne gère pas les sorties contraintes : analyse lue dans le texte.\n");
+/// B3 : besoin, mission et raison sont obligatoires et non vides.
+pub fn valider_delegation(args: &Value) -> Result<(String, String, String), String> {
+    let champ = |k: &str| args[k].as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let manquants: Vec<&str> = ["besoin", "mission", "raison"].into_iter().filter(|k| champ(k).is_none()).collect();
+    if !manquants.is_empty() {
+        return Err(format!("champ(s) manquant(s) ou vide(s) : {}", manquants.join(", ")));
+    }
+    Ok((champ("besoin").unwrap(), champ("mission").unwrap(), champ("raison").unwrap()))
+}
+
+/// Choisit l'agent pour un besoin, l'annonce (B2), le lance et renvoie ce qui s'est passé,
+/// pour la réponse de l'outil `deleguer`.
+#[allow(clippy::too_many_arguments)]
+async fn deleguer_mission(
+    out: &dyn Sortie,
+    run_id: &str,
+    brain: &Brain,
+    cfg: &Config,
+    paths: &Paths,
+    http: &reqwest::Client,
+    besoin: &str,
+    mission: &str,
+    raison: &str,
+    original: &str,
+    bilan: &mut Tour,
+    used_agent: &mut Option<Manifest>,
+) -> anyhow::Result<String> {
+    thought(out, run_id, format!("\n→ Je délègue · besoin : {besoin} · raison : {raison}\n"));
+    phase(out, run_id, "searching_agent", "Je cherche l'agent qu'il faut");
+    let mut chosen: Option<(Manifest, String, String)> = None;
+
+    // mémoire : un agent de confiance pour ce besoin ?
+    let need_words = memory::keywords(besoin);
+    for t in memory::trusted_agents(paths) {
+        let tw = memory::keywords(&t.need);
+        if tw.iter().any(|w| need_words.contains(w)) {
+            if let Some(m) = agents::get_installed(paths, &t.agent_id) {
+                thought(out, run_id, format!("🧠 Ma mémoire dit : « {} » → {} (réussi {}×). Je le réutilise.\n", t.need, m.name, t.successes));
+                chosen = Some((m, "mémoire".into(), format!("agent de confiance pour « {} »", t.need)));
+                break;
             }
-            v
+        }
+    }
+    // sinon : installés → Agent Market → registre local
+    if chosen.is_none() {
+        let (found, log) = market::find_agent(http, cfg, paths, besoin).await;
+        for l in &log {
+            thought(out, run_id, format!("🔎 {l}\n"));
+        }
+        if let Some(f) = found {
+            let reason = format!("meilleur score ({:.1}) pour « {besoin} »", f.score);
+            chosen = Some((f.manifest, f.source, reason));
+        }
+    }
+
+    let Some((m, source, choix)) = chosen else {
+        bilan.aucun_agent = true;
+        thought(out, run_id, "✗ Aucun agent ne correspond. Je ne fais pas le travail moi-même : je l'explique.\n");
+        return Ok(format!("Aucun agent disponible ne sait faire ce travail (besoin : « {besoin} »). Ni installé, ni sur l'Agent Market, ni dans le registre local."));
+    };
+    if agents::get_installed(paths, &m.id).is_none() {
+        agents::install(paths, &m)?;
+        thought(out, run_id, format!("⬇ {} installé depuis {} (manifeste enregistré dans agents/installes).\n", m.name, source));
+    }
+    memory::ensure_agent_memory(paths, &m)?;
+    bilan.agent = Some(m.id.clone());
+    // B2 : annonce avant l'exécution (agent, mission, raison), sans demande de validation (D7)
+    emit(out, Event::AgentAttached { run_id: run_id.into(), agent: m.clone(), source: source.clone(), reason: format!("{raison} — {choix}") });
+    phase(out, run_id, "delegating", &format!("Je confie la mission à {}", m.name));
+    emit(out, Event::AgentStatus { run_id: run_id.into(), agent_id: m.id.clone(), status: "running".into(), detail: mission.to_string() });
+    phase(out, run_id, "working", &format!("{} travaille", m.name));
+
+    let resultat = match run_agent(out, run_id, brain, cfg, paths, http, &m, mission, original).await {
+        Ok((outcome, tools_used)) => {
+            emit(out, Event::AgentStatus { run_id: run_id.into(), agent_id: m.id.clone(), status: "done".into(), detail: short(&outcome, 160) });
+            let line = memory::append_agent_mission(paths, &m, mission, &outcome, &tools_used)?;
+            emit(out, Event::Memorized { run_id: run_id.into(), file: format!("agents/{}.md", m.id), section: "Missions".into(), line });
+            let trust_line = memory::record_trust(paths, besoin, &m)?;
+            emit(out, Event::Memorized { run_id: run_id.into(), file: "orchestra.md".into(), section: "Agents de confiance".into(), line: trust_line });
+            format!("L'agent « {} » a travaillé. Mission : {mission}\nRésultat rendu par l'agent :\n<donnees>\n{outcome}\n</donnees>", m.name)
         }
         Err(e) => {
-            // jamais de blocage silencieux : on le dit, puis on répond directement
-            thought(out, run_id, format!("\n⚠ Analyse impossible ({e}) : je réponds directement.\n"));
-            json!({})
+            bilan.agent_en_echec = true;
+            emit(out, Event::AgentStatus { run_id: run_id.into(), agent_id: m.id.clone(), status: "error".into(), detail: e.to_string() });
+            let line = memory::append_agent_mission(paths, &m, mission, &format!("ÉCHEC : {e}"), &[])?;
+            emit(out, Event::Memorized { run_id: run_id.into(), file: format!("agents/{}.md", m.id), section: "Missions".into(), line });
+            format!("L'agent « {} » a échoué sur la mission « {mission} » avec l'erreur : {e}", m.name)
         }
     };
-    let reflexion = v["reflexion"].as_str().unwrap_or("").trim();
-    if !reflexion.is_empty() {
-        thought(out, run_id, format!("\n{reflexion}\n"));
-    }
-    let intent = v["intention"].as_str().unwrap_or("discussion").to_lowercase();
-    let intent = if ["discussion", "recherche", "travail"].contains(&intent.as_str()) { intent } else { "discussion".into() };
-    let needs_agent = v["agent_necessaire"].as_bool().unwrap_or(intent == "travail");
-    Ok(Analysis {
-        intent,
-        needs_agent,
-        need: v["besoin"].as_str().unwrap_or("").trim().to_string(),
-        mission: v["mission"].as_str().unwrap_or("").trim().to_string(),
-    })
-}
-
-async fn speak(out: &dyn Sortie, run_id: &str, brain: &Brain, pile: &[Msg], message_reponse: &str) -> anyhow::Result<String> {
-    let mut msgs = pile.to_vec();
-    msgs.push(Msg::user(message_reponse));
-    let full = brain
-        .stream("reponse", &msgs, |c: Chunk| {
-            if !c.thinking.is_empty() { thought(out, run_id, c.thinking); }
-            if !c.content.is_empty() { emit(out, Event::Token { run_id: run_id.into(), text: c.content }); }
-        })
-        .await?;
-    if full.trim().is_empty() {
-        // jamais de réponse vide sans explication (réflexion qui a épuisé la réserve, par exemple)
-        thought(out, run_id, "
-⚠ Le cerveau n'a produit aucune réponse (réflexion trop longue ou interrompue).
-");
-        let msg = "Je n'ai pas réussi à formuler de réponse cette fois-ci. Peux-tu reformuler ou préciser ta demande ?".to_string();
-        emit(out, Event::Token { run_id: run_id.into(), text: msg.clone() });
-        return Ok(msg);
-    }
-    Ok(full)
+    *used_agent = Some(m);
+    Ok(resultat)
 }
 
 /// Consignes d'outils de l'agent : appel natif, ou bloc ```tool``` en repli pour un modèle sans outils.
@@ -689,10 +727,25 @@ mod tests {
 
     #[test]
     fn schemas_valides() {
-        let a = schema_analyse();
-        assert_eq!(a["required"].as_array().unwrap().len(), 5);
+        let o = outils_orchestra();
+        assert_eq!(o.iter().map(|o| o.nom.as_str()).collect::<Vec<_>>(), vec!["deleguer", "lire_page"]);
+        assert_eq!(o[0].parametres["required"].as_array().unwrap().len(), 3);
         let m = schema_memorisation();
         assert_eq!(m["properties"]["faits"]["maxItems"], 3);
+    }
+
+    #[test]
+    fn delegation_validee() {
+        let ok = valider_delegation(&json!({ "besoin": "rédiger un mail", "mission": "Écris…", "raison": "production" })).unwrap();
+        assert_eq!(ok.0, "rédiger un mail");
+        let e = valider_delegation(&json!({ "besoin": "x", "mission": "  " })).unwrap_err();
+        assert!(e.contains("mission") && e.contains("raison") && !e.contains("besoin"));
+    }
+
+    #[test]
+    fn consignes_sans_analyse_separee() {
+        assert!(!BLOC_1.contains("ANALYSER"));
+        assert!(BLOC_1.contains("deleguer") && BLOC_1.contains("lire_page"));
     }
 
     #[test]

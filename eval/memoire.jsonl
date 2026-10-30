@@ -5,7 +5,7 @@
 {"id": "h04", "question": "Sur quel port écoute LM Studio ?", "attendu": "1234", "mots_cles": ["1234"], "type": "piege"}
 {"id": "h05", "question": "En décembre, quel jour aura lieu la réunion d'équipe ?", "attendu": "Le jeudi à 10 h (changement à partir de novembre)", "mots_cles": ["jeudi|jeudis"], "type": "modifie"}
 {"id": "h06", "question": "Comment s'appelle le chien de mes parents ?", "attendu": "Pixel", "mots_cles": ["pixel"], "type": "piege"}
-{"id": "h07", "question": "Quand est-ce que je vois mon avocate ?", "attendu": "Le 21 novembre (maître Duval)", "mots_cles": ["21 novembre"], "interdits": ["14 novembre"], "type": "piege"}
+{"id": "h07", "question": "Quand est-ce que je vois mon avocate ?", "attendu": "Le 21 novembre (maître Duval)", "mots_cles": ["21 novembre|21 11"], "interdits": ["14 novembre|14 11"], "type": "piege"}
 {"id": "h08", "question": "Je fais du sport quel jour de la semaine ?", "attendu": "Le samedi matin (course, 10 km)", "mots_cles": ["samedi|samedis"], "type": "reformulee"}
 {"id": "h09", "question": "Est-ce que je peux manger des cacahuètes ?", "attendu": "Non, PB est allergique aux arachides", "mots_cles": ["allergique|allergie|allergies"], "interdits": ["oui"], "type": "reformulee"}
 {"id": "h10", "question": "Comment je signe mes mails à ma famille ?", "attendu": "« Pierre » (en tutoyant)", "mots_cles": ["pierre"], "type": "piege"}
