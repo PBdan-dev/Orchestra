@@ -2,7 +2,7 @@
 
 Version du 28 octobre 2026. Base : code au commit `439ece9` (branche `main`), `SUIVI.md` et les documents de conception du 27–28/10, dont ce cahier et `docs/SYNTHESE.md` reprennent tout le nécessaire (ils font foi). Vue d'ensemble, évaluation et viabilité : `docs/SYNTHESE.md`.
 
-Mise à jour du 29 octobre 2026 : décisions de PB sur les agents (D26 à D36), prises pendant la rédaction du skill « Orchestra Certified ». Détail des formats et des critères : dossier `agent-certification/` du dépôt `PBdan-dev/Agent_Market` (schémas JSON, critères, outils de contrôle). En cas d'écart entre ce cahier et ce dossier, le signaler à PB.
+Mise à jour du 29 octobre 2026 : décisions de PB sur les agents (D26 à D37), prises pendant la rédaction du skill « Orchestra Certified ». Détail des formats et des critères : dossier `agent-certification/` du dépôt `PBdan-dev/Agent_Market` (schémas JSON, critères, outils de contrôle). En cas d'écart entre ce cahier et ce dossier, le signaler à PB.
 
 ## 0. Mode d'emploi
 
@@ -64,6 +64,7 @@ Mise à jour du 29 octobre 2026 : décisions de PB sur les agents (D26 à D36), 
 | D34 | Identifiants des agents | Déclarés dans le manifeste (`identifiants` : nom, type, raison), demandés à PB à l'installation, rangés dans le Gestionnaire d'identification de Windows sous `orchestra/<id>/<nom>`, lus par l'agent via une fonction `secret_`. Jamais dans le manifeste, les traces ou la mémoire. | ✅ 29/10 |
 | D35 | Versions et format du manifeste | Version d'agent X.Y.Z ; `format_manifeste` « 2.x » (changement du premier chiffre = incompatible, installation refusée) ; `CHANGELOG.md` dans le paquet ; pas de retour à une version précédente intégré en V1. Une certification vaut pour une seule version. | ✅ 29/10 |
 | D36 | Dossier du projet | Choisi dans l'interface par PB (nouveau ou existant), jamais par le chat. | ✅ 29/10 |
+| D37 | Agents installés devenus incompatibles | Quand le format du manifeste change, les agents déjà installés restent utilisables, avec un avertissement visible. Un éventuel blocage sera réexaminé plus tard. | ✅ 30/10 |
 
 ## 3. Constats sur le code (vérifiés le 28/10)
 
@@ -227,7 +228,7 @@ Acceptation : l'agent de démo, et Mail Adagio en changeant seulement l'URL de s
 - Manifeste v2 obligatoire (section 9) : `format_manifeste` 2.x, fiche (sait faire, ne sait pas faire, `fonctions`, consignes), types de tâche et leurs modèles, commande de lancement, passage par la porte pour un agent local, modèle minimum et recommandé, identifiants, mémoire propre, licence.
 - Paquet `<id>-<version>.zip` téléchargé depuis l'URL du catalogue ; taille et SHA-256 vérifiées avant décompression ; refus sinon.
 - **Identifiants (D34)** : à l'installation, demander à PB chaque identifiant déclaré (avec sa raison) et le ranger dans le Gestionnaire d'identification de Windows sous `orchestra/<id>/<nom>`.
-- **Mise à jour** : remplace le programme, conserve `memoire/` (D32). Premier chiffre de `format_manifeste` différent : installation refusée avec motif (D35). Agents déjà installés dont le format devient incompatible : ⏸ à trancher par PB (garder avec avertissement, ou désactiver).
+- **Mise à jour** : remplace le programme, conserve `memoire/` (D32). Premier chiffre de `format_manifeste` différent : installation refusée avec motif (D35). Agents déjà installés dont le format devient incompatible : gardés et utilisables, avec un avertissement visible dans l'interface (D37).
 - **Compatibilité du catalogue** : une entrée au format v2 ne doit pas rendre tout le catalogue illisible (le registre actuel `parse_registry` rejette tout le fichier au premier champ inattendu). Une entrée invalide est ignorée avec motif ; les autres restent lisibles.
 - Installation refusée si un champ manque ; motif dans Conscience.
 - Dossier `agents/installes/<id>/` : manifeste + programme + `memoire/` (créé vide si `memoire_propre`).
