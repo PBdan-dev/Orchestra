@@ -435,7 +435,8 @@ async fn deleguer_mission(
     for t in memory::trusted_agents(paths) {
         let tw = memory::keywords(&t.need);
         if tw.iter().any(|w| need_words.contains(w)) {
-            if let Some(m) = agents::get_installed(paths, &t.agent_id) {
+            // T5 : jamais un agent non certifié, en quarantaine ou dont la confiance a été retirée
+            if let Some(m) = agents::get_installed(paths, &t.agent_id).filter(|m| crate::verification::peut_etre_de_confiance(paths, m)) {
                 thought(out, run_id, format!("🧠 Ma mémoire dit : « {} » → {} (réussi {}×). Je le réutilise.\n", t.need, m.name, t.successes));
                 chosen = Some((m, "mémoire".into(), format!("agent de confiance pour « {} »", t.need)));
                 break;
@@ -543,6 +544,11 @@ async fn deleguer_mission(
     // Mémoire propre de l'agent (D32), avant la mission
     let dossier_agent = m.dossier.clone().unwrap_or_default();
     let memoire_avant = agents::instantane_memoire(&dossier_agent);
+    // Empreintes du dossier du projet avant la mission (lot T5)
+    let empreintes_avant = crate::verification::empreintes(&projet);
+    let appels_observes = std::sync::Mutex::new(Vec::<String>::new());
+    let ecarts_porte = std::sync::Mutex::new(Vec::<String>::new());
+    let decisions_auto = std::sync::Mutex::new(Vec::<(String, bool)>::new());
 
     // Actions (D14) : « observée » par la porte, puis « déclarée » par le compte rendu → actions.jsonl
     let actions = std::sync::Mutex::new(Vec::<Value>::new());
@@ -579,6 +585,7 @@ async fn deleguer_mission(
             match validations {
                 Some(v) => {
                     if let Some(portee) = v.autorise(&m.id, &action) {
+                        decisions_auto.lock().unwrap().push((action.clone(), true));
                         emit(out, Event::ValidationReglee { run_id: run_id.into(), cle, mission_id: mission_id.clone(), decision: "accepte".into(), portee: portee.into(), automatique: true });
                         thought(out, run_id, format!("✅ « {action} » autorisé d'avance ({portee}).\n"));
                         vec![contrat::reponse_validation(&mission_id, true, portee)]
@@ -591,6 +598,7 @@ async fn deleguer_mission(
                 }
                 None => {
                     avertir(out, run_id, format!("{nom} demande à faire « {action} » ({raison}). Refusé automatiquement : pas d'interface pour valider."));
+                    decisions_auto.lock().unwrap().push((action.clone(), false));
                     emit(out, Event::ValidationReglee { run_id: run_id.into(), cle, mission_id: mission_id.clone(), decision: "refuse".into(), portee: "cette_fois".into(), automatique: true });
                     vec![contrat::reponse_validation(&mission_id, false, "cette_fois")]
                 }
@@ -602,10 +610,16 @@ async fn deleguer_mission(
                 vec![]
             }
             porte::Note::Appel { nom: outil, arguments } => {
+                appels_observes.lock().unwrap().push(outil.clone());
                 noter_action("observee", outil, &arguments.to_string(), arguments["raison"].as_str().unwrap_or(""));
                 vec![]
             }
-            porte::Note::Ecart { texte } | porte::Note::Refus { texte } => {
+            porte::Note::Ecart { texte } => {
+                ecarts_porte.lock().unwrap().push(texte.clone());
+                avertir(out, run_id, format!("Porte du modèle, {nom} : {texte}"));
+                vec![]
+            }
+            porte::Note::Refus { texte } => {
                 avertir(out, run_id, format!("Porte du modèle, {nom} : {texte}"));
                 vec![]
             }
@@ -617,8 +631,9 @@ async fn deleguer_mission(
         },
     )
     .await;
+    let mut decisions = decisions_auto.into_inner().unwrap_or_default();
     if let Some(v) = validations {
-        v.oublier_mission(&mission_id);
+        decisions.extend(v.oublier_mission(&mission_id));
     }
     if let Some((p, _)) = &porte_ouverte {
         let (pas, tokens) = p.compteurs();
@@ -631,11 +646,13 @@ async fn deleguer_mission(
             Err(e) => avertir(out, run_id, format!("Rechargement du modèle d'Orchestra impossible : {e}")),
         }
     }
+    let mut ecarts_contrat = vec![];
     let cr = match deroulement {
         Ok(d) => {
             for e in &d.ecarts {
                 avertir(out, run_id, format!("Écart au contrat de {} : {e}", m.name));
             }
+            ecarts_contrat = d.ecarts;
             d.compte_rendu
         }
         Err(e) => contrat::echec(&mission_id, &e.to_string()),
@@ -664,9 +681,47 @@ async fn deleguer_mission(
     emit(out, Event::MissionLivrables { run_id: run_id.into(), mission_id: mission_id.clone(), agent_id: m.id.clone(), fichiers: livrables });
     // Mémoire propre de l'agent : ce qui a changé (D32)
     let changements = agents::differences_memoire(&memoire_avant, &agents::instantane_memoire(&dossier_agent));
+    let memoire_changee: Vec<String> = changements.iter().filter_map(|c| c["fichier"].as_str().map(String::from)).collect();
     if !changements.is_empty() {
         emit(out, Event::MemoireAgent { run_id: run_id.into(), mission_id: mission_id.clone(), agent_id: m.id.clone(), changements });
     }
+
+    // Vérification (lot T5) : déclaré contre constaté, verification.md, confiance
+    let empreintes_apres = crate::verification::empreintes(&projet);
+    let appels_observes = appels_observes.into_inner().unwrap_or_default();
+    let ecarts_porte = ecarts_porte.into_inner().unwrap_or_default();
+    let constats = crate::verification::Constats {
+        agent: &m,
+        mission: &mission_json,
+        compte_rendu: &cr,
+        projet: &projet,
+        avant: &empreintes_avant,
+        apres: &empreintes_apres,
+        appels_observes: &appels_observes,
+        ecarts_porte: &ecarts_porte,
+        ecarts_contrat: &ecarts_contrat,
+        validations: &decisions,
+        memoire_changee: &memoire_changee,
+    };
+    let bilan_verif = crate::verification::apres_mission(paths, &dossier_mission, &mission_id, &constats)?;
+    let nb_ecarts = bilan_verif.verification.ecarts.len();
+    if nb_ecarts == 0 {
+        thought(out, run_id, format!("🔍 Vérification de {} : aucun écart.
+", m.name));
+    } else {
+        thought(out, run_id, format!("🔍 Vérification de {} : {nb_ecarts} écart(s) — {}.
+", m.name, bilan_verif.confiance.libelle()));
+    }
+    emit(out, Event::MissionVerification {
+        run_id: run_id.into(),
+        mission_id: mission_id.clone(),
+        agent_id: m.id.clone(),
+        ecarts: bilan_verif.verification.ecarts.clone(),
+        controles: bilan_verif.verification.controles.clone(),
+        statut: serde_json::to_value(&bilan_verif.confiance.statut).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default(),
+        total_ecarts: bilan_verif.confiance.ecarts,
+        confiance_retiree: !bilan_verif.confiance_retiree.is_empty(),
+    });
 
     let etat = cr["etat"].as_str().unwrap_or("echec").to_string();
     let motif = cr["motif"].as_str().unwrap_or("").to_string();
@@ -684,7 +739,8 @@ async fn deleguer_mission(
     // memoire/agents/<id>.md : résumé et lien vers le dossier de la mission
     let line = memory::append_agent_mission(paths, &m, mission, &format!("{resume} · dossier : missions/{mission_id}"), &[])?;
     emit(out, Event::Memorized { run_id: run_id.into(), file: format!("agents/{}.md", m.id), section: "Missions".into(), line });
-    if etat == "termine" {
+    // promu « de confiance » seulement sans écart, certifié et jamais retiré (T5, D25)
+    if etat == "termine" && nb_ecarts == 0 && crate::verification::peut_etre_de_confiance(paths, &m) {
         let trust_line = memory::record_trust(paths, besoin, &m)?;
         emit(out, Event::Memorized { run_id: run_id.into(), file: "orchestra.md".into(), section: "Agents de confiance".into(), line: trust_line });
     }

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useStore } from "../store";
 import { api } from "../tauri";
-import type { Catalogue, Identifiant, Installation, Manifest } from "../types";
+import type { Catalogue, EtatConfiance, Identifiant, Installation, Manifest } from "../types";
 import { AgentGlyph, I } from "./Icons";
 
 /**
@@ -65,6 +65,19 @@ export function AgentsPanel() {
     try { apres(await installAgentZip(chemin.trim())); } catch (e) { setMessage({ ok: false, texte: `Installation refusée : ${String(e)}` }); }
   };
   const aInstaller = (catalogue?.entrees ?? []).filter((c) => c.installe !== c.manifest.version);
+  // Confiance (lot T5)
+  const [confiance, setConfiance] = useState<Record<string, EtatConfiance>>({});
+  const chargerConfiance = () => api.confianceAgents().then(setConfiance).catch(() => {});
+  useEffect(() => { chargerConfiance(); }, [installed.length]);
+  const lever = async (m: Manifest) => {
+    if (!window.confirm(`Lever la quarantaine de ${m.name} ? Son compteur d'écarts repart à zéro ; Orchestra pourra de nouveau le choisir, mais sans le considérer « de confiance » tant que tu ne l'as pas rétabli.`)) return;
+    try { await api.leverQuarantaine(m.id); } catch (e) { window.alert(String(e)); }
+    chargerConfiance();
+  };
+  const retablir = async (m: Manifest) => {
+    try { await api.retablirConfiance(m.id); } catch (e) { window.alert(String(e)); }
+    chargerConfiance();
+  };
 
   const all: Manifest[] = [...installed, ...registry.filter((r) => !installed.some((i) => i.id === r.id))];
   const wrap = async (id: string, fn: () => Promise<void>) => { setBusyId(id); try { await fn(); } finally { setBusyId(null); } };
@@ -88,11 +101,15 @@ export function AgentsPanel() {
               <div className="ap-info">
                 <div className="ap-name">
                   {m.name} <span className="muted small">{m.version}</span> {isInstalled ? <span className="tag ok">installé</span> : <span className="tag">registre</span>}{" "}
-                  {isInstalled && <BadgeCertification statut={m.certification} />}
+                  {isInstalled && <BadgeCertification statut={m.certification} />}{" "}
+                  {confiance[m.id]?.statut === "quarantaine" && <span className="tag quarantaine" title="Orchestra ne le choisit plus">en quarantaine · {confiance[m.id].ecarts} écarts</span>}
+                  {confiance[m.id]?.statut === "retire" && <span className="tag retire" title="Écart relevé lors d'une mission : il n'est plus « de confiance »">confiance retirée</span>}
                 </div>
                 <div className="ap-desc">{m.description}</div>
                 <div className="ap-tools">{m.tools.map((t) => <span key={t} className="mini">{t}</span>)}</div>
                 {m.avertissement && <div className="ap-avert"><I.alert size={11} /> {m.avertissement}</div>}
+                {confiance[m.id]?.statut === "quarantaine" && <button className="link-btn" onClick={() => lever(m)}>lever la quarantaine</button>}
+                {confiance[m.id]?.statut === "retire" && <button className="link-btn" onClick={() => retablir(m)}>rétablir la confiance</button>}
                 {isInstalled && <IdentifiantsAgent agent={m} ouvert={ouvrirIds === m.id} />}
               </div>
               <div className="ap-actions">

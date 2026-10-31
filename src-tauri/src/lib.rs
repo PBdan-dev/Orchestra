@@ -17,6 +17,7 @@ pub mod modele;
 pub mod schema;
 pub mod tools;
 pub mod validations;
+pub mod verification;
 mod voice;
 
 use std::sync::{atomic::AtomicBool, Mutex};
@@ -148,6 +149,24 @@ async fn catalogue(state: State<'_, AppState>) -> CmdResult<Catalogue> {
     let cfg = state.config.lock().unwrap().clone();
     let (lecture, source) = market::fetch_catalogue(&state.http, &cfg).await?;
     Ok(Catalogue { entrees: installation::lire_catalogue(lecture.agents, &state.paths, cfg.mode_developpement), ignores: lecture.ignores, source })
+}
+
+/// Confiance d'Orchestra dans chaque agent (lot T5) : statut et écarts.
+#[tauri::command]
+fn confiance_agents(state: State<AppState>) -> std::collections::BTreeMap<String, verification::EtatConfiance> {
+    verification::lire(&state.paths)
+}
+
+/// PB lève la quarantaine d'un agent : compteur remis à zéro, confiance encore à rétablir.
+#[tauri::command]
+fn lever_quarantaine(state: State<AppState>, id: String) -> CmdResult<()> {
+    verification::lever_quarantaine(&state.paths, &id).map_err(err)
+}
+
+/// PB rétablit la confiance dans un agent (il pourra de nouveau être promu « de confiance »).
+#[tauri::command]
+fn retablir_confiance(state: State<AppState>, id: String) -> CmdResult<()> {
+    verification::retablir(&state.paths, &id).map_err(err)
 }
 
 /// Identifiants déclarés par un agent installé et leur présence dans le coffre (D34).
@@ -457,6 +476,9 @@ pub fn run() {
             load_model,
             install_agent,
             install_agent_zip,
+            confiance_agents,
+            lever_quarantaine,
+            retablir_confiance,
             catalogue,
             identifiants_agent,
             enregistrer_identifiant,

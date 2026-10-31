@@ -50,6 +50,8 @@ pub enum Event {
     MemoireAgent { run_id: String, mission_id: String, agent_id: String, changements: Vec<serde_json::Value> },
     /// Fin de mission (le journal du jour référence ainsi chaque mission).
     MissionFin { run_id: String, mission_id: String, agent_id: String, etat: String, motif: String },
+    /// Vérification de la mission (lot T5) : écarts, contrôles, et confiance qui en découle.
+    MissionVerification { run_id: String, mission_id: String, agent_id: String, ecarts: Vec<String>, controles: Vec<String>, statut: String, total_ecarts: u32, confiance_retiree: bool },
     /// Action irréversible en attente de la réponse de PB (D28).
     ValidationRequise { run_id: String, cle: String, mission_id: String, agent_id: String, action: String, raison: String },
     /// Réponse donnée (par PB, ou automatiquement par une autorisation en cours).

@@ -490,3 +490,28 @@ pub fn tree(paths: &Paths) -> Vec<MemoryFile> {
     }
     out
 }
+
+/// Retire un agent des « Agents de confiance » (lot T5) ; renvoie les lignes retirées.
+pub fn retirer_confiance(paths: &Paths, agent_id: &str) -> anyhow::Result<Vec<String>> {
+    let text = read_main(paths);
+    let needle = format!("→ {agent_id} ");
+    let mut section = String::new();
+    let mut retirees = vec![];
+    let mut garde = vec![];
+    for l in text.lines() {
+        if let Some(t) = l.strip_prefix("## ") {
+            section = t.trim().to_string();
+        }
+        if section == "Agents de confiance" && l.starts_with("- ") && l.contains(&needle) {
+            retirees.push(l.to_string());
+        } else {
+            garde.push(l);
+        }
+    }
+    if !retirees.is_empty() {
+        let mut s = garde.join("\n");
+        s.push('\n');
+        std::fs::write(paths.main_memory(), s)?;
+    }
+    Ok(retirees)
+}

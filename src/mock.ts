@@ -103,6 +103,12 @@ async function finMissionDemo(cle: string, accepte: boolean, portee: string) {
   emit({ type: "mission_livrables", run_id, mission_id, agent_id: fichiers.id, fichiers: accepte ? [{ chemin: "brouillon.md", existe: false }] : [] });
   emit({ type: "memoire_agent", run_id, mission_id, agent_id: fichiers.id, changements: [{ fichier: "memoire/habitudes.md", etat: "modifié", ajoutees: ["PB valide les suppressions de brouillons"], retirees: [] }] });
   emit({ type: "mission_fin", run_id, mission_id, agent_id: fichiers.id, etat: accepte ? "termine" : "partiel", motif: accepte ? "" : "suppression refusée par PB" });
+  emit({
+    type: "mission_verification", run_id, mission_id, agent_id: fichiers.id,
+    ecarts: accepte ? [] : ["état « partiel » sans la liste de ce qui manque"],
+    controles: ["fichiers du projet : 3 avant, 2 après, 1 annoncé(s)", "validations : 1 accordée(s), 0 refusée(s)", "livrable contrôlé avec le modèle « operations-fichiers »"],
+    statut: accepte ? "normal" : "retire", total_ecarts: accepte ? 0 : 1, confiance_retiree: !accepte,
+  });
   emit({ type: "agent_status", run_id, agent_id: fichiers.id, status: "done", detail: accepte ? "brouillon.md supprimé" : "rien supprimé" });
   emit({ type: "token", run_id, text: accepte ? "C'est fait : brouillon.md est supprimé." : "D'accord, je n'ai rien supprimé." });
   emit({ type: "done", run_id, answer: "", intent: "travail" });
@@ -139,6 +145,9 @@ export const mockApi = {
         : []),
     ],
   }),
+  confianceAgents: async () => ({ "agent-fichiers": { statut: "retire", ecarts: 1, historique: [] } }),
+  leverQuarantaine: async () => {},
+  retablirConfiance: async () => {},
   identifiantsAgent: async (id: string) => idsDemo[id] ?? [],
   enregistrerIdentifiant: async (id: string, nom: string) => { (idsDemo[id] ?? []).forEach((i) => { if (i.nom === nom) i.present = true; }); },
   uninstallAgent: async (id: string) => { mockInstalled = mockInstalled.filter((a) => a.id !== id); },

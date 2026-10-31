@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { Autorisation, BrainInfo, Catalogue, Identifiant, Installation, Config, Manifest, MemoryFile, OrchestraEvent, PathsInfo, Projets, VoiceModels, VoiceStatus } from "./types";
+import type { Autorisation, BrainInfo, Catalogue, EtatConfiance, Identifiant, Installation, Config, Manifest, MemoryFile, OrchestraEvent, PathsInfo, Projets, VoiceModels, VoiceStatus } from "./types";
 import { mockApi, mockOnEvent } from "./mock";
 
 /** Vrai quand l'interface tourne dans la fenêtre Tauri ; sinon on est en démo navigateur. */
@@ -14,6 +14,9 @@ const real = {
   installAgent: (id: string) => invoke<Installation>("install_agent", { id }),
   installAgentZip: (chemin: string) => invoke<Installation>("install_agent_zip", { chemin }),
   catalogue: () => invoke<Catalogue>("catalogue"),
+  confianceAgents: () => invoke<Record<string, EtatConfiance>>("confiance_agents"),
+  leverQuarantaine: (id: string) => invoke<void>("lever_quarantaine", { id }),
+  retablirConfiance: (id: string) => invoke<void>("retablir_confiance", { id }),
   identifiantsAgent: (id: string) => invoke<Identifiant[]>("identifiants_agent", { id }),
   enregistrerIdentifiant: (id: string, nom: string, valeur: string) => invoke<void>("enregistrer_identifiant", { id, nom, valeur }),
   uninstallAgent: (id: string) => invoke<void>("uninstall_agent", { id }),

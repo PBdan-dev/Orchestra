@@ -218,6 +218,23 @@ function MissionCard({ m, name, icon }: { m: MissionVue; name: string; icon: str
         </div>
       )}
 
+      {m.verification && (
+        <div className={`mission-part verif ${m.verification.ecarts.length ? "ko" : "ok"}`}>
+          <div className="mission-part-head" title={m.verification.controles.join("\n")}>
+            <I.check size={12} /> Vérification{" "}
+            <span className="muted small">· {m.verification.ecarts.length === 0 ? "aucun écart entre ce que l'agent dit et ce qu'Orchestra constate" : `${m.verification.ecarts.length} écart(s)`}</span>
+          </div>
+          {m.verification.ecarts.map((e, i) => <div key={i} className="small indent warn">✗ {e}</div>)}
+          {m.verification.ecarts.length > 0 && (
+            <div className="small indent">
+              {m.verification.statut === "quarantaine"
+                ? `${name} est en quarantaine (${m.verification.totalEcarts} écarts au total) : je ne le choisirai plus tant que tu ne l'auras pas libéré dans le panneau Agents.`
+                : `${name} perd sa confiance${m.verification.confianceRetiree ? " (retiré des Agents de confiance)" : ""} : ${m.verification.totalEcarts} écart(s) au total, quarantaine à 3.`}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="mission-foot">
         <button className="link-btn" onClick={() => api.openFolder(`mission:${m.missionId}`)}><I.external size={11} /> dossier de la mission</button>
         <button className="link-btn" onClick={() => api.openFolder("projet")}><I.folder size={11} /> dossier du projet</button>

@@ -56,6 +56,7 @@ export type OrchestraEvent =
   | { type: "done"; run_id: string; answer: string; intent: string; message_historique?: string }
   | { type: "coupe"; run_id: string; quoi: string; detail: string }
   | { type: "avertissement"; run_id: string; message: string }
+  | { type: "mission_verification"; run_id: string; mission_id: string; agent_id: string; ecarts: string[]; controles: string[]; statut: string; total_ecarts: number; confiance_retiree: boolean }
   | { type: "agent_installe"; agent_id: string; version: string; ancienne_version: string | null; certification: string; identifiants_manquants: string[] }
   | { type: "mission_debut"; run_id: string; mission_id: string; agent_id: string; projet: string; dossier_mission: string; dossier_projet: string }
   | { type: "mission_pensee"; run_id: string; mission_id: string; agent_id: string; texte: string }
@@ -180,7 +181,12 @@ export interface MissionVue {
   validations: ValidationMission[];
   etat?: string;
   motif?: string;
+  /** Vérification de la mission (lot T5). */
+  verification?: VerificationMission;
 }
+export interface VerificationMission { ecarts: string[]; controles: string[]; statut: string; totalEcarts: number; confianceRetiree: boolean }
+/** Confiance dans un agent (lot T5, agents/confiance.json). */
+export interface EtatConfiance { statut: "normal" | "retire" | "quarantaine"; ecarts: number; historique: unknown[] }
 /** Autorisation d'actions irréversibles (D28) */
 export interface Autorisation { agent_id: string; action: string; portee: "type_session" | "tout_session" | "permanent" }
 export interface Projets { actif: string; liste: string[] }

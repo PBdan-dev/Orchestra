@@ -38,6 +38,8 @@ struct Attente {
 pub struct Validations {
     attentes: Mutex<HashMap<String, Attente>>,
     session: Mutex<BTreeSet<Autorisation>>,
+    /// Décisions de PB par mission (action, accordée), pour la vérification (lot T5).
+    reglees: Mutex<HashMap<String, Vec<(String, bool)>>>,
     fichier: PathBuf,
 }
 
@@ -49,7 +51,7 @@ struct Permanentes {
 
 impl Validations {
     pub fn new(fichier: PathBuf) -> Self {
-        Validations { attentes: Mutex::new(HashMap::new()), session: Mutex::new(BTreeSet::new()), fichier }
+        Validations { attentes: Mutex::new(HashMap::new()), session: Mutex::new(BTreeSet::new()), reglees: Mutex::new(HashMap::new()), fichier }
     }
 
     fn permanentes(&self) -> Permanentes {
@@ -91,6 +93,7 @@ impl Validations {
             return Err(format!("portée inconnue : {portee}"));
         }
         let a = self.attentes.lock().unwrap().remove(cle).ok_or_else(|| "cette demande de validation n'est plus en attente".to_string())?;
+        self.reglees.lock().unwrap().entry(a.mission_id.clone()).or_default().push((a.action.clone(), accepte));
         if accepte {
             match portee {
                 "type_session" | "tout_session" => {
@@ -114,9 +117,11 @@ impl Validations {
         Ok((a.mission_id, a.agent_id))
     }
 
-    /// Demandes encore en attente d'une mission terminée : retirées.
-    pub fn oublier_mission(&self, mission_id: &str) {
+    /// Demandes encore en attente d'une mission terminée : retirées. Renvoie les décisions de PB
+    /// prises pendant la mission (action, accordée).
+    pub fn oublier_mission(&self, mission_id: &str) -> Vec<(String, bool)> {
         self.attentes.lock().unwrap().retain(|_, a| a.mission_id != mission_id);
+        self.reglees.lock().unwrap().remove(mission_id).unwrap_or_default()
     }
 
     pub fn lister(&self) -> Vec<Autorisation> {

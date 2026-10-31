@@ -70,9 +70,14 @@ pub async fn find_agent(
     for i in &lecture.ignores {
         log.push(format!("⚠ agent installé inutilisable : {i}"));
     }
+    // T5 : un agent en quarantaine n'est jamais choisi
+    for m in lecture.agents.iter().filter(|m| !crate::verification::utilisable(paths, &m.id)) {
+        log.push(format!("{} est en quarantaine : écarté (à lever dans le panneau Agents)", m.name));
+    }
     let mut candidates: Vec<Found> = lecture
         .agents
         .into_iter()
+        .filter(|m| crate::verification::utilisable(paths, &m.id))
         .map(|m| {
             let score = agents::match_score(&m, need);
             Found { manifest: m, source: "installé".into(), score }

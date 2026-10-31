@@ -771,6 +771,10 @@ export const useStore = create<State>((set, get) => ({
       case "mission_fin":
         mission(e.mission_id, () => ({ etat: e.etat, motif: e.motif }));
         break;
+      case "mission_verification":
+        mission(e.mission_id, () => ({ verification: { ecarts: e.ecarts, controles: e.controles, statut: e.statut, totalEcarts: e.total_ecarts, confianceRetiree: e.confiance_retiree } }));
+        if (e.ecarts.length > 0 && voiceRun && voice?.connected) voice.say("Attention : j'ai relevé un écart dans le travail de l'agent. Le détail est à l'écran.");
+        break;
       case "validation_requise":
         mission(e.mission_id, (m) => ({ validations: [...m.validations, { cle: e.cle, action: e.action, raison: e.raison, etat: "attente" }] }));
         live.pulse(0.9);
