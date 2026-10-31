@@ -111,8 +111,16 @@ Validé le 2026-10-28 : les 11 critères de `docs/CAHIER_DES_CHARGES.md` §13 (b
 - Limite : un agent qui modifie à la fois une trace et son fichier `.chaine` en recalculant toute la chaîne n'est pas détecté ; la signature par clé locale (D15) couvrira ce cas.
 - Vérifié : `examples/essai_integrite.rs`, 9/9 (vraie porte avec réponse fixe, ligne modifiée, ligne retirée, fin coupée, preuve, écart compté une seule fois) ; banc 29/29, essais T4 et T5 toujours 10/10 ; 58 tests unitaires.
 
+## État actuel — Lot T7 (2026-10-31)
+- Pilotage de la mission en cours (`pilote.rs`) depuis sa carte dans Conscience : Pause / Reprendre, Arrêter (arrêt propre), arrêt immédiat après confirmation (programme de l'agent coupé, état `arrete_force`, « fichiers possiblement incomplets »). Pendant une pause ou après un arrêt demandé, la porte ne sert plus le modèle de l'agent (l'appel en cours se termine) ; pas de délai de silence pendant une pause.
+- Limites D29 : pause et question « on continue ? » sur la carte (Continuer / Arrêter), y compris au plafond d'1 h (plus d'arrêt automatique) ; sans interface (évaluation), simple avertissement.
+- Reprise (décision de PB du 31/10, option A) : mission arrêtée ou en pause → `reprise.json` (mission, point de reprise, actions à effet déjà faites) ; bouton « Reprendre la mission » (carte et vue Missions) : nouvelle mission avec le champ facultatif `reprise` du contrat (point de reprise rendu tel quel), même agent, même projet ; les actions déjà faites sont rappelées et jamais refaites. PR Agent_Market #8 (schéma) et Orchestra_Agents #5 (agent-fichiers 1.0.1 qui sait reprendre, test 11-reprise) à fusionner par PB ; ensuite, paquet 1.0.1 à publier et catalogue à mettre à jour.
+- Mode série : une demande tapée pendant un travail part dans une file d'attente visible (retirable), avec un message clair ; elle est envoyée dès la fin. En voix, Orchestra annonce le début et la fin de la mission (le serveur voix garde son propre cerveau : il n'est pas coupé pendant une mission qui utilise le modèle d'Orchestra).
+- Vue « Missions » (onglet) : date, projet, agent, mission, état, vérification, ouvrir le dossier, reprendre ; mémoire de la carte graphique (nvidia-smi) et « Mode série ».
+- Vérifié : `examples/essai_reprise.rs` 7/7 (pause et reprise, porte suspendue, arrêt propre puis reprise sans refaire la 1re opération, arrêt immédiat en 0,1 s) ; interface vérifiée en mode démo (boutons, file d'attente, vue Missions) ; banc 29/29, essais T5 10/10 et T6 9/9 toujours bons.
+
 ## Prochaine action
-Plan du lot T7 (exécution, arrêt, reprise).
+PB fusionne les PR #8 (Agent_Market) et #5 (Orchestra_Agents) ; puis plan du lot T9 (suivi des projets par Orchestra).
 
 ## Décisions
 - 2026-10-25 — Application de bureau Windows en Tauri 2 (Rust + React/TypeScript), installateur léger.
@@ -161,7 +169,8 @@ Plan du lot T7 (exécution, arrêt, reprise).
 - [x] Cahier des charges — Lot T4 : installation (2026-10-31)
 - [x] Cahier des charges — Lot T5 : vérification et confiance (2026-10-31)
 - [x] Cahier des charges — Lot T6 : intégrité (2026-10-31)
-- [ ] Cahier des charges — Lot T7 : exécution, arrêt, reprise (prochain)
+- [x] Cahier des charges — Lot T7 : exécution, arrêt, reprise (2026-10-31)
+- [ ] Cahier des charges — Lot T9 : suivi des projets (prochain)
 - [ ] Cahier des charges — Lots A, B, T1 à T9, C, D, S, M2, M3, M1 (ordre de la section 11)
 - [x] Délégation sur le vrai Ollama vérifiée par l'évaluation (6 tâches déléguées au bon agent, 3/3)
 - [ ] PB teste une vraie délégation sur Ollama dans l'interface
@@ -197,3 +206,4 @@ Plan du lot T7 (exécution, arrêt, reprise).
 - 2026-10-31 — Lot T4 : installation depuis l'Agent Market (certification, empreinte, manifeste v2, mise à jour qui garde la mémoire, identifiants dans le coffre de Windows, mode développement) ; PR #7 sur Agent_Market, fusionnée par PB.
 - 2026-10-31 — Lot T5 : vérification de chaque mission (déclaré contre constaté), verification.md, confiance retirée au 1er écart, quarantaine au 3e ; essai avec agents piégés 10/10.
 - 2026-10-31 — Lot T6 : traces chaînées (journal, échanges, actions), vérification au lancement et à l'ouverture d'une mission, cassure : preuve gardée, écart pour l'agent, alerte.
+- 2026-10-31 — Lot T7 : pause, arrêt propre, arrêt immédiat, limites en pause avec question, reprise depuis le point de reprise (champ `reprise` du contrat), file d'attente, vue Missions ; PR #8 Agent_Market et #5 Orchestra_Agents.
