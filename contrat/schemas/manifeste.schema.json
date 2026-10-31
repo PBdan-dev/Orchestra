@@ -1,0 +1,446 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pbdan-dev.github.io/Agent_Market/agent-certification/schemas/manifeste.schema.json",
+  "title": "Manifeste d'agent Orchestra, format 2.0",
+  "type": "object",
+  "required": [
+    "format_manifeste",
+    "id",
+    "name",
+    "version",
+    "author",
+    "description",
+    "capabilities",
+    "fiche",
+    "execution",
+    "compatibilite",
+    "licence",
+    "certification"
+  ],
+  "properties": {
+    "format_manifeste": {
+      "type": "string",
+      "pattern": "^2\\.[0-9]+$",
+      "description": "Premier chiffre : changement incompatible. Second : ajout facultatif."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "author": {
+      "type": "object",
+      "required": [
+        "nom",
+        "contact"
+      ],
+      "properties": {
+        "nom": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contact": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "categorie": {
+      "type": "string"
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "fiche": {
+      "type": "object",
+      "required": [
+        "sait_faire",
+        "ne_sait_pas_faire",
+        "fonctions",
+        "consignes"
+      ],
+      "properties": {
+        "sait_faire": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "ne_sait_pas_faire": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "fonctions": {
+          "type": "array",
+          "description": "Toutes les fonctions préfixées du code (relevées par scanner_code.py --fiche), plus les fonctions sans préfixe proposées au modèle. Les outils proposés au modèle = expose_au_modele à true ; les actions irréversibles = préfixe action_sensitive_.",
+          "items": {
+            "type": "object",
+            "required": [
+              "nom",
+              "description",
+              "expose_au_modele"
+            ],
+            "properties": {
+              "nom": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1
+              },
+              "expose_au_modele": {
+                "type": "boolean"
+              },
+              "secours_de": {
+                "type": "string",
+                "description": "Nom de la fonction que celle-ci remplace en cas d'erreur (outil de secours déclaré)."
+              }
+            }
+          }
+        },
+        "consignes": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "taches": {
+      "type": "array",
+      "description": "Un couple modèle de demande / modèle de livrable par type de tâche.",
+      "items": {
+        "type": "object",
+        "required": [
+          "type",
+          "modele_demande",
+          "modele_livrable"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+          },
+          "modele_demande": {
+            "type": "string",
+            "pattern": "^modeles/.+\\.json$"
+          },
+          "modele_livrable": {
+            "type": "string",
+            "pattern": "^modeles/.+\\.json$"
+          }
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "local",
+            "heberge"
+          ]
+        },
+        "systemes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "commande": {
+          "type": "string",
+          "minLength": 1
+        },
+        "protocole": {
+          "const": "stdio-json"
+        },
+        "endpoint": {
+          "type": "string",
+          "pattern": "^https://"
+        }
+      }
+    },
+    "modele": {
+      "type": "object",
+      "required": [
+        "via",
+        "demande",
+        "minimum",
+        "recommande"
+      ],
+      "properties": {
+        "via": {
+          "const": "porte"
+        },
+        "demande": {
+          "type": "string",
+          "minLength": 1
+        },
+        "minimum": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recommande": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ressources": {
+      "type": "object",
+      "properties": {
+        "vram_go": {
+          "type": "number"
+        },
+        "gpu_exclusif": {
+          "type": "boolean"
+        }
+      }
+    },
+    "reseau_declare": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "acces_declares": {
+      "type": "object",
+      "required": [
+        "fichiers"
+      ],
+      "properties": {
+        "fichiers": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "identifiants": {
+      "type": "array",
+      "description": "Identifiants lus dans le coffre-fort Windows sous orchestra/<id>/<nom>. Jamais leur valeur.",
+      "items": {
+        "type": "object",
+        "required": [
+          "nom",
+          "type",
+          "raison"
+        ],
+        "properties": {
+          "nom": {
+            "type": "string",
+            "pattern": "^[a-z0-9_-]+$"
+          },
+          "type": {
+            "enum": [
+              "mot_de_passe_application",
+              "cle_api",
+              "jeton",
+              "jeton_oauth"
+            ]
+          },
+          "raison": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "memoire_propre": {
+      "type": "boolean",
+      "description": "true si l'agent écrit dans agents/installes/<id>/memoire/."
+    },
+    "donnees_envoyees": {
+      "type": "string"
+    },
+    "conservation_declaree": {
+      "type": "string"
+    },
+    "compatibilite": {
+      "type": "object",
+      "required": [
+        "orchestra_min",
+        "contrat"
+      ],
+      "properties": {
+        "orchestra_min": {
+          "type": "string"
+        },
+        "contrat": {
+          "const": 1
+        }
+      }
+    },
+    "paquet": {
+      "type": "object",
+      "required": [
+        "url",
+        "taille_octets",
+        "sha256"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "taille_octets": {
+          "type": "integer"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "description": "Rempli dans l'entrée du catalogue agents.json, pas dans le manifeste du paquet (l'empreinte du .zip ne peut pas être dans le .zip)."
+    },
+    "certification": {
+      "type": "object",
+      "required": [
+        "statut"
+      ],
+      "properties": {
+        "statut": {
+          "enum": [
+            "orchestra_certified",
+            "livrable_seul",
+            "non_certifie"
+          ]
+        },
+        "version_certifiee": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        },
+        "signature": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mesures": {
+          "type": "object",
+          "description": "Maximums mesurés à l'audit par type de tâche. Orchestra met en pause à 3 fois ces valeurs.",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "duree_max_s",
+              "tokens_max",
+              "pas_max"
+            ],
+            "properties": {
+              "duree_max_s": {
+                "type": "number"
+              },
+              "tokens_max": {
+                "type": "integer"
+              },
+              "pas_max": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      }
+    },
+    "licence": {
+      "type": "string",
+      "minLength": 1
+    },
+    "prix": {
+      "type": "object"
+    },
+    "notes": {
+      "type": "object"
+    },
+    "color": {
+      "type": "string"
+    },
+    "icon": {
+      "type": "string"
+    }
+  },
+  "if": {
+    "properties": {
+      "execution": {
+        "properties": {
+          "type": {
+            "const": "local"
+          }
+        }
+      }
+    }
+  },
+  "then": {
+    "required": [
+      "modele",
+      "reseau_declare",
+      "acces_declares",
+      "identifiants",
+      "memoire_propre",
+      "taches"
+    ],
+    "properties": {
+      "execution": {
+        "required": [
+          "commande",
+          "protocole"
+        ]
+      },
+      "licence": {
+        "enum": [
+          "MIT",
+          "Apache-2.0",
+          "BSD-2-Clause",
+          "BSD-3-Clause",
+          "0BSD"
+        ]
+      }
+    }
+  },
+  "else": {
+    "required": [
+      "donnees_envoyees",
+      "conservation_declaree"
+    ],
+    "properties": {
+      "execution": {
+        "required": [
+          "endpoint"
+        ]
+      },
+      "certification": {
+        "properties": {
+          "statut": {
+            "enum": [
+              "livrable_seul",
+              "non_certifie"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

@@ -24,8 +24,19 @@ chrono = "0.4"
 dirs = "5"
 anyhow = "1"
 uuid = { version = "1", features = ["v4"] }
+# validation des schÃ©mas du contrat (motifs Â« pattern Â») ; MIT/Apache-2.0, dÃ©jÃ  prÃ©sent dans les dÃ©pendances
+regex = "1"
+zip = { version = "2", default-features = false, features = ["deflate-miniz"] }
+keyring = { version = "3", features = ["windows-native"] }
+sha2 = "0.10"
+pdf-extract = "0.9"
 
 [profile.release]
 opt-level = 2
 lto = "thin"
 codegen-units = 4
+
+[dev-dependencies]
+rcgen = "0.13"
+rustls = "0.23"
+tokio-rustls = "0.26"

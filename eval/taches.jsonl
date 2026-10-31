@@ -1,0 +1,18 @@
+{"id": "t01", "demande": "Salut, comment ça va ce soir ?", "attendu": "repondre", "note": "discussion simple"}
+{"id": "t02", "demande": "Quelle est la différence entre un processus et un thread ?", "attendu": "repondre", "note": "question de connaissance"}
+{"id": "t03", "demande": "Explique-moi en deux phrases ce qu'est une licence MIT.", "attendu": "repondre", "note": "connaissance"}
+{"id": "t04", "demande": "Qui es-tu et qu'est-ce que tu sais faire ?", "attendu": "repondre", "note": "question sur Orchestra"}
+{"id": "t05", "demande": "Rédige un mail à mon comptable pour décaler notre rendez-vous du 14 novembre à la semaine suivante.", "attendu": "deleguer", "agent": "agent-brouillons", "note": "brouillon de mail (agent de test, lot T1)"}
+{"id": "t06", "demande": "Écris un compte rendu de la réunion d'équipe de mardi : on a validé le cahier des charges d'Orchestra et lancé la phase de mesure.", "attendu": "hors_capacite", "note": "aucun agent de rédaction depuis le retrait des agents de démo (lot T1)"}
+{"id": "t07", "demande": "Fais l'inventaire des fichiers de l'espace de travail et range-les par type.", "attendu": "hors_capacite", "note": "agent-fichiers ne fait pas d'inventaire : il ne convient pas (lot T1)"}
+{"id": "t08", "demande": "Crée un fichier notes.md avec la liste de mes trois projets en cours.", "attendu": "hors_capacite", "note": "agent-fichiers ne crée pas de fichier (lot T1)"}
+{"id": "t09", "demande": "Transforme cette liste en planning daté pour la semaine prochaine : finir la phase 0, tester la voix au micro, écrire le lot F.", "attendu": "hors_capacite", "note": "aucun agent de planning depuis le retrait des agents de démo (lot T1)"}
+{"id": "t10", "demande": "Lis la page https://ollama.com/blog et fais-m'en une synthèse sourcée.", "attendu": "repondre", "note": "recherche web : Orchestra lit la page et répond lui-même (décision de PB, 30/10)"}
+{"id": "t16", "demande": "Lis la page https://ollama.com/blog et enregistre une synthèse sourcée dans un fichier veille-ollama.md.", "attendu": "hors_capacite", "note": "production (fichier) mais aucun agent de veille depuis le retrait des agents de démo (lot T1)"}
+{"id": "t11", "demande": "Écris-le.", "attendu": "preciser", "note": "ambigu : quoi ?"}
+{"id": "t12", "demande": "Envoie-lui un message pour le prévenir.", "attendu": "preciser", "note": "ambigu : à qui, quoi, par quel moyen ?"}
+{"id": "t13", "demande": "Fais-moi un résumé.", "attendu": "preciser", "note": "ambigu : de quoi ?"}
+{"id": "t14", "demande": "Réserve-moi un billet de train Lyon-Paris pour vendredi matin.", "attendu": "hors_capacite", "note": "aucun agent de réservation"}
+{"id": "t15", "demande": "Allume la lumière du salon.", "attendu": "hors_capacite", "note": "aucun agent domotique"}
+{"id": "t17", "demande": "Renomme le fichier notes.txt en compte-rendu.txt.", "attendu": "deleguer", "agent": "agent-fichiers", "note": "agent de test (lot T1)"}
+{"id": "t18", "demande": "Quelle date sommes-nous aujourd'hui ?", "attendu": "repondre", "note": "la date est dans chaque message"}

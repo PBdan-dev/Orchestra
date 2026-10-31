@@ -8,6 +8,7 @@ import { Core } from "./Core";
 import { AgentGlyph, I } from "./Icons";
 import { Inspector } from "./Inspector";
 import { AgentsPanel } from "./AgentsPanel";
+import { ModeSwitch, VoiceControls } from "./ModeSwitch";
 
 const NODE_R = 31;
 
@@ -32,6 +33,10 @@ export function Stage() {
   const setAgentsPanel = useStore((s) => s.setAgentsPanel);
   const busy = useStore((s) => s.busy);
   const simulating = useStore((s) => s.simulating);
+  const voiceOn = useStore((s) => s.voiceOn);
+  const voiceConn = useStore((s) => s.voiceConn);
+  const voiceLlm = useStore((s) => s.config?.voice_llm);
+  const switching = useStore((s) => s.switching);
 
   useEffect(() => {
     const el = ref.current!;
@@ -46,7 +51,8 @@ export function Stage() {
   const cx = usableW / 2;
   const cy = size.h / 2;
   const minSide = Math.min(usableW, size.h);
-  const R = Math.max(70, Math.min(230, minSide * 0.17 * coreScale));
+  // le cœur peut occuper presque toute la scène (bouton ⤢), sans dépasser
+  const R = Math.max(70, Math.min(minSide * 0.46, minSide * 0.17 * coreScale));
   const orbit = Math.max(R + 70, Math.min(R + 150, minSide / 2 - 64));
 
   // placement : agents de premier niveau sur l'orbite, sous-agents en éventail derrière leur parent
@@ -135,12 +141,12 @@ export function Stage() {
 
       {/* centre : identité et état du cerveau */}
       <div className="core-label" style={{ left: cx, top: cy, width: Math.max(150, R * 1.75), ["--fs" as any]: Math.max(0.72, Math.min(1.35, R / 140)) }}>
-        <button className="core-hit" onClick={() => setInspect(inspect?.type === "core" ? null : { type: "core" })} title="Détails d'Orchestra" />
+        <button className="core-hit" onClick={() => setInspect(inspect?.type === "core" ? null : { type: "core" })} title="Modèles et détails d'Orchestra" />
         <span className={`brain-pill ${status.tone}`} style={{ ["--c" as any]: status.color }} title={brain?.detail}>
           <span className="pill-dot" />{status.label}
         </span>
         <span className="core-title">Orchestra</span>
-        <span className="core-model">{brain?.model || "aucun modèle"}</span>
+        <span className="core-model">{(voiceOn ? voiceLlm : brain?.model) || "aucun modèle"}</span>
         <AnimatePresence mode="wait">
           <motion.span key={phase + phaseLabel} className="core-phase" style={{ color }}
             initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.25 }}>
@@ -148,7 +154,7 @@ export function Stage() {
           </motion.span>
         </AnimatePresence>
         <AnimatePresence>
-          {status.action && !busy && (
+          {status.action && !busy && !voiceOn && (
             <motion.button key={status.action} className="core-action" initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }}
               onClick={() => (status.action === "load" ? loadModel() : refreshBrain())}
               title={status.action === "load" ? "Charger le modèle en mémoire pour qu'il réponde tout de suite" : "Revérifier la connexion"}>
@@ -156,6 +162,9 @@ export function Stage() {
             </motion.button>
           )}
         </AnimatePresence>
+        <ModeSwitch />
+        {voiceOn && <VoiceControls />}
+        {(switching || (voiceOn && voiceConn !== "on")) && <span className="core-note">{switching || "Je prépare ma voix… (≈ 30 s)"}</span>}
       </div>
 
       {/* agents */}
@@ -184,8 +193,12 @@ export function Stage() {
       <div className="stage-tools br" style={{ right: inspectorOpen ? 392 : 12 }}>
         <span className="tools-label">Cœur</span>
         <button className="glass-icon" onClick={() => setCoreScale(coreScale - 0.1)} title="Réduire le cœur"><I.minus size={12} /></button>
-        <input className="core-slider" type="range" min={0.6} max={1.6} step={0.02} value={coreScale} onChange={(e) => setCoreScale(Number(e.target.value))} title="Taille du cœur (Ctrl + molette)" />
+        <input className="core-slider" type="range" min={0.6} max={2.6} step={0.02} value={coreScale} onChange={(e) => setCoreScale(Number(e.target.value))} title="Taille du cœur (Ctrl + molette)" />
         <button className="glass-icon" onClick={() => setCoreScale(coreScale + 0.1)} title="Agrandir le cœur"><I.plus size={12} /></button>
+        <button className={`glass-icon ${coreScale >= 2.5 ? "active" : ""}`} onClick={() => setCoreScale(coreScale >= 2.5 ? 1 : 2.6)}
+          title={coreScale >= 2.5 ? "Taille normale" : "Cœur en grand"}>
+          {coreScale >= 2.5 ? <I.shrink size={12} /> : <I.expand size={12} />}
+        </button>
       </div>
 
       <AnimatePresence>{agentsPanel && <AgentsPanel />}</AnimatePresence>

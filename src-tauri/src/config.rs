@@ -14,14 +14,53 @@ pub struct Config {
     pub claude_api_key: String,
     pub gemini_api_key: String,
     pub openrouter_api_key: String,
-    /// URL de l'Agent Market. Vide = registre local seulement.
+    /// URL de l'Agent Market, ou chemin d'un catalogue local (essais). Vide = Market officiel (D19).
     pub market_url: String,
+    /// Mode développement (lot T4) : accepte les agents non certifiés, avec le badge « Non certifié ».
+    pub mode_developpement: bool,
     /// Index vectoriel local via les embeddings d'Ollama (optionnel).
     pub embeddings_enabled: bool,
     pub embedding_model: String,
     pub user_name: String,
     /// Nombre maximal d'itérations outil pour un agent.
     pub max_agent_steps: u32,
+    /// Mode vocal (module optionnel, serveur Pipecat local).
+    pub voice_enabled: bool,
+    /// Démarrer le serveur voix au lancement d'Orchestra.
+    pub voice_autostart: bool,
+    /// « mains-libres » (le VAD détecte la fin de phrase) ou « appuyer » (appuyer pour parler).
+    pub voice_mode: String,
+    /// Touche d'appuyer-pour-parler (KeyboardEvent.code).
+    pub voice_ptt_key: String,
+    /// Lire à voix haute les réponses aux messages tapés.
+    pub voice_read_chat: bool,
+    /// Le micro reste ouvert pendant qu'Orchestra parle (on peut lui couper la parole).
+    pub voice_barge_in: bool,
+    /// Cerveau du mode vocal (rapide) ; le mode texte garde `model`.
+    pub voice_llm: String,
+    /// Voix préréglée de Qwen3-TTS.
+    pub voice_speaker: String,
+    /// Fichier de voix/references/ à cloner (vide = voix préréglée). Consentement obligatoire.
+    pub voice_reference: String,
+    pub voice_port: u16,
+    /// Modèle d'écoute : fichier GGUF de voix/modeles/voxtral.
+    pub voice_stt_model: String,
+    /// Modèle de synthèse : dossier de voix/modeles/qwen3-tts.
+    pub voice_tts_model: String,
+    /// Taille du contexte du cerveau du chat (tokens), fixe pour garder le cache (lot A).
+    pub num_ctx: u32,
+    /// Taille du contexte du cerveau vocal (modèle dérivé `<modèle>-orchestra` dans Ollama).
+    pub voice_num_ctx: u32,
+    /// Historique du chat : au-delà du seuil haut, on retire les plus anciens échanges jusqu'au seuil bas (tokens estimés).
+    pub historique_seuil_haut: u32,
+    pub historique_seuil_bas: u32,
+    /// Projet où vont les missions et les livrables (`projets/<nom>/`), choisi par PB dans l'interface (D36).
+    pub projet_actif: String,
+    /// Réserve pour la réflexion et la réponse (tokens générés au plus par appel), §5.2.
+    pub reserve_reponse: u32,
+    /// Température imposée (lanceur d'évaluation seulement, jamais enregistrée).
+    #[serde(skip)]
+    pub eval_temperature: Option<f32>,
 }
 
 impl Default for Config {
@@ -35,10 +74,30 @@ impl Default for Config {
             gemini_api_key: String::new(),
             openrouter_api_key: String::new(),
             market_url: String::new(),
+            mode_developpement: false,
             embeddings_enabled: false,
             embedding_model: "nomic-embed-text".into(),
             user_name: String::new(),
             max_agent_steps: 6,
+            voice_enabled: false,
+            voice_autostart: true,
+            voice_mode: "mains-libres".into(),
+            voice_ptt_key: "F2".into(),
+            voice_read_chat: false,
+            voice_barge_in: true,
+            voice_llm: "qwen3.5:9b".into(),
+            voice_speaker: "Ryan".into(),
+            voice_reference: String::new(),
+            voice_port: 8765,
+            voice_stt_model: "Voxtral-Mini-4B-Realtime-2602-Q8_0.gguf".into(),
+            voice_tts_model: "Qwen3-TTS-12Hz-1.7B-CustomVoice".into(),
+            num_ctx: 16384,
+            voice_num_ctx: 8192,
+            historique_seuil_haut: 8000,
+            historique_seuil_bas: 4000,
+            reserve_reponse: 4500,
+            projet_actif: "divers".into(),
+            eval_temperature: None,
         }
     }
 }

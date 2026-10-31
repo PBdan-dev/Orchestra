@@ -1,13 +1,30 @@
-mod agents;
-mod brain;
-mod config;
-mod events;
+pub mod agents;
+pub mod banc;
+pub mod brain;
+pub mod compaction;
+pub mod config;
+pub mod contrat;
+pub mod evaluation;
+pub mod integrite;
+pub mod installation;
+pub mod events;
+pub mod heberge;
 mod journal;
-mod market;
-mod memory;
-mod orchestrator;
-mod paths;
-mod tools;
+pub mod market;
+pub mod memory;
+pub mod mesures;
+pub mod orchestrator;
+pub mod paths;
+pub mod rappel;
+pub mod pilote;
+pub mod porte;
+pub mod modele;
+pub mod schema;
+pub mod suivi;
+pub mod tools;
+pub mod validations;
+pub mod verification;
+mod voice;
 
 use std::sync::{atomic::AtomicBool, Mutex};
 
@@ -22,6 +39,25 @@ pub struct AppState {
     pub paths: Paths,
     pub http: reqwest::Client,
     pub busy: AtomicBool,
+    pub voice: voice::VoiceProcess,
+    /// Conversation en cours (profil figé, fenêtre de l'historique) : lot A.
+    pub session: std::sync::Arc<Mutex<orchestrator::Session>>,
+    /// Validations des actions irréversibles et autorisations (D28).
+    pub validations: std::sync::Arc<validations::Validations>,
+    /// Mission en cours, pilotée depuis l'interface (lot T7).
+    pub pilote: std::sync::Arc<pilote::Pilote>,
+    /// Compaction en cours (lot C), annulée dès que PB parle ou écrit.
+    pub compaction: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+}
+
+/// Annule la compaction en cours, s'il y en a une (C2) ; elle sera relancée à la prochaine inactivité.
+fn annuler_compaction_en_cours(app: &AppHandle, state: &AppState) -> bool {
+    if let Some(h) = state.compaction.lock().unwrap().take() {
+        h.abort();
+        events::emit(app, events::Event::Compaction { etat: "annulee".into(), detail: "Résumé interrompu : tu as repris la parole ; il sera refait à la prochaine pause".into() });
+        return true;
+    }
+    false
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -64,29 +100,289 @@ async fn load_model(state: State<'_, AppState>) -> CmdResult<BrainInfo> {
     Ok(b.detect().await)
 }
 
-#[tauri::command]
-fn install_agent(state: State<AppState>, id: String) -> CmdResult<Manifest> {
-    let m = agents::local_registry(&state.paths)
-        .into_iter()
-        .find(|m| m.id == id)
-        .ok_or_else(|| format!("agent {id} absent du registre"))?;
-    agents::install(&state.paths, &m).map_err(err)?;
-    memory::ensure_agent_memory(&state.paths, &m).map_err(err)?;
-    Ok(m)
+/// Refus d'installation : motif affiché dans Conscience et noté au journal (lot T4).
+fn signaler_refus(app: &AppHandle, quoi: &str, motif: &str) {
+    let message = format!("Installation de {quoi} refusée : {motif}");
+    events::emit(app, events::Event::Avertissement { run_id: "installation".into(), message });
 }
 
-/// Désinstalle un agent : son manifeste est retiré, sa mémoire est conservée.
+fn signaler_installation(app: &AppHandle, i: &installation::Installation) {
+    events::emit(app, events::Event::AgentInstalle {
+        agent_id: i.manifest.id.clone(),
+        version: i.manifest.version.clone(),
+        ancienne_version: i.ancienne_version.clone(),
+        certification: i.certification.clone(),
+        identifiants_manquants: i.identifiants.iter().filter(|x| !x.present).map(|x| x.nom.clone()).collect(),
+    });
+}
+
+/// Installe ou met à jour un agent du catalogue de l'Agent Market (lot T4).
+#[tauri::command]
+async fn install_agent(app: AppHandle, state: State<'_, AppState>, id: String) -> CmdResult<installation::Installation> {
+    let cfg = state.config.lock().unwrap().clone();
+    let r = async {
+        let (lecture, source) = market::fetch_catalogue(&state.http, &cfg).await?;
+        let entree = lecture.agents.into_iter().find(|m| m.id == id).ok_or_else(|| format!("{id} absent du catalogue (ou entrée invalide)"))?;
+        installation::installer_depuis_catalogue(&state.http, &state.paths, &entree.brut, cfg.mode_developpement, &source).await
+    }
+    .await;
+    match r {
+        Ok(i) => {
+            signaler_installation(&app, &i);
+            Ok(i)
+        }
+        Err(e) => {
+            signaler_refus(&app, &id, &e);
+            Err(e)
+        }
+    }
+}
+
+/// Mode développement : installe un agent depuis un fichier .zip local (badge « Non certifié »).
+#[tauri::command]
+fn install_agent_zip(app: AppHandle, state: State<AppState>, chemin: String) -> CmdResult<installation::Installation> {
+    let mode_dev = state.config.lock().unwrap().mode_developpement;
+    let chemin = chemin.trim().trim_matches('"').to_string();
+    match installation::installer_fichier(&state.paths, std::path::Path::new(&chemin), mode_dev) {
+        Ok(i) => {
+            signaler_installation(&app, &i);
+            Ok(i)
+        }
+        Err(e) => {
+            signaler_refus(&app, &chemin, &e);
+            Err(e)
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct Catalogue {
+    entrees: Vec<installation::EntreeCatalogue>,
+    /// Entrées ignorées, avec leur motif.
+    ignores: Vec<String>,
+    source: String,
+}
+
+/// Catalogue de l'Agent Market : chaque entrée avec ce qui permet, ou non, de l'installer.
+#[tauri::command]
+async fn catalogue(state: State<'_, AppState>) -> CmdResult<Catalogue> {
+    let cfg = state.config.lock().unwrap().clone();
+    let (lecture, source) = market::fetch_catalogue(&state.http, &cfg).await?;
+    Ok(Catalogue { entrees: installation::lire_catalogue(lecture.agents, &state.paths, cfg.mode_developpement), ignores: lecture.ignores, source })
+}
+
+/// Vérifie les chaînes d'empreintes des traces (lot T6) : toutes au lancement (appelé par
+/// l'interface une fois prête), ou celles d'une mission à l'ouverture de son dossier.
+/// Le résultat part aussi dans Conscience et le journal.
+#[tauri::command]
+async fn verifier_integrite(app: AppHandle, state: State<'_, AppState>, mission: Option<String>) -> CmdResult<integrite::Bilan> {
+    let paths = state.paths.clone();
+    let m = mission.clone();
+    let b = tauri::async_runtime::spawn_blocking(move || integrite::verifier_tout(&paths, m.as_deref())).await.map_err(err)?;
+    events::emit(&app, events::Event::Integrite {
+        contexte: match &mission { Some(id) => format!("mission {id}"), None => "lancement".into() },
+        intactes: b.intactes,
+        non_chainees: b.non_chainees,
+        ruptures: b.ruptures.clone(),
+        deja_signalees: b.deja_signalees,
+    });
+    Ok(b)
+}
+
+/// Ordre de PB pour la mission en cours (lot T7) : pause, reprendre, arret, arret_immediat.
+/// L'arrêt immédiat n'arrive ici qu'après confirmation dans l'interface (D5).
+#[tauri::command]
+fn commander_mission(app: AppHandle, state: State<AppState>, mission_id: String, ordre: String) -> CmdResult<()> {
+    state.pilote.commander(&mission_id, &ordre)?;
+    events::emit(&app, events::Event::MissionOrdre { mission_id, ordre });
+    Ok(())
+}
+
+/// Reprise d'une mission arrêtée, depuis son point de reprise (lot T7, D6).
+#[tauri::command]
+async fn reprendre_mission(app: AppHandle, state: State<'_, AppState>, mission_id: String) -> CmdResult<String> {
+    if state.busy.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Err("Orchestra est déjà en train de traiter une demande.".into());
+    }
+    let run_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
+    let rid = run_id.clone();
+    tauri::async_runtime::spawn(async move {
+        orchestrator::reprendre(app, rid, mission_id).await;
+    });
+    Ok(run_id)
+}
+
+#[derive(Serialize)]
+struct MissionResume {
+    id: String,
+    date: String,
+    projet: String,
+    agent_id: String,
+    but: String,
+    etat: String,
+    ecarts: Option<usize>,
+    reprenable: bool,
+}
+
+/// Vue « Missions » (lot T7) : toutes les missions, de la plus récente à la plus ancienne.
+#[tauri::command]
+fn lister_missions(state: State<AppState>) -> Vec<MissionResume> {
+    let mut l: Vec<MissionResume> = std::fs::read_dir(&state.paths.missions)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .map(|e| {
+            let d = e.path();
+            let lire = |f: &str| std::fs::read_to_string(d.join(f)).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()).unwrap_or_default();
+            let m = lire("mission.json");
+            let cr = lire("compte_rendu.json");
+            // « ## Résultat : aucun écart » ou « ## Résultat : 2 écart(s) » (lot T5)
+            let ecarts = std::fs::read_to_string(d.join("verification.md"))
+                .ok()
+                .and_then(|t| t.lines().find(|l| l.starts_with("## Résultat : ")).map(|l| l["## Résultat : ".len()..].split_whitespace().next().and_then(|n| n.parse().ok()).unwrap_or(0)));
+            MissionResume {
+                id: e.file_name().to_string_lossy().to_string(),
+                date: m["cree_le"].as_str().unwrap_or("").to_string(),
+                projet: std::path::Path::new(m["projet"].as_str().unwrap_or("")).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+                agent_id: m["agent_id"].as_str().unwrap_or("").to_string(),
+                but: m["but"].as_str().unwrap_or("").to_string(),
+                etat: cr["etat"].as_str().unwrap_or(if state.pilote.mission_en_cours().as_deref() == Some(&e.file_name().to_string_lossy()) { "en_cours" } else { "inconnu" }).to_string(),
+                ecarts,
+                reprenable: d.join("reprise.json").exists(),
+            }
+        })
+        .collect();
+    l.sort_by(|a, b| b.date.cmp(&a.date));
+    l
+}
+
+#[derive(Serialize)]
+struct MemoireGraphique {
+    /// Mo
+    totale: u64,
+    utilisee: u64,
+    detail: String,
+}
+
+/// Mémoire de la carte graphique (nvidia-smi), affichée avec le mode série (lot T7).
+#[tauri::command]
+fn memoire_graphique() -> CmdResult<MemoireGraphique> {
+    let mut c = std::process::Command::new("nvidia-smi");
+    c.args(["--query-gpu=name,memory.total,memory.used", "--format=csv,noheader,nounits"]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        c.creation_flags(0x0800_0000);
+    }
+    let o = c.output().map_err(|e| format!("nvidia-smi indisponible : {e}"))?;
+    let t = String::from_utf8_lossy(&o.stdout);
+    let p: Vec<&str> = t.lines().next().unwrap_or("").split(',').map(|x| x.trim()).collect();
+    if p.len() < 3 {
+        return Err("carte graphique non détectée".into());
+    }
+    Ok(MemoireGraphique { totale: p[1].parse().unwrap_or(0), utilisee: p[2].parse().unwrap_or(0), detail: p[0].to_string() })
+}
+
+/// Compaction de la conversation à l'inactivité (lot C) : l'interface l'appelle après 2 min sans
+/// saisie, sans parole et sans mission. Sans effet si Orchestra travaille ou s'il n'y a rien à résumer.
+#[tauri::command]
+fn compacter(app: AppHandle, state: State<AppState>, history: Vec<Msg>) -> bool {
+    if state.busy.load(std::sync::atomic::Ordering::SeqCst) || state.pilote.mission_en_cours().is_some() {
+        return false;
+    }
+    let mut c = state.compaction.lock().unwrap();
+    if c.as_ref().is_some_and(|h| !h.inner().is_finished()) {
+        return false;
+    }
+    let cfg = state.config.lock().unwrap().clone();
+    let (paths, http, session, a) = (state.paths.clone(), state.http.clone(), state.session.clone(), app.clone());
+    *c = Some(tauri::async_runtime::spawn(async move {
+        if let Err(e) = orchestrator::compacter_session(&a, &cfg, &http, &paths, &session, &history).await {
+            events::emit(&a, events::Event::Compaction { etat: "erreur".into(), detail: format!("Résumé de la conversation impossible : {e}") });
+        }
+        if let Some(st) = a.try_state::<AppState>() {
+            st.compaction.lock().unwrap().take();
+        }
+    }));
+    true
+}
+
+/// PB parle ou écrit : la compaction en cours s'arrête (C2).
+#[tauri::command]
+fn annuler_compaction(app: AppHandle, state: State<AppState>) -> bool {
+    annuler_compaction_en_cours(&app, &state)
+}
+
+#[derive(Serialize)]
+struct EtatSession {
+    /// Messages [0, couvre) remplacés par le résumé.
+    couvre: usize,
+    resume: Option<String>,
+    /// Profil (bloc 2), figé pour la conversation : le même en chat et en voix (lot D, D1).
+    profil: String,
+}
+
+/// Résumé et début de la conversation, pour le mode voix (C9) et l'interface.
+#[tauri::command]
+fn etat_session(state: State<AppState>) -> EtatSession {
+    let s = state.session.lock().unwrap();
+    let profil = s.profil.clone().unwrap_or_else(|| memory::profil(&state.paths, orchestrator::PROFIL_MAX_CAR).0);
+    EtatSession { couvre: s.couvre, resume: s.fichier.as_ref().and_then(|f| std::fs::read_to_string(f).ok()), profil }
+}
+
+/// Confiance d'Orchestra dans chaque agent (lot T5) : statut et écarts.
+#[tauri::command]
+fn confiance_agents(state: State<AppState>) -> std::collections::BTreeMap<String, verification::EtatConfiance> {
+    verification::lire(&state.paths)
+}
+
+/// PB lève la quarantaine d'un agent : compteur remis à zéro, confiance encore à rétablir.
+#[tauri::command]
+fn lever_quarantaine(state: State<AppState>, id: String) -> CmdResult<()> {
+    verification::lever_quarantaine(&state.paths, &id).map_err(err)
+}
+
+/// PB rétablit la confiance dans un agent (il pourra de nouveau être promu « de confiance »).
+#[tauri::command]
+fn retablir_confiance(state: State<AppState>, id: String) -> CmdResult<()> {
+    verification::retablir(&state.paths, &id).map_err(err)
+}
+
+/// Identifiants déclarés par un agent installé et leur présence dans le coffre (D34).
+#[tauri::command]
+fn identifiants_agent(state: State<AppState>, id: String) -> CmdResult<Vec<installation::Identifiant>> {
+    let m = agents::get_installed(&state.paths, &id).ok_or_else(|| format!("{id} n'est pas installé"))?;
+    Ok(installation::identifiants(&m))
+}
+
+/// Range un identifiant dans le Gestionnaire d'identification de Windows (D34). La valeur
+/// n'est ni renvoyée, ni écrite au journal.
+#[tauri::command]
+fn enregistrer_identifiant(state: State<AppState>, id: String, nom: String, valeur: String) -> CmdResult<()> {
+    let m = agents::get_installed(&state.paths, &id).ok_or_else(|| format!("{id} n'est pas installé"))?;
+    installation::enregistrer_identifiant(&m, &nom, &valeur)
+
+}
+
+/// Désinstalle un agent : son dossier est mis de côté dans `agents/desinstalles/` (rien n'est
+/// effacé), la mémoire tenue par Orchestra (`memoire/agents/<id>.md`) est conservée.
 #[tauri::command]
 fn uninstall_agent(state: State<AppState>, id: String) -> CmdResult<()> {
-    let p = state.paths.installed_manifest(&id);
+    let p = agents::dossier_installe(&state.paths, &id);
     if p.exists() {
-        std::fs::remove_file(p).map_err(err)?;
+        let dest = state.paths.agents.join("desinstalles");
+        std::fs::create_dir_all(&dest).map_err(err)?;
+        let nom = format!("{}_{}", paths::safe_name(&id), chrono::Local::now().format("%Y-%m-%d_%H%M%S"));
+        std::fs::rename(p, dest.join(nom)).map_err(err)?;
     }
     Ok(())
 }
 
 #[tauri::command]
 async fn send_message(app: AppHandle, state: State<'_, AppState>, text: String, history: Vec<Msg>) -> CmdResult<String> {
+    // C2 : une compaction en cours cède la place à la demande de PB
+    annuler_compaction_en_cours(&app, &state);
     if state.busy.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return Err("Orchestra est déjà en train de traiter une demande.".into());
     }
@@ -106,7 +402,7 @@ struct AgentsList {
 
 #[tauri::command]
 fn list_agents(state: State<AppState>) -> AgentsList {
-    AgentsList { installed: agents::installed(&state.paths), registry: agents::local_registry(&state.paths) }
+    AgentsList { installed: agents::installed(&state.paths), registry: agents::local_registry(&state.paths).agents }
 }
 
 #[tauri::command]
@@ -178,6 +474,8 @@ fn open_folder(app: AppHandle, state: State<AppState>, which: String) -> CmdResu
         "agents" => state.paths.agents.clone(),
         "workspace" => state.paths.workspace.clone(),
         "journal" => state.paths.journal.clone(),
+        "projet" => state.paths.projets.join(paths::safe_name(&state.config.lock().unwrap().projet_actif)),
+        m if m.starts_with("mission:") => state.paths.missions.join(paths::safe_name(&m["mission:".len()..])),
         _ => state.paths.root.clone(),
     };
     app.opener().open_path(p.to_string_lossy().to_string(), None::<&str>).map_err(err)
@@ -186,6 +484,147 @@ fn open_folder(app: AppHandle, state: State<AppState>, which: String) -> CmdResu
 #[tauri::command]
 fn is_busy(state: State<AppState>) -> bool {
     state.busy.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+#[tauri::command]
+fn voice_status(state: State<AppState>) -> voice::VoiceStatus {
+    let cfg = state.config.lock().unwrap().clone();
+    state.voice.status(&state.paths, &cfg)
+}
+
+#[tauri::command]
+fn voice_start(state: State<AppState>) -> CmdResult<voice::VoiceStatus> {
+    let cfg = state.config.lock().unwrap().clone();
+    state.voice.start(&state.paths, &cfg).map_err(err)?;
+    Ok(state.voice.status(&state.paths, &cfg))
+}
+
+/// Démarre le serveur voix dans un mode : « voix » (conversation) ou « dictee » (écoute seule).
+#[tauri::command]
+fn voice_start_mode(state: State<AppState>, mode: String) -> CmdResult<voice::VoiceStatus> {
+    let cfg = state.config.lock().unwrap().clone();
+    state.voice.start_mode(&state.paths, &cfg, &mode).map_err(err)?;
+    Ok(state.voice.status(&state.paths, &cfg))
+}
+
+#[tauri::command]
+fn voice_stop(state: State<AppState>) -> voice::VoiceStatus {
+    state.voice.stop();
+    let cfg = state.config.lock().unwrap().clone();
+    state.voice.status(&state.paths, &cfg)
+}
+
+#[tauri::command]
+fn voice_models(state: State<AppState>) -> voice::VoiceModels {
+    voice::models(&state.paths)
+}
+
+/// Redémarre le serveur voix (changement de modèle d'écoute ou de synthèse).
+#[tauri::command]
+fn voice_restart(state: State<AppState>) -> CmdResult<voice::VoiceStatus> {
+    state.voice.stop();
+    let cfg = state.config.lock().unwrap().clone();
+    state.voice.start(&state.paths, &cfg).map_err(err)?;
+    Ok(state.voice.status(&state.paths, &cfg))
+}
+
+/// Ollama : charge `load` (cerveau du chat, gardé tant qu'Orchestra est ouvert, avec le `num_ctx`
+/// des appels) et décharge `unload` (ainsi que sa variante vocale dérivée) pour libérer la mémoire GPU.
+#[tauri::command]
+async fn ollama_switch(state: State<'_, AppState>, load: Option<String>, unload: Option<String>) -> CmdResult<()> {
+    let (base, num_ctx) = {
+        let c = state.config.lock().unwrap();
+        (c.ollama_url.trim_end_matches('/').to_string(), c.num_ctx)
+    };
+    if let Some(m) = unload.filter(|m| !m.is_empty()) {
+        for nom in [m.clone(), brain::modele_vocal_derive(&m)] {
+            let _ = state.http.post(format!("{base}/api/generate")).json(&serde_json::json!({ "model": nom, "keep_alive": 0 })).send().await;
+        }
+    }
+    if let Some(m) = load.filter(|m| !m.is_empty()) {
+        let r = state
+            .http
+            .post(format!("{base}/api/generate"))
+            .timeout(std::time::Duration::from_secs(900))
+            .json(&serde_json::json!({ "model": m, "prompt": "", "keep_alive": brain::KEEP_ALIVE, "stream": false, "options": { "num_ctx": num_ctx } }))
+            .send()
+            .await
+            .map_err(err)?;
+        if !r.status().is_success() {
+            return Err(format!("Ollama a répondu {}", r.status()));
+        }
+    }
+    Ok(())
+}
+
+/// Réponse de PB à une demande de validation (D28).
+#[tauri::command]
+fn repondre_validation(app: AppHandle, state: State<AppState>, cle: String, accepte: bool, portee: String) -> CmdResult<()> {
+    let (mission_id, _agent) = state.validations.repondre(&cle, accepte, &portee)?;
+    events::emit(&app, events::Event::ValidationReglee {
+        run_id: String::new(),
+        cle,
+        mission_id,
+        decision: if accepte { "accepte" } else { "refuse" }.into(),
+        portee,
+        automatique: false,
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn lister_autorisations(state: State<AppState>) -> Vec<validations::Autorisation> {
+    state.validations.lister()
+}
+
+#[tauri::command]
+fn retirer_autorisation(state: State<AppState>, autorisation: validations::Autorisation) -> CmdResult<()> {
+    state.validations.retirer(&autorisation).map_err(err)
+}
+
+/// Remet à zéro la mémoire propre d'un agent (D32) : l'ancienne est archivée, jamais effacée.
+#[tauri::command]
+fn reinitialiser_memoire_agent(state: State<AppState>, id: String) -> CmdResult<String> {
+    agents::archiver_memoire(&state.paths, &id).map(|p| p.to_string_lossy().to_string()).map_err(err)
+}
+
+/// Projets (D36) : dossiers de `projets/`, et le projet actif.
+#[derive(Serialize)]
+struct Projets {
+    actif: String,
+    liste: Vec<String>,
+}
+
+#[tauri::command]
+fn lister_projets(state: State<AppState>) -> Projets {
+    let actif = state.config.lock().unwrap().projet_actif.clone();
+    let mut liste: Vec<String> = std::fs::read_dir(&state.paths.projets)
+        .map(|rd| rd.flatten().filter(|e| e.path().is_dir()).map(|e| e.file_name().to_string_lossy().to_string()).collect())
+        .unwrap_or_default();
+    if !liste.contains(&actif) {
+        liste.push(actif.clone());
+    }
+    liste.sort();
+    Projets { actif, liste }
+}
+
+/// Choisit (et crée au besoin) le projet où iront les missions ; seulement depuis l'interface (D36).
+#[tauri::command]
+fn choisir_projet(state: State<AppState>, nom: String) -> CmdResult<String> {
+    let nom = paths::safe_name(nom.trim());
+    if nom.is_empty() || nom.chars().all(|c| c == '-') {
+        return Err("nom de projet vide".into());
+    }
+    std::fs::create_dir_all(state.paths.projets.join(&nom)).map_err(err)?;
+    let mut cfg = state.config.lock().unwrap();
+    cfg.projet_actif = nom.clone();
+    cfg.save(&state.paths).map_err(err)?;
+    Ok(nom)
+}
+
+#[tauri::command]
+fn voice_log(state: State<AppState>) -> String {
+    voice::VoiceProcess::log_tail(&state.paths, 40)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -200,8 +639,20 @@ pub fn run() {
             }
             agents::seed_registry(&paths).map_err(|e| anyhow::anyhow!("registre : {e}"))?;
             memory::seed_main(&paths, &config.user_name).map_err(|e| anyhow::anyhow!("mémoire : {e}"))?;
-            let http = reqwest::Client::builder().user_agent("Orchestra/0.1").build().map_err(|e| anyhow::anyhow!("http : {e}"))?;
-            app.manage(AppState { config: Mutex::new(config), paths, http, busy: AtomicBool::new(false) });
+            let http = reqwest::Client::builder().user_agent("Orchestra/0.1").connect_timeout(brain::DELAI_CONNEXION).build().map_err(|e| anyhow::anyhow!("http : {e}"))?;
+            let paths_autorisations = paths.agents.join("autorisations.json");
+            let state = AppState { config: Mutex::new(config), paths, http, busy: AtomicBool::new(false), voice: voice::VoiceProcess::default(), session: Default::default(), validations: std::sync::Arc::new(validations::Validations::new(paths_autorisations)), pilote: Default::default(), compaction: Mutex::new(None) };
+            // souvenirs pour le mode voix (lot D) : ouvert avant le serveur voix, qui en reçoit l'adresse
+            if let Err(e) = tauri::async_runtime::block_on(rappel::ouvrir(state.paths.clone())) {
+                eprintln!("rappel vocal indisponible : {e}");
+            }
+            {
+                let cfg = state.config.lock().unwrap().clone();
+                if cfg.voice_enabled && cfg.voice_autostart {
+                    let _ = state.voice.start(&state.paths, &cfg);
+                }
+            }
+            app.manage(state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -210,6 +661,21 @@ pub fn run() {
             detect_brain,
             load_model,
             install_agent,
+            install_agent_zip,
+            verifier_integrite,
+            compacter,
+            annuler_compaction,
+            etat_session,
+            commander_mission,
+            reprendre_mission,
+            lister_missions,
+            memoire_graphique,
+            confiance_agents,
+            lever_quarantaine,
+            retablir_confiance,
+            catalogue,
+            identifiants_agent,
+            enregistrer_identifiant,
             uninstall_agent,
             send_message,
             list_agents,
@@ -222,7 +688,43 @@ pub fn run() {
             get_paths,
             open_folder,
             is_busy,
+            voice_status,
+            voice_start,
+            voice_stop,
+            voice_log,
+            voice_models,
+            voice_start_mode,
+            voice_restart,
+            ollama_switch,
+            repondre_validation,
+            lister_autorisations,
+            retirer_autorisation,
+            reinitialiser_memoire_agent,
+            lister_projets,
+            choisir_projet,
         ])
-        .run(tauri::generate_context!())
-        .expect("erreur au lancement d'Orchestra");
+        .build(tauri::generate_context!())
+        .expect("erreur au lancement d'Orchestra")
+        .run(|app, event| {
+            // le serveur voix s'arrête avec Orchestra
+            if let tauri::RunEvent::Exit = event {
+                let state = app.state::<AppState>();
+                state.voice.stop();
+                // les modèles restent chargés tant qu'Orchestra est ouvert : on les libère en partant
+                let cfg = state.config.lock().unwrap().clone();
+                let base = cfg.ollama_url.trim_end_matches('/').to_string();
+                let http = state.http.clone();
+                let modeles = [cfg.model.clone(), cfg.voice_llm.clone(), brain::modele_vocal_derive(&cfg.voice_llm)];
+                tauri::async_runtime::block_on(async move {
+                    for m in modeles.iter().filter(|m| !m.is_empty()) {
+                        let _ = http
+                            .post(format!("{base}/api/generate"))
+                            .timeout(std::time::Duration::from_secs(3))
+                            .json(&serde_json::json!({ "model": m, "keep_alive": 0 }))
+                            .send()
+                            .await;
+                    }
+                });
+            }
+        });
 }

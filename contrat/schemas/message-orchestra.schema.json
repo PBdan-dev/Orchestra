@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Message d'Orchestra à un agent en cours de mission (contrat 1)",
+  "type": "object",
+  "required": ["mission_id", "type", "t"],
+  "properties": {
+    "mission_id": { "type": "string" },
+    "type": { "enum": ["arret", "pause", "reprendre", "validation"] },
+    "t": { "type": "string" },
+    "decision": { "enum": ["accepte", "refuse"], "description": "Message validation : réponse à validation_requise." },
+    "portee": { "enum": ["cette_fois", "type_session", "tout_session", "permanent"], "description": "Message validation : portée choisie par l'utilisateur." }
+  },
+  "if": { "properties": { "type": { "const": "validation" } } },
+  "then": { "required": ["decision", "portee"] }
+}

@@ -4,6 +4,7 @@ import { api } from "../tauri";
 import type { Config, Manifest } from "../types";
 import { I } from "./Icons";
 import { brainStatus } from "../brainStatus";
+import { VoiceSettings } from "./VoiceSettings";
 
 const PROVIDERS: { id: Config["provider"]; name: string; sub: string; local: boolean }[] = [
   { id: "ollama", name: "Ollama", sub: "local · défaut", local: true },
@@ -97,21 +98,28 @@ export function SettingsView() {
 
         <section className="card-section">
           <h2><I.plug size={16} /> Agent Market</h2>
-          <p className="muted small">Quand une tâche dépasse Orchestra, il cherche un agent ici. Format attendu : un JSON <code>[manifeste, …]</code> ou <code>{"{ \"agents\": [...] }"}</code> ; chaque manifeste a <code>id, name, description, capabilities, model, system_prompt, tools</code>. Sans URL, seul le registre local est utilisé.</p>
+          <p className="muted small">Catalogue des agents installables (panneau Agents). Seuls les agents « Orchestra Certified » s'installent ; le paquet est vérifié (taille et empreinte SHA-256) avant d'être ouvert. Sans adresse, Orchestra lit le Market officiel. Un chemin vers un fichier <code>agents.json</code> local est accepté pour les essais.</p>
           <div className="field-grid">
-            <label><span>URL de l'Agent Market</span><input value={form.market_url} onChange={(e) => set("market_url", e.target.value)} placeholder="https://… (à fournir)" /></label>
+            <label><span>URL de l'Agent Market</span><input value={form.market_url} onChange={(e) => set("market_url", e.target.value)} placeholder="https://pbdan-dev.github.io/Agent_Market/ (par défaut)" /></label>
           </div>
           <div className="row">
-            <button className="btn" onClick={testMarket} disabled={!form.market_url.trim()}>Tester la connexion</button>
+            <button className="btn" onClick={testMarket}>Tester la connexion</button>
             {market && <span className={`small ${market.ok ? "ok" : "warn"}`}>{market.msg}</span>}
           </div>
           {market?.agents && <div className="chips">{market.agents.map((a) => <span key={a.id} className="chip">{a.name}</span>)}</div>}
+          <label className="toggle">
+            <input type="checkbox" checked={form.mode_developpement} onChange={(e) => set("mode_developpement", e.target.checked)} />
+            <span>Mode développement</span>
+            <span className="muted small">Accepte aussi les agents non certifiés (les tiens, en cours de création), avec le badge « Non certifié », et l'installation depuis un fichier .zip. Ils ne deviennent jamais « de confiance ». Désactivé par défaut.</span>
+          </label>
           <div className="registry">
             <div className="small"><b>Registre local</b> · {registry.length} agent(s) de démonstration · <b>Installés</b> · {installed.length}</div>
             <div className="chips">{registry.map((a) => <span key={a.id} className="chip ghost" title={a.description}>{a.name}</span>)}</div>
             <button className="link-btn" onClick={() => api.openFolder("agents")}><I.external size={12} /> ouvrir agents/registre-local.json</button>
           </div>
         </section>
+
+        <VoiceSettings form={form} set={set} />
 
         <section className="card-section">
           <h2><I.memory size={16} /> Mémoire</h2>

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { useStore } from "../store";
+import { useStore, voice } from "../store";
 import { Markdown } from "../markdown";
 import { I } from "./Icons";
 
@@ -16,6 +16,9 @@ export function Conversation() {
   const send = useStore((s) => s.send);
   const clear = useStore((s) => s.clearConversation);
   const busy = useStore((s) => s.busy);
+  const voiceOn = useStore((s) => s.voiceOn);
+  const file = useStore((s) => s.fileAttente);
+  const retirerDeLaFile = useStore((s) => s.retirerDeLaFile);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -43,12 +46,14 @@ export function Conversation() {
         )}
         <AnimatePresence initial={false}>
           {messages.map((m) => (
-            <motion.div key={m.id} className={`msg ${m.role}`} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
+            <motion.div key={m.id} className={`msg ${m.role} ${m.note ? "note" : ""}`} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
               {m.role === "assistant" && (
                 <div className="msg-meta">
                   <span className="who">Orchestra</span>
                   {m.intent && <span className="chip ghost tiny">{m.intent}</span>}
                   {m.agent && <span className="chip tiny"><I.plug size={10} /> {m.agent}</span>}
+                  {m.voice && <span className="voice-tag" title="dit à voix haute"><I.mic size={10} /></span>}
+                  {voiceOn && !m.streaming && m.content && <button className="icon-btn" title="Écouter" onClick={() => voice.say(m.content)}><I.speaker size={12} /></button>}
                 </div>
               )}
               <div className="bubble">
@@ -58,6 +63,14 @@ export function Conversation() {
             </motion.div>
           ))}
         </AnimatePresence>
+        {file.length > 0 && (
+          <div className="file-attente">
+            <div className="muted">En attente ({file.length}) : envoyées une à une quand Orchestra aura fini</div>
+            {file.map((t, i) => (
+              <div key={i} className="fa-item"><span>{i + 1}. {t}</span><button className="link-btn" onClick={() => retirerDeLaFile(i)}>retirer</button></div>
+            ))}
+          </div>
+        )}
       </div>
     </section>
   );

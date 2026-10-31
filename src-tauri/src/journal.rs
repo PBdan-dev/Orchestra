@@ -1,7 +1,5 @@
 //! Journal : chaque événement est ajouté dans journal/AAAA-MM-JJ.jsonl.
 
-use std::io::Write;
-
 use tauri::{AppHandle, Manager};
 
 use crate::{events::Event, AppState};
@@ -18,9 +16,8 @@ pub fn append(app: &AppHandle, ev: &Event) {
         "at": chrono::Local::now().to_rfc3339(),
         "event": ev,
     });
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(f, "{}", line);
-    }
+    // ligne chaînée (lot T6)
+    let _ = crate::integrite::ajouter(&path, line);
 }
 
 pub fn read_day(state: &AppState, day: &str) -> Vec<serde_json::Value> {

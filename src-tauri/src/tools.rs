@@ -1,5 +1,5 @@
-//! Outils que les agents peuvent se donner. Tous sont cantonnés à
-//! l'espace de travail (dossier Orchestra › espace-de-travail), sauf fetch_url.
+//! Outils internes d'Orchestra. Depuis le lot T1, seul `fetch_url` sert (outil `lire_page` du cerveau) ;
+//! les autres servaient aux anciens agents internes, retirés.
 
 use std::path::{Path, PathBuf};
 
@@ -14,14 +14,6 @@ pub const ALL: &[(&str, &str)] = &[
     ("write_file", "Écrit (ou remplace) un fichier texte dans l'espace de travail. Entrée : {\"path\": \"resultat.md\", \"content\": \"...\"}"),
     ("fetch_url", "Télécharge une page web et renvoie son texte (tronqué). Entrée : {\"url\": \"https://...\"}"),
 ];
-
-pub fn describe(tools: &[String]) -> String {
-    ALL.iter()
-        .filter(|(n, _)| tools.iter().any(|t| t == n))
-        .map(|(n, d)| format!("- {n} : {d}"))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
 
 fn resolve(paths: &Paths, rel: &str) -> anyhow::Result<PathBuf> {
     let rel = rel.trim().trim_start_matches(['/', '\\']);

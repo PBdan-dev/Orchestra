@@ -1,0 +1,40 @@
+# Intégration continue d'Orchestra (lot F) : tests Rust, clippy et compilation de l'interface.
+# Le jeu d'évaluation (modèle réel) reste local : voir eval/ et src-tauri/examples/evaluation.rs.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verifier:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # L'interface d'abord : la compilation Rust (Tauri) a besoin du dossier dist/.
+      - name: Interface (installation et compilation)
+        run: |
+          npm ci
+          npm run build
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Tests Rust
+        working-directory: src-tauri
+        run: cargo test --lib --locked
+
+      - name: Clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --locked

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { live } from "../store";
+import { levels } from "../voice";
 import { PHASE_COLOR, type Phase } from "../types";
 
 /**
@@ -52,7 +53,10 @@ export function Core({ phase, cx, cy, R }: { phase: Phase; cx: number; cy: numbe
         idle: 2.2, loading: 7, listening: 4 + typing * 5, thinking: 9, recalling: 6, searching_agent: 7,
         delegating: 8, working: 10, speaking: 5 + Math.min(8, smoothTokens * 0.6), memorizing: 5, error: 6,
       };
-      const targetAmp = base[p] * (0.65 + live.energy * 0.9);
+      // voix : niveau réel du micro (écoute) ou de la voix d'Orchestra (parole)
+      const vlev = levels.source === "out" ? levels.out : levels.source === "mic" ? levels.mic : 0;
+      const voiced = levels.source !== "none";
+      const targetAmp = voiced ? (3 + vlev * 26) * (0.8 + live.energy * 0.4) : base[p] * (0.65 + live.energy * 0.9);
       smoothAmp += (targetAmp - smoothAmp) * 0.08;
       const amp = smoothAmp;
 
@@ -147,7 +151,10 @@ export function Core({ phase, cx, cy, R }: { phase: Phase; cx: number; cy: numbe
         const a = (i / bars) * Math.PI * 2 - rot * 0.6;
         const noise = Math.abs(Math.sin(i * 0.7 + t * 3.1 * speed) * Math.sin(i * 0.31 - t * 1.7 * speed) * Math.sin(i * 1.3 + t * 0.9));
         const idleFactor = p === "idle" ? 0.45 : 1;
-        const hgt = 2 + noise * amp * 1.7 * idleFactor + typing * 4;
+        // en mode vocal, chaque barre suit une bande du spectre (en miroir, pour un cercle symétrique)
+        const mirror = Math.abs((i % (bars / 2)) - bars / 4) / (bars / 4); // 0 au centre, 1 aux bords
+        const band = levels.spec[Math.min(levels.spec.length - 1, Math.floor((1 - mirror) * levels.spec.length))];
+        const hgt = voiced ? 2 + band * 34 * (0.6 + vlev) + noise * 3 : 2 + noise * amp * 1.7 * idleFactor + typing * 4;
         const x0 = cx + Math.cos(a) * inner, y0 = cy + Math.sin(a) * inner;
         const x1 = cx + Math.cos(a) * (inner + hgt), y1 = cy + Math.sin(a) * (inner + hgt);
         ctx.beginPath();

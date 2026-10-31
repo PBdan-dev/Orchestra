@@ -1,0 +1,21 @@
+// Jeu mémoire v2 (28/10/2026) : questions formulées sans les mots du fait, pièges proches, fait modifié, réponses absentes.
+{"id": "h01", "question": "Qu'est-ce que je prends comme boisson chaude le matin ?", "attendu": "Du thé vert (jamais de café)", "mots_cles": ["the vert"], "type": "reformulee"}
+{"id": "h02", "question": "Comment s'appelle mon ordinateur portable ?", "attendu": "Hermès", "mots_cles": ["hermes"], "type": "piege"}
+{"id": "h03", "question": "Combien de mémoire vive a mon portable ?", "attendu": "16 Go", "mots_cles": ["16 go|16go|16 gigaoctets"], "interdits": ["24 go"], "type": "piege"}
+{"id": "h04", "question": "Sur quel port écoute LM Studio ?", "attendu": "1234", "mots_cles": ["1234"], "type": "piege"}
+{"id": "h05", "question": "En décembre, quel jour aura lieu la réunion d'équipe ?", "attendu": "Le jeudi à 10 h (changement à partir de novembre)", "mots_cles": ["jeudi|jeudis"], "type": "modifie"}
+{"id": "h06", "question": "Comment s'appelle le chien de mes parents ?", "attendu": "Pixel", "mots_cles": ["pixel"], "type": "piege"}
+{"id": "h07", "question": "Quand est-ce que je vois mon avocate ?", "attendu": "Le 21 novembre (maître Duval)", "mots_cles": ["21 novembre|21 11"], "interdits": ["14 novembre|14 11"], "type": "piege"}
+{"id": "h08", "question": "Je fais du sport quel jour de la semaine ?", "attendu": "Le samedi matin (course, 10 km)", "mots_cles": ["samedi|samedis"], "type": "reformulee"}
+{"id": "h09", "question": "Est-ce que je peux manger des cacahuètes ?", "attendu": "Non, PB est allergique aux arachides", "mots_cles": ["allergique|allergie|allergies"], "interdits": ["oui"], "type": "reformulee"}
+{"id": "h10", "question": "Comment je signe mes mails à ma famille ?", "attendu": "« Pierre » (en tutoyant)", "mots_cles": ["pierre"], "type": "piege"}
+{"id": "h11", "question": "Comment s'appelle mon frère ?", "attendu": "Inconnu : rien en mémoire (seule la sœur, Claire, est connue)", "mots_cles": ["sais pas|ne connais pas|aucune information|pas d information|n ai pas|ignore|pas en memoire|ne trouve pas|aucun souvenir|pas de souvenir|ne dispose pas|pas trace|n ai aucune|pas mentionne|je ne vois pas"], "hors_memoire": true, "type": "absent"}
+{"id": "h12", "question": "Quelle est la marque de mon téléphone ?", "attendu": "Inconnu : rien en mémoire", "mots_cles": ["sais pas|ne connais pas|aucune information|pas d information|n ai pas|ignore|pas en memoire|ne trouve pas|aucun souvenir|pas de souvenir|ne dispose pas|pas trace|n ai aucune|pas mentionne|je ne vois pas"], "hors_memoire": true, "type": "absent"}
+{"id": "h13", "question": "Où habite ma sœur et que fait-elle ?", "attendu": "Claire est architecte à Lyon", "mots_cles": ["lyon", "architecte"], "type": "direct"}
+{"id": "h14", "question": "Dans quelle ville je vis ?", "attendu": "Annecy", "mots_cles": ["annecy"], "type": "reformulee"}
+{"id": "h15", "question": "Quelle musique j'écoute quand je bosse ?", "attendu": "Du jazz, surtout Bill Evans", "mots_cles": ["jazz|bill evans"], "type": "reformulee"}
+{"id": "h16", "question": "Quelle est la solution de secours pour la voix ?", "attendu": "Moshi (plan B de la pile vocale)", "mots_cles": ["moshi"], "type": "reformulee"}
+{"id": "h17", "question": "Quelle taille fait le disque de sauvegarde ?", "attendu": "4 To", "mots_cles": ["4 to|4to|4 teraoctets|quatre teraoctets"], "type": "direct"}
+{"id": "h18", "question": "Quelle est la taille du contexte en mode voix ?", "attendu": "8 192 tokens", "mots_cles": ["8 192|8192"], "type": "piege"}
+{"id": "h19", "question": "Quand est-ce que je fête mon anniversaire ?", "attendu": "Le 3 mars", "mots_cles": ["3 mars"], "type": "direct"}
+{"id": "h20", "question": "Quel est le code du local à vélos ?", "attendu": "Pas en mémoire : il est dans le gestionnaire de mots de passe", "mots_cles": ["gestionnaire|mot de passe|mots de passe"], "type": "piege"}

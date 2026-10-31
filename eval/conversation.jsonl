@@ -1,0 +1,11 @@
+// Scénario du lot A : 10 messages enchaînés dans une même conversation (mesure du cache, tour par tour).
+{"id": "c01", "message": "Bonjour, je prépare ma semaine."}
+{"id": "c02", "message": "Rappelle-moi quand est mon rendez-vous avec le comptable ?"}
+{"id": "c03", "message": "Et avec mon avocate ?"}
+{"id": "c04", "message": "Rédige un mail court à mon comptable pour confirmer le rendez-vous."}
+{"id": "c05", "message": "Merci. Quel ton tu as utilisé ?"}
+{"id": "c06", "message": "Qu'est-ce que je bois d'habitude ?"}
+{"id": "c07", "message": "Combien de mémoire a mon portable ?"}
+{"id": "c08", "message": "Et mon ordinateur principal ?"}
+{"id": "c09", "message": "Résume en une phrase ce qu'on s'est dit."}
+{"id": "c10", "message": "Merci, bonne soirée."}

@@ -14,6 +14,8 @@
 //!     installes/<id>.json    manifestes des agents installés
 //!   espace-de-travail/       seul dossier où les agents peuvent écrire
 //!   journal/AAAA-MM-JJ.jsonl tout ce qui s'est passé, événement par événement
+//!   mesures/cerveau-AAAA-MM-JJ.jsonl  une ligne par appel au cerveau (tokens, durées)
+//!   eval/                    rapports du lanceur d'évaluation
 
 use std::path::PathBuf;
 
@@ -29,17 +31,35 @@ pub struct Paths {
     pub installes: PathBuf,
     pub workspace: PathBuf,
     pub journal: PathBuf,
+    /// Mesures des appels au cerveau (Phase 0).
+    pub mesures: PathBuf,
+    /// Dossiers de mission, écrits par Orchestra seul (lot T1, complétés au lot T3).
+    pub missions: PathBuf,
+    /// Dossiers de projet, où les agents écrivent leurs livrables.
+    pub projets: PathBuf,
 }
 
 impl Paths {
-    pub fn init() -> anyhow::Result<Self> {
-        let root = match std::env::var_os("ORCHESTRA_HOME") {
+    /// Dossier racine : ORCHESTRA_HOME, sinon %USERPROFILE%\Orchestra.
+    pub fn racine_par_defaut() -> anyhow::Result<PathBuf> {
+        Ok(match std::env::var_os("ORCHESTRA_HOME") {
             Some(p) if !p.is_empty() => PathBuf::from(p),
             _ => dirs::home_dir()
                 .ok_or_else(|| anyhow::anyhow!("dossier utilisateur introuvable"))?
                 .join("Orchestra"),
-        };
+        })
+    }
+
+    pub fn init() -> anyhow::Result<Self> {
+        Self::at(Self::racine_par_defaut()?)
+    }
+
+    /// Arborescence sous un dossier donné (le lanceur d'évaluation travaille dans un dossier séparé).
+    pub fn at(root: PathBuf) -> anyhow::Result<Self> {
         let p = Paths {
+            mesures: root.join("mesures"),
+            missions: root.join("missions"),
+            projets: root.join("projets"),
             config: root.join("config.json"),
             memoire: root.join("memoire"),
             memoire_agents: root.join("memoire").join("agents"),
@@ -74,9 +94,6 @@ impl Paths {
         self.memoire_agents.join(format!("{}.md", safe_name(id)))
     }
 
-    pub fn installed_manifest(&self, id: &str) -> PathBuf {
-        self.installes.join(format!("{}.json", safe_name(id)))
-    }
 }
 
 pub fn safe_name(s: &str) -> String {

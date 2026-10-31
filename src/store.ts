@@ -1,15 +1,72 @@
 import { create } from "zustand";
 import { api, onEvent } from "./tauri";
+import { VoiceClient, type VoiceEvent } from "./voice";
 import type {
-  AgentNode, BrainInfo, ChatMessage, Config, Entry, Manifest, OrchestraEvent, PathsInfo, Phase,
+  AgentNode, Autorisation, BrainInfo, ChatMessage, Config, Entry, Installation, Manifest, Rupture, MissionVue, OrchestraEvent, PathsInfo, Phase, Projets, VoiceLatency, VoiceModels, VoiceStatus,
 } from "./types";
 
-export type View = "stage" | "memory" | "journal" | "settings";
+export type View = "stage" | "missions" | "memory" | "journal" | "settings";
 export type Inspect = { type: "agent"; id: string } | { type: "core" } | null;
 
 let seq = 0;
 export const uid = () => `${Date.now().toString(36)}-${(seq++).toString(36)}`;
 let bootPromise: Promise<void> | null = null;
+let voiceDraft: string | null = null;
+let dictBusy = false;
+/** vrai quand le run en cours a été lancé par la voix : son résultat sera lu à voix haute */
+let voiceRun = false;
+export let voice: VoiceClient;
+/** Historique renvoyé au cerveau : le message de l'utilisateur tel qu'Orchestra l'a envoyé (date et souvenirs compris), pour que le début du prompt reste identique d'un tour à l'autre (cache). */
+const historyOf = (msgs: ChatMessage[]) => msgs.filter((m) => !m.streaming && !m.sim && !m.note).map((m) => ({ role: m.role, content: m.contexte ?? m.content }));
+
+/** Lot C : activité de PB (saisie, parole, envoi) ; la compaction attend 2 min d'inactivité. */
+const INACTIVITE_MS = 120_000;
+let derniereActivite = Date.now();
+let compactionDemandee = false;
+let compactionEnCours = false;
+
+/** PB tape, parle ou envoie : la compaction en cours s'arrête (C2), la prochaine attendra une nouvelle pause. */
+export function activite() {
+  derniereActivite = Date.now();
+  compactionDemandee = false;
+  if (compactionEnCours) api.annulerCompaction().catch(() => {});
+}
+
+/** Contexte du mode voix (C9) : le résumé de la conversation et les messages qu'il ne couvre pas. */
+async function contexteVoix(msgs: ChatMessage[]) {
+  if (!voice?.connected) return;
+  const h = historyOf(msgs);
+  try {
+    const e = await api.etatSession();
+    voice.send({ type: "context", messages: h.slice(Math.min(e.couvre, h.length)), resume: e.resume ?? "", profil: e.profil });
+  } catch {
+    voice.send({ type: "context", messages: h });
+  }
+}
+
+/** Lot D (D3) : texte réellement prononcé de la dernière réponse vocale (phrases dont l'audio est parti). */
+let dernierVocal: string | null = null;
+let texteDit = "";
+
+/** Ce qui reste d'une réponse coupée : la partie dite, suivie de « [interrompu] ». */
+export function partieDite(contenu: string, dit: string): string {
+  const d = dit.trim();
+  if (d.length >= contenu.trim().length) return contenu;
+  return d ? `${d} [interrompu]` : "[interrompu]";
+}
+
+/** Mode série (lot T7) : à la fin d'un tour, la demande suivante de la file part. */
+function suivanteDeLaFile() {
+  setTimeout(() => {
+    const s = useStore.getState();
+    if (s.busy || s.fileAttente.length === 0) return;
+    const [t, ...reste] = s.fileAttente;
+    // le message mis en file était affiché : il est remplacé par le vrai envoi
+    const i = s.messages.findIndex((m) => m.note && m.role === "user" && m.content === t);
+    useStore.setState({ fileAttente: reste, messages: i >= 0 ? s.messages.filter((_, k) => k !== i) : s.messages });
+    useStore.getState().send(t, true);
+  }, 300);
+}
 
 /** Énergie partagée avec le canvas (lue à chaque frame, hors React). */
 export const live = {
@@ -49,6 +106,19 @@ interface State {
   paths: PathsInfo | null;
   registry: Manifest[];
   installed: Manifest[];
+  /** projets (D36) et autorisations d'actions irréversibles (D28) */
+  projets: Projets | null;
+  autorisations: Autorisation[];
+  /** Traces cassées (lot T6) : alerte affichée jusqu'à ce que PB l'ait vue. */
+  alertesIntegrite: Rupture[];
+  /** Demandes tapées pendant qu'Orchestra travaille : envoyées une à une ensuite (mode série, lot T7). */
+  fileAttente: string[];
+  /** Mission en cours (lot T7) : pilotable depuis sa carte. */
+  missionEnCours: string | null;
+  commanderMission: (missionId: string, ordre: string) => Promise<void>;
+  reprendreMission: (missionId: string) => Promise<void>;
+  retirerDeLaFile: (i: number) => void;
+  vuIntegrite: () => void;
   bootDone: boolean;
   memoryFocus: string | null;
   /** Taille du cœur (0.6 à 1.6) */
@@ -57,6 +127,28 @@ interface State {
   composerHeight: number;
   agentsPanel: boolean;
   simulating: boolean;
+  /** mode vocal */
+  voiceStatus: VoiceStatus | null;
+  voiceConn: "off" | "connecting" | "on" | "error";
+  /** session vocale ouverte (micro actif) */
+  voiceOn: boolean;
+  /** la personne parle (détecté par le serveur) */
+  voiceUser: boolean;
+  /** appuyer-pour-parler enfoncé */
+  voiceHeld: boolean;
+  voiceInterim: string;
+  voiceLatency: VoiceLatency | null;
+  voiceError: string;
+  /** micro coupé dans le mode voix (Orchestra n'entend plus rien) */
+  voiceMuted: boolean;
+  voiceModels: VoiceModels | null;
+  /** changement de modèle en cours (libellé) */
+  switching: string;
+  /** micro du mode chat : dictée dans la zone de saisie */
+  dictating: boolean;
+  dictInterim: string;
+  /** dernier texte dicté, à ajouter à la zone de saisie (seq change à chaque phrase) */
+  dictFinal: { text: string; seq: number };
 
   setMemoryFocus: (f: string | null) => void;
   setView: (v: View) => void;
@@ -68,8 +160,15 @@ interface State {
   refreshBrain: () => Promise<void>;
   loadModel: () => Promise<void>;
   refreshAgents: () => Promise<void>;
+  refreshProjets: () => Promise<void>;
+  choisirProjet: (nom: string) => Promise<void>;
+  repondreValidation: (cle: string, accepte: boolean, portee: string) => Promise<void>;
+  refreshAutorisations: () => Promise<void>;
+  retirerAutorisation: (a: Autorisation) => Promise<void>;
+  reinitialiserMemoire: (id: string) => Promise<string>;
   saveConfig: (c: Config) => Promise<void>;
-  send: (text: string) => Promise<void>;
+  /** `orchestrateur` : forcer la boucle centrale (délégation venue de la voix). */
+  send: (text: string, orchestrateur?: boolean) => Promise<void>;
   listening: () => void;
   handle: (e: OrchestraEvent) => void;
   clearConversation: () => void;
@@ -77,8 +176,39 @@ interface State {
   plug: (m: Manifest) => void;
   /** Débranche un agent de la scène (ses sous-agents aussi). Rien n'est supprimé sur le disque. */
   unplug: (id: string) => void;
-  installAgent: (id: string) => Promise<void>;
+  installAgent: (id: string) => Promise<Installation>;
+  installAgentZip: (chemin: string) => Promise<Installation>;
   uninstallAgent: (id: string) => Promise<void>;
+  refreshVoice: () => Promise<void>;
+  /** ouvre ou ferme la session vocale (démarre le serveur si besoin) */
+  toggleVoice: () => Promise<void>;
+  /** appuyer-pour-parler */
+  holdVoice: (down: boolean) => void;
+  stopSpeaking: () => void;
+  setMuted: (m: boolean) => void;
+  onVoice: (e: VoiceEvent) => void;
+  toggleDictation: () => Promise<void>;
+  refreshVoiceModels: () => Promise<void>;
+  /** Panneau des modèles */
+  setChatModel: (m: string) => Promise<void>;
+  setVoiceLlm: (m: string) => Promise<void>;
+  setSttModel: (f: string) => Promise<void>;
+  setTtsModel: (d: string) => Promise<void>;
+  /** voix préréglée (« Ryan »…) ou voix clonée (fichier de references, préfixe « ref: ») */
+  setVoice: (v: string) => Promise<void>;
+}
+
+/** Redémarre le serveur voix après un changement de modèle d'écoute ou de synthèse. */
+async function restartVoice(set: (p: Partial<State>) => void, get: () => State) {
+  if (!get().voiceStatus?.running && !get().voiceOn) return; // pris en compte au prochain passage en voix
+  set({ switching: "Je recharge ma voix… (≈ 30 s)" });
+  try {
+    const st = await api.voiceRestart();
+    set({ voiceStatus: st });
+  } catch (e) {
+    set({ voiceError: String(e) });
+  }
+  set({ switching: "" });
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -97,18 +227,58 @@ export const useStore = create<State>((set, get) => ({
   paths: null,
   registry: [],
   installed: [],
+  projets: null,
+  autorisations: [],
+  alertesIntegrite: [],
+  fileAttente: [],
+  missionEnCours: null,
+  retirerDeLaFile: (i) => set((s) => ({ fileAttente: s.fileAttente.filter((_, k) => k !== i) })),
+  commanderMission: async (missionId, ordre) => {
+    await api.commanderMission(missionId, ordre);
+  },
+  reprendreMission: async (missionId) => {
+    if (get().busy) throw new Error("Orchestra est déjà occupé : attends la fin de la demande en cours.");
+    set((s) => ({
+      busy: true,
+      phase: "delegating",
+      phaseLabel: "Je reprends la mission",
+      messages: [...s.messages, { id: uid(), role: "assistant", content: "", streaming: true, at: Date.now() }],
+    }));
+    try {
+      const runId = await api.reprendreMission(missionId);
+      set({ runId });
+    } catch (e) {
+      set((s) => ({ busy: false, phase: "idle", messages: s.messages.map((m) => (m.streaming && !m.voice ? { ...m, streaming: false, content: `⚠ ${String(e)}` } : m)) }));
+      throw e;
+    }
+  },
+  vuIntegrite: () => set({ alertesIntegrite: [] }),
   bootDone: false,
   memoryFocus: null,
   coreScale: pref.get("coreScale", 1),
   composerHeight: pref.get("composerHeight", 64),
   agentsPanel: false,
   simulating: false,
+  voiceStatus: null,
+  voiceConn: "off",
+  voiceOn: false,
+  voiceUser: false,
+  voiceHeld: false,
+  voiceInterim: "",
+  voiceLatency: null,
+  voiceError: "",
+  voiceMuted: false,
+  voiceModels: null,
+  switching: "",
+  dictating: false,
+  dictInterim: "",
+  dictFinal: { text: "", seq: 0 },
 
   setMemoryFocus: (memoryFocus) => set({ memoryFocus }),
   setView: (view) => set({ view }),
   setInspect: (inspect) => set({ inspect }),
   setCoreScale: (s) => {
-    const coreScale = Math.max(0.6, Math.min(1.6, Math.round(s * 100) / 100));
+    const coreScale = Math.max(0.6, Math.min(2.6, Math.round(s * 100) / 100));
     pref.set("coreScale", coreScale);
     set({ coreScale });
   },
@@ -126,7 +296,20 @@ export const useStore = create<State>((set, get) => ({
         const [config, paths] = await Promise.all([api.getConfig(), api.getPaths()]);
         set({ config, paths });
         await onEvent((e) => get().handle(e));
-        await Promise.all([get().refreshBrain(), get().refreshAgents()]);
+        voice = new VoiceClient((e) => get().onVoice(e));
+        await Promise.all([get().refreshBrain(), get().refreshAgents(), get().refreshVoice(), get().refreshVoiceModels(), get().refreshProjets().catch(() => {}), get().refreshAutorisations().catch(() => {})]);
+        // intégrité des traces (lot T6), en arrière-plan
+        api.verifierIntegrite(null).catch(() => {});
+        // Lot C : résumé de la conversation après 2 min sans saisie, sans parole et sans mission
+        setInterval(() => {
+          const st = get();
+          const parle = st.voiceUser || st.phase === "speaking";
+          if (compactionDemandee || st.busy || st.missionEnCours || parle || Date.now() - derniereActivite < INACTIVITE_MS) return;
+          const h = historyOf(st.messages);
+          if (h.length < 4) return;
+          compactionDemandee = true;
+          api.compacter(h).catch(() => {});
+        }, 15_000);
         set({ bootDone: true });
         // revérifie le cerveau régulièrement (Ollama lancé après Orchestra, modèle déchargé…)
         setInterval(() => {
@@ -167,16 +350,72 @@ export const useStore = create<State>((set, get) => ({
     set({ installed, registry });
   },
 
+  refreshProjets: async () => {
+    set({ projets: await api.listerProjets() });
+  },
+
+  choisirProjet: async (nom) => {
+    const actif = await api.choisirProjet(nom);
+    const cfg = get().config;
+    if (cfg) set({ config: { ...cfg, projet_actif: actif } });
+    await get().refreshProjets();
+  },
+
+  repondreValidation: async (cle, accepte, portee) => {
+    await api.repondreValidation(cle, accepte, portee);
+    if (accepte && portee !== "cette_fois") await get().refreshAutorisations();
+  },
+
+  refreshAutorisations: async () => {
+    set({ autorisations: await api.listerAutorisations() });
+  },
+
+  retirerAutorisation: async (a) => {
+    await api.retirerAutorisation(a);
+    await get().refreshAutorisations();
+  },
+
+  reinitialiserMemoire: async (id) => api.reinitialiserMemoireAgent(id),
+
   saveConfig: async (config) => {
     await api.saveConfig(config);
     set({ config });
     await get().refreshBrain();
   },
 
-  send: async (text) => {
+  send: async (text, orchestrateur = false) => {
     const t = text.trim();
-    if (!t || get().busy || get().simulating) return;
-    const history = get().messages.filter((m) => !m.streaming && !m.sim).map((m) => ({ role: m.role, content: m.content }));
+    if (!t || get().simulating) return;
+    // mode voix : un message tapé part au cerveau vocal (rapide, sans réflexion), la réponse est dite
+    if (!orchestrateur && get().voiceOn && voice?.connected) {
+      set((s) => ({
+        messages: [...s.messages, { id: uid(), role: "user", content: t, at: Date.now() }],
+        entries: [...s.entries, { kind: "user", id: uid(), runId: "voix", at: Date.now(), text: t }],
+        phase: "thinking",
+        phaseLabel: "Je réfléchis",
+      }));
+      activite();
+      await contexteVoix(get().messages.slice(0, -1));
+      voice.sendText(t);
+      live.pulse(0.6);
+      return;
+    }
+    activite();
+    // mode série (D7, lot T7) : pendant un travail, la demande attend son tour, visible dans la file
+    if (get().busy) {
+      const n = get().fileAttente.length + 1;
+      set((s) => ({
+        fileAttente: [...s.fileAttente, t],
+        messages: [...s.messages, { id: uid(), role: "user", content: t, at: Date.now(), note: true }, {
+          id: uid(), role: "assistant", note: true, at: Date.now(),
+          content: s.missionEnCours
+            ? `Une mission est en cours : je ne peux pas discuter pendant qu'un agent travaille. Ta demande attend son tour (n° ${n} dans la file) ; je la traiterai juste après.`
+            : `Je termine ma réponse en cours : ta demande attend son tour (n° ${n} dans la file).`,
+        }],
+      }));
+      return;
+    }
+    const history = historyOf(get().messages);
     const userMsg: ChatMessage = { id: uid(), role: "user", content: t, at: Date.now() };
     const draft: ChatMessage = { id: uid(), role: "assistant", content: "", streaming: true, at: Date.now() };
     set((s) => ({
@@ -239,8 +478,15 @@ export const useStore = create<State>((set, get) => ({
   },
 
   installAgent: async (id) => {
-    await api.installAgent(id);
+    const i = await api.installAgent(id);
     await get().refreshAgents();
+    return i;
+  },
+
+  installAgentZip: async (chemin) => {
+    const i = await api.installAgentZip(chemin);
+    await get().refreshAgents();
+    return i;
   },
 
   uninstallAgent: async (id) => {
@@ -249,9 +495,276 @@ export const useStore = create<State>((set, get) => ({
     await get().refreshAgents();
   },
 
+  refreshVoice: async () => {
+    try { set({ voiceStatus: await api.voiceStatus() }); } catch { /* sans module voix */ }
+  },
+
+  toggleVoice: async () => {
+    const s = get();
+    if (s.voiceOn) {
+      voice.disconnect();
+      set({ voiceOn: false, voiceUser: false, voiceHeld: false, voiceInterim: "", voiceConn: "off", voiceMuted: false });
+      if ((s.phase === "listening" || s.phase === "speaking") && !s.busy) set({ phase: "idle", phaseLabel: "" });
+      // retour au chat : on libère la mémoire GPU de la voix et on charge le cerveau du chat
+      try { set({ voiceStatus: await api.voiceStop() }); } catch { /* déjà arrêté */ }
+      const cfg = get().config;
+      await api.ollamaSwitch(null, cfg?.voice_llm ?? null).catch(() => {});
+      await get().refreshBrain();
+      if (get().brain?.model !== cfg?.voice_llm || get().brain?.state === "not_loaded") get().loadModel();
+      return;
+    }
+    set({ voiceError: "" });
+    if (s.dictating) await get().toggleDictation();
+    try {
+      let st = await api.voiceStatus();
+      if (!st.installed) throw new Error(`module voix incomplet : ${st.missing.join(", ")}`);
+      // passage à la voix : on décharge le cerveau du chat (le serveur voix charge le sien, plus léger)
+      const chatModel = get().brain?.model;
+      if (chatModel && chatModel !== get().config?.voice_llm) api.ollamaSwitch(null, chatModel).catch(() => {});
+      if (!st.running || st.mode !== "voix") st = await api.voiceStartMode("voix");
+      set({ voiceStatus: st });
+      const cfg = get().config!;
+      voice.muteWhileSpeaking = !cfg.voice_barge_in;
+      voice.gate = cfg.voice_mode !== "appuyer";
+      await voice.startMic();
+      await voice.connect(st.port);
+      set({ voiceOn: true });
+    } catch (e) {
+      set({ voiceError: String(e).replace(/^Error: /, ""), voiceOn: false });
+    }
+  },
+
+  holdVoice: (down) => {
+    const s = get();
+    if (!s.voiceOn || s.config?.voice_mode !== "appuyer" || s.voiceHeld === down) return;
+    if (down && voice.playing) voice.stopSpeaking();
+    voice.gate = down;
+    set({ voiceHeld: down });
+    if (down && !s.busy) set({ phase: "listening", phaseLabel: "Je t'écoute" });
+  },
+
+  stopSpeaking: () => voice?.stopSpeaking(),
+
+  setMuted: (m) => {
+    if (voice) voice.gate = !m && get().config?.voice_mode !== "appuyer";
+    set({ voiceMuted: m });
+  },
+
+  toggleDictation: async () => {
+    if (dictBusy) return; // pendant le chargement, les clics sont ignorés
+    dictBusy = true;
+    try { await dictationToggle(); } finally { dictBusy = false; }
+
+    async function dictationToggle() {
+    const s = get();
+    if (s.dictating) {
+      voice.disconnect();
+      set({ dictating: false, dictInterim: "", voiceConn: "off", voiceUser: false });
+      try { set({ voiceStatus: await api.voiceStop() }); } catch { /* déjà arrêté */ }
+      return;
+    }
+    if (s.voiceOn) return;
+    set({ voiceError: "", dictating: true });
+    try {
+      let st = await api.voiceStatus();
+      if (!st.installed) throw new Error(`module voix incomplet : ${st.missing.join(", ")}`);
+      st = await api.voiceStartMode("dictee"); // écoute seule : le cerveau du chat garde la mémoire GPU
+      set({ voiceStatus: st });
+      voice.muteWhileSpeaking = false;
+      voice.gate = true;
+      await voice.startMic();
+      await voice.connect(st.port);
+    } catch (e) {
+      set({ voiceError: String(e).replace(/^Error: /, ""), dictating: false });
+    }
+    }
+  },
+
+  onVoice: (e) => {
+    const s = get();
+    if (s.dictating) {
+      // dictée : le texte va dans la zone de saisie, rien n'est envoyé
+      if (e.type === "conn") set({ voiceConn: e.state });
+      else if (e.type === "user_start") set({ voiceUser: true, dictInterim: "" });
+      else if (e.type === "user_stop") set({ voiceUser: false });
+      else if (e.type === "user_interim") set({ dictInterim: e.text });
+      else if (e.type === "user_final") set((st) => ({ dictInterim: "", dictFinal: { text: e.text, seq: st.dictFinal.seq + 1 } }));
+      return;
+    }
+    switch (e.type) {
+      case "conn":
+        set({ voiceConn: e.state });
+        if (e.state === "on") contexteVoix(s.messages);
+        break;
+      case "user_start":
+        activite();
+        contexteVoix(s.messages);
+        set({ voiceUser: true, voiceInterim: "" });
+        if (!s.busy) set({ phase: "listening", phaseLabel: "Je t'écoute" });
+        live.pulse(0.3);
+        break;
+      case "user_stop":
+        set({ voiceUser: false });
+        if (!s.busy) set({ phase: "thinking", phaseLabel: "Je réfléchis" });
+        break;
+      case "user_interim":
+        set({ voiceInterim: e.text });
+        break;
+      case "user_final":
+        set((st) => ({
+          voiceInterim: "",
+          messages: [...st.messages, { id: uid(), role: "user", content: e.text, voice: true, at: Date.now() }],
+          entries: [...st.entries, { kind: "user", id: uid(), runId: "voix", at: Date.now(), text: `🎙 ${e.text}` }],
+        }));
+        break;
+      case "bot_start": {
+        set((st) => ({ entries: [...st.entries, { kind: "phase", id: uid(), runId: "voix", at: Date.now(), phase: "speaking", label: "Je formule ma réponse" }] }));
+        const id = uid();
+        voiceDraft = id;
+        dernierVocal = id;
+        texteDit = "";
+        set((st) => ({ messages: [...st.messages, { id, role: "assistant", content: "", streaming: true, voice: true, at: Date.now() }] }));
+        break;
+      }
+      case "bot_text":
+        live.tokens += 1;
+        set((st) => ({ messages: st.messages.map((m) => (m.id === voiceDraft ? { ...m, content: m.content + e.text } : m)) }));
+        break;
+      case "bot_dit": {
+        // une phrase de la dernière réponse vient d'être dite (« Attends, je réfléchis. » n'en fait pas partie)
+        const t = e.text.trim();
+        const m = s.messages.find((x) => x.id === dernierVocal);
+        if (t && m && m.content.includes(t)) texteDit = texteDit ? `${texteDit} ${t}` : t;
+        break;
+      }
+      case "interrupt": {
+        if (!e.enLecture || !dernierVocal) break;
+        const id = dernierVocal;
+        set((st) => ({ messages: st.messages.map((m) => (m.id === id ? { ...m, streaming: false, content: partieDite(m.content, texteDit) } : m)) }));
+        if (voiceDraft === id) voiceDraft = null;
+        dernierVocal = null;
+        contexteVoix(get().messages);
+        break;
+      }
+      case "bot_end":
+        set((st) => ({
+          messages: st.messages
+            .map((m) => (m.id === voiceDraft ? { ...m, streaming: false } : m))
+            .filter((m) => !(m.id === voiceDraft && !m.content.trim())),
+        }));
+        voiceDraft = null;
+        break;
+      case "delegate":
+        // la voix confie un travail à la boucle centrale : même chemin qu'un message tapé
+        if (e.text && !s.busy) {
+          voiceRun = true;
+          setTimeout(() => get().send(e.text, true), 0);
+        }
+        break;
+      case "playback":
+        if (e.playing) set({ phase: "speaking", phaseLabel: "Je parle" });
+        else if (!get().busy) set({ phase: "idle", phaseLabel: "" });
+        break;
+      case "thinking":
+        if (e.on) set({ phase: "thinking", phaseLabel: "Je réfléchis…" });
+        live.pulse(0.5);
+        break;
+      case "thought":
+        // réflexion du cerveau vocal, en flux, comme dans le mode chat
+        live.pulse(0.06);
+        set((st) => {
+          const last = st.entries[st.entries.length - 1];
+          if (last && last.kind === "thought" && last.runId === "voix") {
+            return { entries: [...st.entries.slice(0, -1), { ...last, text: last.text + e.text }] };
+          }
+          return { entries: [...st.entries, { kind: "thought", id: uid(), runId: "voix", at: Date.now(), text: e.text }] };
+        });
+        break;
+      case "decision":
+        set((st) => ({ entries: [...st.entries, { kind: "phase", id: uid(), runId: "voix", at: Date.now(), phase: "thinking", label: e.text }] }));
+        break;
+      case "latency": {
+        set({ voiceLatency: { total_ms: e.total_ms, vad_ms: e.vad_ms, stt_ms: e.stt_ms, llm_ms: e.llm_ms, tts_ms: e.tts_ms, at: e.at as string } });
+        const f = (v: unknown) => (typeof v === "number" ? `${v} ms` : "?");
+        set((st) => ({
+          entries: [...st.entries, {
+            kind: "phase", id: uid(), runId: "voix", at: Date.now(), phase: "speaking",
+            label: `Réponse dite en ${(e.total_ms / 1000).toFixed(2)} s · fin de phrase ${f(e.vad_ms)} · écoute ${f(e.stt_ms)} · cerveau ${f(e.llm_ms)} · voix ${f(e.tts_ms)}`,
+          }],
+        }));
+        break;
+      }
+
+      default:
+        break;
+    }
+  },
+
+  refreshVoiceModels: async () => {
+    try { set({ voiceModels: await api.voiceModels() }); } catch { /* sans module voix */ }
+  },
+
+  setChatModel: async (m) => {
+    const cfg = get().config!;
+    set({ switching: `Je charge ${m}…` });
+    await get().saveConfig({ ...cfg, model: m });
+    if (!get().voiceOn) {
+      const old = get().brain?.model;
+      await api.ollamaSwitch(m, old && old !== m ? old : null).catch((e) => set({ voiceError: String(e) }));
+      await get().refreshBrain();
+    }
+    set({ switching: "" });
+  },
+
+  setVoiceLlm: async (m) => {
+    const cfg = get().config!;
+    await get().saveConfig({ ...cfg, voice_llm: m });
+    if (get().voiceOn) {
+      const old = cfg.voice_llm;
+      if (old && old !== m) api.ollamaSwitch(null, old).catch(() => {});
+      voice.send({ type: "set_llm", model: m }); // le serveur change de cerveau à chaud et le précharge
+    }
+  },
+
+  setSttModel: async (f) => {
+    const cfg = get().config!;
+    await get().saveConfig({ ...cfg, voice_stt_model: f });
+    await restartVoice(set, get);
+  },
+
+  setTtsModel: async (d) => {
+    const cfg = get().config!;
+    const speaker = d.includes("voxtral-tts") ? "fr_female"
+      : d.includes("pocket-tts") ? (get().voiceModels?.pocket_voices.find((v) => v.includes("developpeuse")) ?? get().voiceModels?.pocket_voices[0] ?? "")
+      : (["Ryan", "Aiden", "Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ono_Anna", "Sohee"].includes(cfg.voice_speaker) ? cfg.voice_speaker : "Serena");
+    await get().saveConfig({ ...cfg, voice_tts_model: d, voice_speaker: speaker, voice_reference: d.includes("Base") ? cfg.voice_reference : "" });
+    await restartVoice(set, get);
+  },
+
+  setVoice: async (v) => {
+    const cfg = get().config!;
+    const models = get().voiceModels;
+    if (v.startsWith("ref:")) {
+      // voix clonée : il faut un modèle « Base » de Qwen3-TTS
+      const base = models?.tts.find((t) => t.includes("Base"));
+      if (!base) { set({ voiceError: "Pour une voix clonée, il faut le modèle Qwen3-TTS Base (4,5 Go)." }); return; }
+      await get().saveConfig({ ...cfg, voice_reference: v.slice(4), voice_tts_model: base });
+      await restartVoice(set, get);
+      return;
+    }
+    const wasClone = !!cfg.voice_reference || cfg.voice_tts_model.includes("Base");
+    const custom = cfg.voice_tts_model.startsWith("crisp:") ? cfg.voice_tts_model : (models?.tts.find((t) => t.includes("CustomVoice")) ?? cfg.voice_tts_model);
+    await get().saveConfig({ ...cfg, voice_speaker: v, voice_reference: "", voice_tts_model: wasClone ? custom : cfg.voice_tts_model });
+    if (wasClone) await restartVoice(set, get);
+    else if (get().voiceOn) voice.send({ type: "set_voice", speaker: v });
+  },
+
   handle: (e) => {
     const now = Date.now();
     const push = (entry: Entry) => set((s) => ({ entries: [...s.entries, entry] }));
+    /** met à jour la carte d'une mission (lot T3) */
+    const mission = (id: string, maj: (m: MissionVue) => Partial<MissionVue>) =>
+      set((s) => ({ entries: s.entries.map((x) => (x.kind === "mission" && x.missionId === id ? { ...x, ...maj(x) } : x)) }));
     switch (e.type) {
       case "phase": {
         set({ phase: e.phase, phaseLabel: e.label });
@@ -328,7 +841,7 @@ export const useStore = create<State>((set, get) => ({
         live.tokens += 1;
         live.pulse(0.08);
         set((s) => {
-          const idx = s.messages.findIndex((m) => m.streaming);
+          const idx = s.messages.findIndex((m) => m.streaming && !m.voice);
           if (idx < 0) return {};
           const msgs = s.messages.slice();
           msgs[idx] = { ...msgs[idx], content: msgs[idx].content + e.text };
@@ -348,21 +861,113 @@ export const useStore = create<State>((set, get) => ({
         set((s) => ({
           busy: false,
           runId: null,
-          messages: s.messages.map((m) =>
-            m.streaming ? { ...m, streaming: false, content: m.content || e.answer, intent: e.intent, agent: agent?.manifest.name } : m,
-          ),
+          messages: s.messages.map((m, i, all) => {
+            if (m.streaming && !m.voice) return { ...m, streaming: false, content: m.content || e.answer, intent: e.intent, agent: agent?.manifest.name };
+            // le message de l'utilisateur juste avant la réponse : on garde la version envoyée au cerveau
+            const next = all[i + 1];
+            if (m.role === "user" && next?.streaming && !next.voice && e.message_historique) return { ...m, contexte: e.message_historique };
+            return m;
+          }),
         }));
+        // réponse lue à voix haute : toujours si la demande venait de la voix, sinon selon le réglage
+        if (e.run_id !== "sim" && voice?.connected && (voiceRun || get().config?.voice_read_chat)) {
+          const last = [...get().messages].reverse().find((m) => m.role === "assistant" && !m.voice);
+          if (last?.content) voice.say(last.content);
+        }
+        voiceRun = false;
+        suivanteDeLaFile();
+        break;
+      }
+      case "mission_debut":
+        set({ missionEnCours: e.mission_id });
+        if (voice?.connected) voice.say("Je lance la mission. Tant qu'elle tourne, je ne peux pas discuter ; je te préviens quand elle est finie.");
+        push({
+          kind: "mission", id: uid(), runId: e.run_id, at: now, missionId: e.mission_id, agentId: e.agent_id, projet: e.projet,
+          dossierMission: e.dossier_mission, dossierProjet: e.dossier_projet, pensees: [], actions: [], livrables: null, memoire: [], validations: [],
+        });
+        break;
+      case "mission_pensee":
+        mission(e.mission_id, (m) => ({ pensees: [...m.pensees, e.texte] }));
+        live.pulse(0.1);
+        break;
+      case "mission_action":
+        mission(e.mission_id, (m) => ({ actions: [...m.actions, { nature: e.nature, action: e.action, detail: e.detail, raison: e.raison }] }));
+        live.pulse(0.3);
+        break;
+      case "mission_livrables":
+        mission(e.mission_id, () => ({ livrables: e.fichiers }));
+        break;
+      case "memoire_agent":
+        mission(e.mission_id, () => ({ memoire: e.changements }));
+        break;
+      case "mission_fin":
+        mission(e.mission_id, () => ({ etat: e.etat, motif: e.motif, enPause: false, limite: undefined }));
+        set({ missionEnCours: null });
+        if (voice?.connected) voice.say("La mission est terminée.");
+        break;
+      case "limite_atteinte":
+        mission(e.mission_id, () => ({ enPause: true, limite: e.texte }));
+        if (voice?.connected) voice.say("La mission a atteint une limite et elle est en pause. Dis-moi à l'écran si on continue.");
+        break;
+      case "mission_ordre":
+        mission(e.mission_id, () => (e.ordre === "pause" ? { enPause: true } : e.ordre === "reprendre" ? { enPause: false, limite: undefined } : { arretDemande: true, limite: undefined }));
+        break;
+      case "mission_verification":
+        mission(e.mission_id, () => ({ verification: { ecarts: e.ecarts, controles: e.controles, statut: e.statut, totalEcarts: e.total_ecarts, confianceRetiree: e.confiance_retiree } }));
+        if (e.ecarts.length > 0 && voiceRun && voice?.connected) voice.say("Attention : j'ai relevé un écart dans le travail de l'agent. Le détail est à l'écran.");
+        break;
+      case "validation_requise":
+        mission(e.mission_id, (m) => ({ validations: [...m.validations, { cle: e.cle, action: e.action, raison: e.raison, etat: "attente" }] }));
+        live.pulse(0.9);
+        // en mode voix : prévenir à voix haute, la réponse se donne à l'écran (décision de PB, 30/10)
+        if (get().voiceOn && voice?.connected) voice.say("J'ai besoin de ta validation à l'écran.");
+        break;
+      case "validation_reglee":
+        mission(e.mission_id, (m) => {
+          const deja = m.validations.some((v) => v.cle === e.cle);
+          const v = { etat: e.decision, portee: e.portee, automatique: e.automatique } as const;
+          return {
+            validations: deja
+              ? m.validations.map((x) => (x.cle === e.cle ? { ...x, ...v } : x))
+              : [...m.validations, { cle: e.cle, action: "", raison: "", ...v }],
+          };
+        });
+        break;
+      case "avertissement":
+        push({ kind: "avertissement", id: uid(), runId: e.run_id, at: now, message: e.message });
+        break;
+      case "compaction":
+        compactionEnCours = e.etat === "debut";
+        push({ kind: "phase", id: uid(), runId: "compaction", at: now, phase: e.etat === "erreur" ? "error" : "memorizing", label: e.detail });
+        break;
+      case "integrite": {
+        const n = e.ruptures.length;
+        const label = n === 0
+          ? `Traces vérifiées (${e.contexte}) : ${e.intactes} intacte(s)${e.non_chainees ? `, ${e.non_chainees} antérieure(s) au chaînage` : ""}${e.deja_signalees ? `, ${e.deja_signalees} cassure(s) déjà signalée(s)` : ""}`
+          : `Traces vérifiées (${e.contexte}) : ${n} cassure(s) nouvelle(s)`;
+        push({ kind: "phase", id: uid(), runId: "integrite", at: now, phase: n ? "error" : "idle", label });
+        if (n) set((s) => ({ alertesIntegrite: [...s.alertesIntegrite, ...e.ruptures] }));
+        break;
+      }
+      case "agent_installe": {
+        const quoi = e.ancienne_version ? `mis à jour (${e.ancienne_version} → ${e.version})` : `installé (version ${e.version})`;
+        const badge = e.certification === "orchestra_certified" ? "Orchestra Certified" : "Non certifié";
+        const ids = e.identifiants_manquants.length ? ` · identifiant(s) à renseigner : ${e.identifiants_manquants.join(", ")}` : "";
+        push({ kind: "phase", id: uid(), runId: "installation", at: now, phase: "idle", label: `Agent ${e.agent_id} ${quoi} · ${badge}${ids}` });
         break;
       }
       case "error": {
+        setTimeout(suivanteDeLaFile, 0);
         push({ kind: "error", id: uid(), runId: e.run_id, at: now, message: e.message });
         set((s) => ({
           busy: false,
           runId: null,
           phase: "error",
           phaseLabel: "Erreur",
-          messages: s.messages.map((m) => (m.streaming ? { ...m, streaming: false, content: m.content || `⚠ ${e.message}` } : m)),
+          messages: s.messages.map((m) => (m.streaming && !m.voice ? { ...m, streaming: false, content: m.content || `⚠ ${e.message}` } : m)),
         }));
+        if (voiceRun && voice?.connected) voice.say("La tâche a échoué. Le détail est affiché à l'écran.");
+        voiceRun = false;
         setTimeout(() => { if (get().phase === "error") set({ phase: "idle" }); }, 3000);
         break;
       }

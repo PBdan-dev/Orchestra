@@ -5,6 +5,7 @@ import { api } from "../tauri";
 import { PHASE_COLOR, PHASE_LABEL } from "../types";
 import { brainStatus, providerName } from "../brainStatus";
 import { AgentGlyph, I } from "./Icons";
+import { ModelsPanel } from "./ModelsPanel";
 
 /** Tiroir de détail : un agent (prompt, outils, mémoire) ou Orchestra lui-même. */
 export function Inspector() {
@@ -115,11 +116,10 @@ function CoreDetail() {
       </div>
       <p className="insp-desc">Je ne fais pas les tâches moi-même : je discute, je réponds, et je délègue le travail à des agents que je supervise. Tout ce que je fais est visible dans la Conscience, à gauche.</p>
 
-      <Section title="Cerveau greffé" action={<button className="link-btn" onClick={() => setView("settings")}>changer</button>}>
-        <p className="small"><b>{providerName(brain?.provider)}</b> · {brain?.model || "—"}</p>
-        <p className="small foot-status" style={{ ["--c" as any]: status.color }}><span className="pill-dot" /> {status.label}</p>
-        <p className="small muted">{brain?.detail}</p>
-        {status.action === "load" && <button className="glass-btn sm" onClick={loadModel}><I.power size={11} /> Charger le modèle</button>}
+      <Section title="Modèles" action={<button className="link-btn" onClick={() => setView("settings")}>paramètres</button>}>
+        <p className="small muted">{providerName(brain?.provider)} · {brain?.detail}</p>
+        {status.action === "load" && <button className="glass-btn sm" onClick={loadModel}><I.power size={11} /> Charger le cerveau du chat</button>}
+        <ModelsPanel />
       </Section>
 
       <Section title="Mémoire">

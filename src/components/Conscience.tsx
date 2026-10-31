@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useStore } from "../store";
-import { PHASE_COLOR, PHASE_LABEL, type Entry } from "../types";
+import { PHASE_COLOR, PHASE_LABEL, type Entry, type MissionVue, type ValidationMission } from "../types";
+import { api } from "../tauri";
 import { AgentGlyph, I } from "./Icons";
 
 /** La conscience : tout ce qu'Orchestra fait, pense, rappelle et retient, en direct. */
@@ -10,6 +11,8 @@ export function Conscience() {
   const busy = useStore((s) => s.busy);
   const phase = useStore((s) => s.phase);
   const agents = useStore((s) => s.agents);
+  const alertes = useStore((s) => s.alertesIntegrite);
+  const vuIntegrite = useStore((s) => s.vuIntegrite);
   const ref = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
@@ -40,6 +43,20 @@ export function Conscience() {
           <span className={`live-dot ${busy ? "on" : ""}`} style={{ ["--c" as any]: PHASE_COLOR[phase] }} />
         </div>
       </header>
+      {alertes.length > 0 && (
+        <div className="alerte-integrite">
+          <div className="card-head"><I.alert size={13} /> Traces modifiées hors d'Orchestra</div>
+          {alertes.map((r, i) => (
+            <div key={i} className="small">
+              <code>{r.fichier}</code>, ligne {r.ligne} : {r.motif}.{" "}
+              {r.agent_id ? <>Agent de la mission : <b>{r.agent_id}</b> (compté comme un écart).</> : "Aucun agent visé."}{" "}
+              <span className="muted">Copie gardée : {r.preuve}</span>
+            </div>
+          ))}
+          <div className="small muted">Rien n'a été réparé ni effacé. Cela peut venir d'un agent, mais aussi d'un plantage, du disque ou d'une modification à la main.</div>
+          <button className="glass-btn sm" onClick={vuIntegrite}>J'ai vu</button>
+        </div>
+      )}
       <div className="panel-body feed" ref={ref} onScroll={onScroll}>
         {entries.length === 0 && (
           <div className="empty">
@@ -115,6 +132,10 @@ function EntryView({ e, streaming, agentName, agentIcon }: { e: Entry; streaming
       );
     case "nothing":
       return <div className="entry muted"><span className="t">{time(e.at)}</span><I.save size={12} /> Rien de durable à retenir de cet échange.</div>;
+    case "mission":
+      return <MissionCard m={e} name={agentName(e.agentId)} icon={agentIcon(e.agentId)} />;
+    case "avertissement":
+      return <div className="card avert"><div className="card-head"><I.alert size={13} /> Avertissement</div><div className="small">{e.message}</div></div>;
     case "error":
       return <div className="card error"><div className="card-head"><I.alert size={13} /> Erreur</div><div className="small">{e.message}</div></div>;
   }
@@ -142,6 +163,194 @@ function ToolView({ e, name }: { e: Extract<Entry, { kind: "tool" }>; name: stri
       <div className="card-head"><I.tool size={13} /> <b>{name}</b> utilise <code>{e.tool}</code> <span className="muted small right">{open ? "réduire" : "détails"}</span></div>
       <div className="small mono clamp1">{input}</div>
       {open && <pre className="tool-out">{e.output}</pre>}
+    </div>
+  );
+}
+
+const ETATS: Record<string, string> = {
+  termine: "terminée", partiel: "partielle", echec: "échec", bloque: "bloquée", precision_requise: "précision demandée",
+  arrete_proprement: "arrêtée proprement", arrete_force: "arrêtée de force", en_pause: "en pause",
+};
+
+/**
+ * Carte d'une mission (lot T3, D14) : trois parties bien séparées.
+ * Pensée : ce que le modèle de l'agent a pensé et répondu, vu par la porte.
+ * Actions : « observée » (appel d'outil vu par la porte) ou « déclarée » (compte rendu de l'agent).
+ * Livrables : fichiers annoncés, et s'ils existent vraiment sur le disque.
+ */
+function MissionCard({ m, name, icon }: { m: MissionVue; name: string; icon: string }) {
+  const [penseeOuverte, setPenseeOuverte] = useState(false);
+  const enCours = !m.etat;
+  return (
+    <div className={`card mission-card ${enCours ? "live" : m.etat === "termine" ? "ok" : "ko"}`}>
+      <div className="card-head">
+        <AgentGlyph icon={icon} size={13} /> Mission de <b>{name}</b>
+        <span className="muted small"> · projet {m.projet}</span>
+        <span className={`tag right ${enCours ? "" : m.etat === "termine" ? "ok" : ""}`}>{enCours ? "en cours" : ETATS[m.etat!] ?? m.etat}</span>
+      </div>
+      {m.motif && <div className="small muted">{m.motif}</div>}
+
+      {enCours && <PilotageMission m={m} name={name} />}
+      {!enCours && m.etat && ["arrete_proprement", "arrete_force", "en_pause"].includes(m.etat) && <RepriseMission m={m} name={name} />}
+
+      {m.validations.map((v) => <ValidationCard key={v.cle} v={v} agent={name} />)}
+
+      <div className="mission-part">
+        <div className="mission-part-head" onClick={() => setPenseeOuverte(!penseeOuverte)}>
+          <I.spark size={12} /> Pensée <span className="muted small">· {m.pensees.length} réponse(s) du modèle, vue(s) par la porte {m.pensees.length > 0 && (penseeOuverte ? "· replier" : "· déplier")}</span>
+        </div>
+        {penseeOuverte && m.pensees.map((p, i) => <pre key={i} className="thought-text">{p}</pre>)}
+        {m.pensees.length === 0 && <div className="small muted indent">aucun modèle utilisé, ou rien encore</div>}
+      </div>
+
+      <div className="mission-part">
+        <div className="mission-part-head"><I.tool size={12} /> Actions <span className="muted small">· {m.actions.length}</span></div>
+        {m.actions.map((a, i) => (
+          <div key={i} className="mission-action">
+            <span className={`tag ${a.nature === "observee" ? "ok" : ""}`} title={a.nature === "observee" ? "vue par la porte du modèle" : "déclarée par l'agent dans son compte rendu"}>{a.nature === "observee" ? "observée" : "déclarée"}</span>{" "}
+            <code>{a.action}</code> {a.raison && <span className="muted small">— {a.raison}</span>}
+            {a.detail && <div className="small muted indent clamp2">{a.detail}</div>}
+          </div>
+        ))}
+        {m.actions.length === 0 && <div className="small muted indent">aucune</div>}
+      </div>
+
+      <div className="mission-part">
+        <div className="mission-part-head"><I.save size={12} /> Livrables</div>
+        {m.livrables === null && <div className="small muted indent">{enCours ? "à la fin de la mission" : "aucun"}</div>}
+        {m.livrables?.length === 0 && <div className="small muted indent">aucun fichier annoncé</div>}
+        {m.livrables?.map((f, i) => (
+          <div key={i} className="small indent">{f.existe ? "✓" : "✗"} <code>{f.chemin}</code> {!f.existe && <span className="muted">absent du disque (supprimé ou déplacé ?)</span>}</div>
+        ))}
+      </div>
+
+      {m.memoire.length > 0 && (
+        <div className="mission-part">
+          <div className="mission-part-head"><I.memory size={12} /> Mémoire de l'agent modifiée</div>
+          {m.memoire.map((c, i) => (
+            <div key={i} className="small indent">
+              <code>{c.fichier}</code> <span className="muted">({c.etat})</span>
+              {c.ajoutees.map((l, j) => <div key={`a${j}`} className="diff-plus">+ {l}</div>)}
+              {c.retirees.map((l, j) => <div key={`r${j}`} className="diff-moins">− {l}</div>)}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {m.verification && (
+        <div className={`mission-part verif ${m.verification.ecarts.length ? "ko" : "ok"}`}>
+          <div className="mission-part-head" title={m.verification.controles.join("\n")}>
+            <I.check size={12} /> Vérification{" "}
+            <span className="muted small">· {m.verification.ecarts.length === 0 ? "aucun écart entre ce que l'agent dit et ce qu'Orchestra constate" : `${m.verification.ecarts.length} écart(s)`}</span>
+          </div>
+          {m.verification.ecarts.map((e, i) => <div key={i} className="small indent warn">✗ {e}</div>)}
+          {m.verification.ecarts.length > 0 && (
+            <div className="small indent">
+              {m.verification.statut === "quarantaine"
+                ? `${name} est en quarantaine (${m.verification.totalEcarts} écarts au total) : je ne le choisirai plus tant que tu ne l'auras pas libéré dans le panneau Agents.`
+                : `${name} perd sa confiance${m.verification.confianceRetiree ? " (retiré des Agents de confiance)" : ""} : ${m.verification.totalEcarts} écart(s) au total, quarantaine à 3.`}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="mission-foot">
+        <button className="link-btn" onClick={() => { api.verifierIntegrite(m.missionId).catch(() => {}); api.openFolder(`mission:${m.missionId}`); }}><I.external size={11} /> dossier de la mission</button>
+        <button className="link-btn" onClick={() => api.openFolder("projet")}><I.folder size={11} /> dossier du projet</button>
+      </div>
+    </div>
+  );
+}
+
+const PORTEES: Record<string, string> = {
+  cette_fois: "cette fois",
+  type_session: "pour ce type d'action, pendant la session",
+  tout_session: "tout, pendant la session",
+  permanent: "tout, de façon permanente",
+};
+
+/** Validation d'une action irréversible (D28) : deux choix mis en avant, deux plus discrets avec confirmation. */
+function ValidationCard({ v, agent }: { v: ValidationMission; agent: string }) {
+  const repondre = useStore((s) => s.repondreValidation);
+  const [envoi, setEnvoi] = useState(false);
+  const [erreur, setErreur] = useState("");
+  const go = async (accepte: boolean, portee: string, confirmation?: string) => {
+    if (confirmation && !window.confirm(confirmation)) return;
+    setEnvoi(true);
+    setErreur("");
+    try {
+      await repondre(v.cle, accepte, portee);
+    } catch (e) {
+      setErreur(String(e));
+      setEnvoi(false);
+    }
+  };
+  if (v.etat !== "attente") {
+    return (
+      <div className={`validation reglee ${v.etat}`}>
+        {v.etat === "accepte" ? "✓ Autorisé" : "✗ Refusé"} {v.action && <code>{v.action}</code>} <span className="muted small">· {PORTEES[v.portee ?? ""] ?? v.portee}{v.automatique ? " (autorisation déjà donnée)" : ""}</span>
+      </div>
+    );
+  }
+  return (
+    <div className="validation attente">
+      <div className="card-head"><I.alert size={13} /> {agent} demande ta validation</div>
+      <div><code>{v.action}</code></div>
+      <div className="small">Raison : {v.raison || "non précisée"}</div>
+      <div className="validation-boutons">
+        <button className="glass-btn sm active" disabled={envoi} onClick={() => go(true, "cette_fois")}>Oui, cette fois</button>
+        <button className="glass-btn sm" disabled={envoi} onClick={() => go(true, "type_session")}>Oui, pour ce type d'action pendant la session</button>
+        <button className="glass-btn sm danger" disabled={envoi} onClick={() => go(false, "cette_fois")}>Non</button>
+      </div>
+      <div className="validation-discrets">
+        <button className="link-btn" disabled={envoi} onClick={() => go(true, "tout_session", `Autoriser ${agent} à faire TOUTES ses actions irréversibles sans te demander, jusqu'à la fermeture d'Orchestra ?`)}>tout autoriser pour la session</button>
+        <button className="link-btn" disabled={envoi} onClick={() => go(true, "permanent", `Autoriser ${agent} à faire TOUTES ses actions irréversibles sans te demander, de façon permanente ? Tu pourras retirer cette autorisation dans le panneau Agents.`)}>tout autoriser de façon permanente</button>
+      </div>
+      {erreur && <div className="small warn">{erreur}</div>}
+    </div>
+  );
+}
+
+/** Pilotage de la mission en cours (lot T7) : pause, reprendre, arrêt propre, arrêt immédiat (D5). */
+function PilotageMission({ m, name }: { m: MissionVue; name: string }) {
+  const commander = useStore((s) => s.commanderMission);
+  const [erreur, setErreur] = useState("");
+  const go = async (ordre: string, confirmation?: string) => {
+    if (confirmation && !window.confirm(confirmation)) return;
+    setErreur("");
+    try { await commander(m.missionId, ordre); } catch (e) { setErreur(String(e)); }
+  };
+  return (
+    <div className={`pilotage ${m.limite ? "limite" : ""}`}>
+      {m.limite && <div className="small"><I.alert size={12} /> Limite atteinte : {m.limite}. La mission est en pause. <b>On continue ?</b></div>}
+      {m.arretDemande && <div className="small muted">Arrêt demandé : {name} termine son étape en cours et note où il en est.</div>}
+      <div className="validation-boutons">
+        {m.enPause
+          ? <button className="glass-btn sm active" onClick={() => go("reprendre")}><I.play size={11} /> {m.limite ? "Continuer" : "Reprendre"}</button>
+          : !m.arretDemande && <button className="glass-btn sm" onClick={() => go("pause")}>❚❚ Pause</button>}
+        {!m.arretDemande && <button className="glass-btn sm" onClick={() => go("arret")} title="L'agent termine son étape, note où il en est, puis s'arrête">■ Arrêter</button>}
+        <button className="link-btn danger" onClick={() => go("arret_immediat", `Couper ${name} tout de suite ? Son programme est arrêté sans attendre la fin de l'étape : des fichiers peuvent rester incomplets.`)}>arrêt immédiat</button>
+      </div>
+      {erreur && <div className="small warn">{erreur}</div>}
+    </div>
+  );
+}
+
+/** Reprise d'une mission arrêtée, sur demande de PB (D6). */
+function RepriseMission({ m, name }: { m: MissionVue; name: string }) {
+  const reprendre = useStore((s) => s.reprendreMission);
+  const busy = useStore((s) => s.busy);
+  const [erreur, setErreur] = useState("");
+  const [fait, setFait] = useState(false);
+  return (
+    <div className="pilotage">
+      <div className="small">{m.etat === "arrete_force" ? "Mission coupée : des fichiers peuvent être incomplets." : `${name} a noté où il en était.`} Ce qui a déjà été fait ne sera pas refait.</div>
+      <div className="validation-boutons">
+        <button className="glass-btn sm" disabled={busy || fait} onClick={async () => { setErreur(""); try { await reprendre(m.missionId); setFait(true); } catch (e) { setErreur(String(e)); } }}>
+          <I.play size={11} /> {fait ? "Reprise lancée" : "Reprendre la mission"}
+        </button>
+      </div>
+      {erreur && <div className="small warn">{erreur}</div>}
     </div>
   );
 }
