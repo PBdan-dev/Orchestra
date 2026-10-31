@@ -4,6 +4,7 @@ pub mod brain;
 pub mod config;
 pub mod contrat;
 pub mod evaluation;
+pub mod integrite;
 pub mod installation;
 pub mod events;
 mod journal;
@@ -149,6 +150,24 @@ async fn catalogue(state: State<'_, AppState>) -> CmdResult<Catalogue> {
     let cfg = state.config.lock().unwrap().clone();
     let (lecture, source) = market::fetch_catalogue(&state.http, &cfg).await?;
     Ok(Catalogue { entrees: installation::lire_catalogue(lecture.agents, &state.paths, cfg.mode_developpement), ignores: lecture.ignores, source })
+}
+
+/// Vérifie les chaînes d'empreintes des traces (lot T6) : toutes au lancement (appelé par
+/// l'interface une fois prête), ou celles d'une mission à l'ouverture de son dossier.
+/// Le résultat part aussi dans Conscience et le journal.
+#[tauri::command]
+async fn verifier_integrite(app: AppHandle, state: State<'_, AppState>, mission: Option<String>) -> CmdResult<integrite::Bilan> {
+    let paths = state.paths.clone();
+    let m = mission.clone();
+    let b = tauri::async_runtime::spawn_blocking(move || integrite::verifier_tout(&paths, m.as_deref())).await.map_err(err)?;
+    events::emit(&app, events::Event::Integrite {
+        contexte: match &mission { Some(id) => format!("mission {id}"), None => "lancement".into() },
+        intactes: b.intactes,
+        non_chainees: b.non_chainees,
+        ruptures: b.ruptures.clone(),
+        deja_signalees: b.deja_signalees,
+    });
+    Ok(b)
 }
 
 /// Confiance d'Orchestra dans chaque agent (lot T5) : statut et écarts.
@@ -476,6 +495,7 @@ pub fn run() {
             load_model,
             install_agent,
             install_agent_zip,
+            verifier_integrite,
             confiance_agents,
             lever_quarantaine,
             retablir_confiance,

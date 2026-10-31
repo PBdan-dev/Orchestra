@@ -662,10 +662,8 @@ async fn deleguer_mission(
     for a in cr["actions_declarees"].as_array().into_iter().flatten() {
         noter_action("declaree", a["action"].as_str().unwrap_or(""), a["detail"].as_str().unwrap_or(""), a["raison"].as_str().unwrap_or(""));
     }
-    {
-        let lignes: String = actions.lock().unwrap().iter().map(|a| format!("{a}\n")).collect();
-        let _ = std::fs::write(dossier_mission.join("actions.jsonl"), lignes);
-    }
+    // actions.jsonl chaîné (lot T6)
+    let _ = crate::integrite::ecrire_tout(&dossier_mission.join("actions.jsonl"), &actions.lock().unwrap());
     // Livrables annoncés : présents sur le disque ? (vérification complète au lot T5)
     let livrables: Vec<Value> = cr
         .pointer("/resultat/fichiers")

@@ -145,6 +145,11 @@ export const mockApi = {
         : []),
     ],
   }),
+  verifierIntegrite: async (mission: string | null) => {
+    const b = { intactes: 4, non_chainees: 2, ruptures: [], deja_signalees: 0 };
+    emit({ type: "integrite", contexte: mission ? `mission ${mission}` : "lancement", ...b });
+    return b;
+  },
   confianceAgents: async () => ({ "agent-fichiers": { statut: "retire", ecarts: 1, historique: [] } }),
   leverQuarantaine: async () => {},
   retablirConfiance: async () => {},

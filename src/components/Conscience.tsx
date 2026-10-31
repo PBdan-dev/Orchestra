@@ -11,6 +11,8 @@ export function Conscience() {
   const busy = useStore((s) => s.busy);
   const phase = useStore((s) => s.phase);
   const agents = useStore((s) => s.agents);
+  const alertes = useStore((s) => s.alertesIntegrite);
+  const vuIntegrite = useStore((s) => s.vuIntegrite);
   const ref = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
@@ -41,6 +43,20 @@ export function Conscience() {
           <span className={`live-dot ${busy ? "on" : ""}`} style={{ ["--c" as any]: PHASE_COLOR[phase] }} />
         </div>
       </header>
+      {alertes.length > 0 && (
+        <div className="alerte-integrite">
+          <div className="card-head"><I.alert size={13} /> Traces modifiées hors d'Orchestra</div>
+          {alertes.map((r, i) => (
+            <div key={i} className="small">
+              <code>{r.fichier}</code>, ligne {r.ligne} : {r.motif}.{" "}
+              {r.agent_id ? <>Agent de la mission : <b>{r.agent_id}</b> (compté comme un écart).</> : "Aucun agent visé."}{" "}
+              <span className="muted">Copie gardée : {r.preuve}</span>
+            </div>
+          ))}
+          <div className="small muted">Rien n'a été réparé ni effacé. Cela peut venir d'un agent, mais aussi d'un plantage, du disque ou d'une modification à la main.</div>
+          <button className="glass-btn sm" onClick={vuIntegrite}>J'ai vu</button>
+        </div>
+      )}
       <div className="panel-body feed" ref={ref} onScroll={onScroll}>
         {entries.length === 0 && (
           <div className="empty">
@@ -236,7 +252,7 @@ function MissionCard({ m, name, icon }: { m: MissionVue; name: string; icon: str
       )}
 
       <div className="mission-foot">
-        <button className="link-btn" onClick={() => api.openFolder(`mission:${m.missionId}`)}><I.external size={11} /> dossier de la mission</button>
+        <button className="link-btn" onClick={() => { api.verifierIntegrite(m.missionId).catch(() => {}); api.openFolder(`mission:${m.missionId}`); }}><I.external size={11} /> dossier de la mission</button>
         <button className="link-btn" onClick={() => api.openFolder("projet")}><I.folder size={11} /> dossier du projet</button>
       </div>
     </div>

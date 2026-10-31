@@ -365,9 +365,8 @@ fn verifier_limites(e: &Etat) {
 // ---------- Appels au modèle ----------
 
 fn ecrire_trace(e: &Etat, ligne: Value, pensee: &str, reponse: &str) {
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(e.c.dossier.join("echanges.jsonl")) {
-        let _ = writeln!(f, "{ligne}");
-    }
+    // ligne chaînée (lot T6)
+    let _ = crate::integrite::ajouter(&e.c.dossier.join("echanges.jsonl"), ligne.clone());
     if !pensee.trim().is_empty() || !reponse.trim().is_empty() {
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(e.c.dossier.join("pensee.md")) {
             let n = ligne["n"].as_u64().unwrap_or(0);
@@ -520,9 +519,10 @@ async fn embed(e: &Etat, mut corps: Value) -> Result<Value, (u16, String)> {
     let base = e.c.cfg.ollama_url.trim_end_matches('/');
     let r = e.c.http.post(format!("{base}/api/embed")).timeout(Duration::from_secs(60)).json(&corps).send().await.map_err(|x| (503, x.to_string()))?;
     let v: Value = r.json().await.map_err(|x| (503, x.to_string()))?;
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(e.c.dossier.join("echanges.jsonl")) {
-        let _ = writeln!(f, "{}", json!({ "t": chrono::Local::now().to_rfc3339(), "chemin": "/api/embed", "modele": corps["model"], "entrees": corps["input"].as_array().map(|a| a.len()).unwrap_or(1) }));
-    }
+    let _ = crate::integrite::ajouter(
+        &e.c.dossier.join("echanges.jsonl"),
+        json!({ "t": chrono::Local::now().to_rfc3339(), "chemin": "/api/embed", "modele": corps["model"], "entrees": corps["input"].as_array().map(|a| a.len()).unwrap_or(1) }),
+    );
     Ok(v)
 }
 

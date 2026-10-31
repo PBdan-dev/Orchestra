@@ -57,6 +57,7 @@ export type OrchestraEvent =
   | { type: "coupe"; run_id: string; quoi: string; detail: string }
   | { type: "avertissement"; run_id: string; message: string }
   | { type: "mission_verification"; run_id: string; mission_id: string; agent_id: string; ecarts: string[]; controles: string[]; statut: string; total_ecarts: number; confiance_retiree: boolean }
+  | { type: "integrite"; contexte: string; intactes: number; non_chainees: number; ruptures: Rupture[]; deja_signalees: number }
   | { type: "agent_installe"; agent_id: string; version: string; ancienne_version: string | null; certification: string; identifiants_manquants: string[] }
   | { type: "mission_debut"; run_id: string; mission_id: string; agent_id: string; projet: string; dossier_mission: string; dossier_projet: string }
   | { type: "mission_pensee"; run_id: string; mission_id: string; agent_id: string; texte: string }
@@ -185,6 +186,9 @@ export interface MissionVue {
   verification?: VerificationMission;
 }
 export interface VerificationMission { ecarts: string[]; controles: string[]; statut: string; totalEcarts: number; confianceRetiree: boolean }
+/** Trace dont la chaîne d'empreintes est cassée (lot T6). */
+export interface Rupture { fichier: string; ligne: number; motif: string; agent_id: string | null; mission_id: string | null; preuve: string }
+export interface BilanIntegrite { intactes: number; non_chainees: number; ruptures: Rupture[]; deja_signalees: number }
 /** Confiance dans un agent (lot T5, agents/confiance.json). */
 export interface EtatConfiance { statut: "normal" | "retire" | "quarantaine"; ecarts: number; historique: unknown[] }
 /** Autorisation d'actions irréversibles (D28) */

@@ -550,3 +550,7 @@ pre { margin: 0; font-family: var(--mono); font-size: 12px; white-space: pre-wra
 .mission-part.verif.ko { border-top-color: rgba(248, 113, 113, .45); }
 .tag.quarantaine { border-color: rgba(248, 113, 113, .6); color: #fca5a5; }
 .tag.retire { border-color: rgba(251, 191, 36, .5); color: #fbbf24; }
+
+/* Lot T6 : intégrité des traces */
+.alerte-integrite { margin: 8px 10px 0; padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(248, 113, 113, .6); background: rgba(248, 113, 113, .1); display: flex; flex-direction: column; gap: 5px; }
+.alerte-integrite .glass-btn { align-self: flex-start; }

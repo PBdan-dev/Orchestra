@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { api, onEvent } from "./tauri";
 import { VoiceClient, type VoiceEvent } from "./voice";
 import type {
-  AgentNode, Autorisation, BrainInfo, ChatMessage, Config, Entry, Installation, Manifest, MissionVue, OrchestraEvent, PathsInfo, Phase, Projets, VoiceLatency, VoiceModels, VoiceStatus,
+  AgentNode, Autorisation, BrainInfo, ChatMessage, Config, Entry, Installation, Manifest, Rupture, MissionVue, OrchestraEvent, PathsInfo, Phase, Projets, VoiceLatency, VoiceModels, VoiceStatus,
 } from "./types";
 
 export type View = "stage" | "memory" | "journal" | "settings";
@@ -60,6 +60,9 @@ interface State {
   /** projets (D36) et autorisations d'actions irréversibles (D28) */
   projets: Projets | null;
   autorisations: Autorisation[];
+  /** Traces cassées (lot T6) : alerte affichée jusqu'à ce que PB l'ait vue. */
+  alertesIntegrite: Rupture[];
+  vuIntegrite: () => void;
   bootDone: boolean;
   memoryFocus: string | null;
   /** Taille du cœur (0.6 à 1.6) */
@@ -170,6 +173,8 @@ export const useStore = create<State>((set, get) => ({
   installed: [],
   projets: null,
   autorisations: [],
+  alertesIntegrite: [],
+  vuIntegrite: () => set({ alertesIntegrite: [] }),
   bootDone: false,
   memoryFocus: null,
   coreScale: pref.get("coreScale", 1),
@@ -215,6 +220,8 @@ export const useStore = create<State>((set, get) => ({
         await onEvent((e) => get().handle(e));
         voice = new VoiceClient((e) => get().onVoice(e));
         await Promise.all([get().refreshBrain(), get().refreshAgents(), get().refreshVoice(), get().refreshVoiceModels(), get().refreshProjets().catch(() => {}), get().refreshAutorisations().catch(() => {})]);
+        // intégrité des traces (lot T6), en arrière-plan
+        api.verifierIntegrite(null).catch(() => {});
         set({ bootDone: true });
         // revérifie le cerveau régulièrement (Ollama lancé après Orchestra, modèle déchargé…)
         setInterval(() => {
@@ -795,6 +802,15 @@ export const useStore = create<State>((set, get) => ({
       case "avertissement":
         push({ kind: "avertissement", id: uid(), runId: e.run_id, at: now, message: e.message });
         break;
+      case "integrite": {
+        const n = e.ruptures.length;
+        const label = n === 0
+          ? `Traces vérifiées (${e.contexte}) : ${e.intactes} intacte(s)${e.non_chainees ? `, ${e.non_chainees} antérieure(s) au chaînage` : ""}${e.deja_signalees ? `, ${e.deja_signalees} cassure(s) déjà signalée(s)` : ""}`
+          : `Traces vérifiées (${e.contexte}) : ${n} cassure(s) nouvelle(s)`;
+        push({ kind: "phase", id: uid(), runId: "integrite", at: now, phase: n ? "error" : "idle", label });
+        if (n) set((s) => ({ alertesIntegrite: [...s.alertesIntegrite, ...e.ruptures] }));
+        break;
+      }
       case "agent_installe": {
         const quoi = e.ancienne_version ? `mis à jour (${e.ancienne_version} → ${e.version})` : `installé (version ${e.version})`;
         const badge = e.certification === "orchestra_certified" ? "Orchestra Certified" : "Non certifié";
