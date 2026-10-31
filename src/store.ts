@@ -19,6 +19,31 @@ export let voice: VoiceClient;
 /** Historique renvoyé au cerveau : le message de l'utilisateur tel qu'Orchestra l'a envoyé (date et souvenirs compris), pour que le début du prompt reste identique d'un tour à l'autre (cache). */
 const historyOf = (msgs: ChatMessage[]) => msgs.filter((m) => !m.streaming && !m.sim && !m.note).map((m) => ({ role: m.role, content: m.contexte ?? m.content }));
 
+/** Lot C : activité de PB (saisie, parole, envoi) ; la compaction attend 2 min d'inactivité. */
+const INACTIVITE_MS = 120_000;
+let derniereActivite = Date.now();
+let compactionDemandee = false;
+let compactionEnCours = false;
+
+/** PB tape, parle ou envoie : la compaction en cours s'arrête (C2), la prochaine attendra une nouvelle pause. */
+export function activite() {
+  derniereActivite = Date.now();
+  compactionDemandee = false;
+  if (compactionEnCours) api.annulerCompaction().catch(() => {});
+}
+
+/** Contexte du mode voix (C9) : le résumé de la conversation et les messages qu'il ne couvre pas. */
+async function contexteVoix(msgs: ChatMessage[]) {
+  if (!voice?.connected) return;
+  const h = historyOf(msgs);
+  try {
+    const e = await api.etatSession();
+    voice.send({ type: "context", messages: h.slice(Math.min(e.couvre, h.length)), resume: e.resume ?? "" });
+  } catch {
+    voice.send({ type: "context", messages: h });
+  }
+}
+
 /** Mode série (lot T7) : à la fin d'un tour, la demande suivante de la file part. */
 function suivanteDeLaFile() {
   setTimeout(() => {
@@ -264,6 +289,16 @@ export const useStore = create<State>((set, get) => ({
         await Promise.all([get().refreshBrain(), get().refreshAgents(), get().refreshVoice(), get().refreshVoiceModels(), get().refreshProjets().catch(() => {}), get().refreshAutorisations().catch(() => {})]);
         // intégrité des traces (lot T6), en arrière-plan
         api.verifierIntegrite(null).catch(() => {});
+        // Lot C : résumé de la conversation après 2 min sans saisie, sans parole et sans mission
+        setInterval(() => {
+          const st = get();
+          const parle = st.voiceUser || st.phase === "speaking";
+          if (compactionDemandee || st.busy || st.missionEnCours || parle || Date.now() - derniereActivite < INACTIVITE_MS) return;
+          const h = historyOf(st.messages);
+          if (h.length < 4) return;
+          compactionDemandee = true;
+          api.compacter(h).catch(() => {});
+        }, 15_000);
         set({ bootDone: true });
         // revérifie le cerveau régulièrement (Ollama lancé après Orchestra, modèle déchargé…)
         setInterval(() => {
@@ -348,11 +383,13 @@ export const useStore = create<State>((set, get) => ({
         phase: "thinking",
         phaseLabel: "Je réfléchis",
       }));
-      voice.send({ type: "context", messages: historyOf(get().messages.slice(0, -1)) });
+      activite();
+      await contexteVoix(get().messages.slice(0, -1));
       voice.sendText(t);
       live.pulse(0.6);
       return;
     }
+    activite();
     // mode série (D7, lot T7) : pendant un travail, la demande attend son tour, visible dans la file
     if (get().busy) {
       const n = get().fileAttente.length + 1;
@@ -546,10 +583,11 @@ export const useStore = create<State>((set, get) => ({
     switch (e.type) {
       case "conn":
         set({ voiceConn: e.state });
-        if (e.state === "on") voice.send({ type: "context", messages: historyOf(s.messages) });
+        if (e.state === "on") contexteVoix(s.messages);
         break;
       case "user_start":
-        voice.send({ type: "context", messages: historyOf(s.messages) });
+        activite();
+        contexteVoix(s.messages);
         set({ voiceUser: true, voiceInterim: "" });
         if (!s.busy) set({ phase: "listening", phaseLabel: "Je t'écoute" });
         live.pulse(0.3);
@@ -868,6 +906,10 @@ export const useStore = create<State>((set, get) => ({
         break;
       case "avertissement":
         push({ kind: "avertissement", id: uid(), runId: e.run_id, at: now, message: e.message });
+        break;
+      case "compaction":
+        compactionEnCours = e.etat === "debut";
+        push({ kind: "phase", id: uid(), runId: "compaction", at: now, phase: e.etat === "erreur" ? "error" : "memorizing", label: e.detail });
         break;
       case "integrite": {
         const n = e.ruptures.length;

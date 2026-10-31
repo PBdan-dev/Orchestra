@@ -1,6 +1,7 @@
 pub mod agents;
 pub mod banc;
 pub mod brain;
+pub mod compaction;
 pub mod config;
 pub mod contrat;
 pub mod evaluation;
@@ -44,6 +45,18 @@ pub struct AppState {
     pub validations: std::sync::Arc<validations::Validations>,
     /// Mission en cours, pilotée depuis l'interface (lot T7).
     pub pilote: std::sync::Arc<pilote::Pilote>,
+    /// Compaction en cours (lot C), annulée dès que PB parle ou écrit.
+    pub compaction: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+}
+
+/// Annule la compaction en cours, s'il y en a une (C2) ; elle sera relancée à la prochaine inactivité.
+fn annuler_compaction_en_cours(app: &AppHandle, state: &AppState) -> bool {
+    if let Some(h) = state.compaction.lock().unwrap().take() {
+        h.abort();
+        events::emit(app, events::Event::Compaction { etat: "annulee".into(), detail: "Résumé interrompu : tu as repris la parole ; il sera refait à la prochaine pause".into() });
+        return true;
+    }
+    false
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -270,6 +283,50 @@ fn memoire_graphique() -> CmdResult<MemoireGraphique> {
     Ok(MemoireGraphique { totale: p[1].parse().unwrap_or(0), utilisee: p[2].parse().unwrap_or(0), detail: p[0].to_string() })
 }
 
+/// Compaction de la conversation à l'inactivité (lot C) : l'interface l'appelle après 2 min sans
+/// saisie, sans parole et sans mission. Sans effet si Orchestra travaille ou s'il n'y a rien à résumer.
+#[tauri::command]
+fn compacter(app: AppHandle, state: State<AppState>, history: Vec<Msg>) -> bool {
+    if state.busy.load(std::sync::atomic::Ordering::SeqCst) || state.pilote.mission_en_cours().is_some() {
+        return false;
+    }
+    let mut c = state.compaction.lock().unwrap();
+    if c.as_ref().is_some_and(|h| !h.inner().is_finished()) {
+        return false;
+    }
+    let cfg = state.config.lock().unwrap().clone();
+    let (paths, http, session, a) = (state.paths.clone(), state.http.clone(), state.session.clone(), app.clone());
+    *c = Some(tauri::async_runtime::spawn(async move {
+        if let Err(e) = orchestrator::compacter_session(&a, &cfg, &http, &paths, &session, &history).await {
+            events::emit(&a, events::Event::Compaction { etat: "erreur".into(), detail: format!("Résumé de la conversation impossible : {e}") });
+        }
+        if let Some(st) = a.try_state::<AppState>() {
+            st.compaction.lock().unwrap().take();
+        }
+    }));
+    true
+}
+
+/// PB parle ou écrit : la compaction en cours s'arrête (C2).
+#[tauri::command]
+fn annuler_compaction(app: AppHandle, state: State<AppState>) -> bool {
+    annuler_compaction_en_cours(&app, &state)
+}
+
+#[derive(Serialize)]
+struct EtatSession {
+    /// Messages [0, couvre) remplacés par le résumé.
+    couvre: usize,
+    resume: Option<String>,
+}
+
+/// Résumé et début de la conversation, pour le mode voix (C9) et l'interface.
+#[tauri::command]
+fn etat_session(state: State<AppState>) -> EtatSession {
+    let s = state.session.lock().unwrap();
+    EtatSession { couvre: s.couvre, resume: s.fichier.as_ref().and_then(|f| std::fs::read_to_string(f).ok()) }
+}
+
 /// Confiance d'Orchestra dans chaque agent (lot T5) : statut et écarts.
 #[tauri::command]
 fn confiance_agents(state: State<AppState>) -> std::collections::BTreeMap<String, verification::EtatConfiance> {
@@ -320,6 +377,8 @@ fn uninstall_agent(state: State<AppState>, id: String) -> CmdResult<()> {
 
 #[tauri::command]
 async fn send_message(app: AppHandle, state: State<'_, AppState>, text: String, history: Vec<Msg>) -> CmdResult<String> {
+    // C2 : une compaction en cours cède la place à la demande de PB
+    annuler_compaction_en_cours(&app, &state);
     if state.busy.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return Err("Orchestra est déjà en train de traiter une demande.".into());
     }
@@ -578,7 +637,7 @@ pub fn run() {
             memory::seed_main(&paths, &config.user_name).map_err(|e| anyhow::anyhow!("mémoire : {e}"))?;
             let http = reqwest::Client::builder().user_agent("Orchestra/0.1").connect_timeout(brain::DELAI_CONNEXION).build().map_err(|e| anyhow::anyhow!("http : {e}"))?;
             let paths_autorisations = paths.agents.join("autorisations.json");
-            let state = AppState { config: Mutex::new(config), paths, http, busy: AtomicBool::new(false), voice: voice::VoiceProcess::default(), session: Default::default(), validations: std::sync::Arc::new(validations::Validations::new(paths_autorisations)), pilote: Default::default() };
+            let state = AppState { config: Mutex::new(config), paths, http, busy: AtomicBool::new(false), voice: voice::VoiceProcess::default(), session: Default::default(), validations: std::sync::Arc::new(validations::Validations::new(paths_autorisations)), pilote: Default::default(), compaction: Mutex::new(None) };
             {
                 let cfg = state.config.lock().unwrap().clone();
                 if cfg.voice_enabled && cfg.voice_autostart {
@@ -596,6 +655,9 @@ pub fn run() {
             install_agent,
             install_agent_zip,
             verifier_integrite,
+            compacter,
+            annuler_compaction,
+            etat_session,
             commander_mission,
             reprendre_mission,
             lister_missions,

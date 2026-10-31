@@ -354,12 +354,21 @@ class ClientCommands(FrameProcessor):
             m = frame.message
             kind = m.get("type")
             if kind == "context":
+                # lot C : plus de coupure à 2 000 caractères ; le résumé de la conversation (C9)
+                # remplace les échanges qu'il couvre (l'interface n'envoie que les suivants)
                 hist = [
-                    {"role": x["role"], "content": str(x["content"])[:2000]}
+                    {"role": x["role"], "content": str(x["content"])}
                     for x in m.get("messages", [])[-40:]
                     if x.get("role") in ("user", "assistant") and x.get("content")
                 ]
-                self._ctx.set_messages([{"role": "system", "content": system_prompt()}, *hist])
+                systeme = system_prompt()
+                resume = str(m.get("resume") or "").strip()
+                if resume:
+                    systeme += (
+                        "\n\n## Début de la conversation (résumé)\nLes premiers échanges ne sont plus affichés : "
+                        "voici leur résumé, à jour et fiable.\n<donnees>\n" + resume + "\n</donnees>"
+                    )
+                self._ctx.set_messages([{"role": "system", "content": systeme}, *hist])
                 return
             if kind == "user_text" and m.get("text"):
                 # message tapé pendant le mode voix : même cerveau rapide, réponse dite à voix haute

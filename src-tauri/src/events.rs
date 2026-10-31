@@ -36,6 +36,8 @@ pub enum Event {
     Coupe { run_id: String, quoi: String, detail: String },
     /// Avertissement visible dans Conscience et noté au journal (repli, appel invalide…)
     Avertissement { run_id: String, message: String },
+    /// Compaction de la conversation (lot C) : debut | fin | annulee.
+    Compaction { etat: String, detail: String },
     /// Vérification des chaînes d'empreintes des traces (lot T6), au lancement ou à l'ouverture d'une mission.
     Integrite { contexte: String, intactes: usize, non_chainees: usize, ruptures: Vec<crate::integrite::Rupture>, deja_signalees: usize },
     /// Agent installé ou mis à jour depuis l'Agent Market ou un fichier (lot T4).

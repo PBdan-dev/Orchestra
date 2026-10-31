@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useStore } from "../store";
+import { activite, useStore } from "../store";
 import { brainStatus } from "../brainStatus";
 import { I } from "./Icons";
 
@@ -118,7 +118,7 @@ export function Composer() {
       )}
       <div className="composer-inner glass">
         <textarea ref={ref} value={text} placeholder={voiceOn ? "Parle, ou écris : je te réponds à voix haute" : busy ? "Orchestra travaille : ta demande attendra son tour" : "Écris à Orchestra…"}
-          onChange={(e) => { setText(e.target.value); listening(); }}
+          onChange={(e) => { setText(e.target.value); listening(); activite(); }}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }} />
         {!voiceOn && voiceInstalled && (
           <button className={`mic-btn ${dictating ? "on" : ""} ${dictating && voiceUser ? "hot" : ""}`} onClick={toggleDictation}
