@@ -13,7 +13,7 @@ Validé le 2026-10-28 : les 11 critères de `docs/CAHIER_DES_CHARGES.md` §13 (b
 - V0.2 compilée et lancée sur le PC de PB le 2026-10-26 : `Orchestra.exe` et `Orchestra-setup.exe` à la racine de ce dossier. Code poussé sur GitHub (branche `main`, 3 commits, rien en attente).
 - Fonctionne : interface « verre glacé » (cœur animé, Conscience, chat, Mémoire, Journal, Paramètres), état Ollama explicite avec bouton Charger, panneau Agents (brancher, débrancher, installer, désinstaller), bouton Simulation.
 - Vérifié le 2026-10-26 dans le journal : un vrai échange avec Ollama a abouti (réponse à « qui es-tu »). La délégation à un agent sur le vrai Ollama n'a pas encore été testée par PB.
-- Agent Market : v0 en ligne à `https://pbdan-dev.github.io/Agent_Market/` (catalogue vide, dépôt `PBdan-dev/Agent_Market`, suivi dans `2026-10_agent-market`) ; Orchestra utilise encore le registre local (agents de démo).
+- Agent Market : v0 en ligne à `https://pbdan-dev.github.io/Agent_Market/` (dépôt `PBdan-dev/Agent_Market`, suivi dans `2026-10_agent-market`) ; Orchestra le lit par défaut et installe ses agents depuis le panneau Agents (lot T4).
 - Mode vocal (V0.3, en cours depuis le 2026-10-27) : sous-module `voix/` écrit selon le plan de PB (Pipecat, Voxtral Mini 4B Realtime, Qwen 3.5 9B, Qwen3-TTS). Dans l'interface : bouton micro, appuyer-pour-parler, onde du cœur qui suit le micro et la voix, réglages « Voix », délégation vocale vers la boucle centrale. Python, PyTorch CUDA, Pipecat et les modèles (Voxtral Q8, Qwen3-TTS 1.7B) sont installés dans `C:\Users\pbdan\Orchestra\voix\`.
 - Boucle vocale testée de bout en bout le 2026-10-27 (phrase jouée comme un micro) : environ 1,8 s entre la fin de la phrase et le premier son de la réponse. Détail : fin de parole détectée ≈ 420 ms, Voxtral ≈ 230 à 330 ms, Qwen 3.5 9B ≈ 270 à 640 ms, Qwen3-TTS (faster-qwen3-tts) ≈ 400 à 450 ms. Une demande de travail est bien confiée à l'orchestrateur (« D'accord, je m'en occupe » en 2,4 s).
 - Voxtral tourne via transcribe.cpp précompilé sur le GPU par Vulkan (pas de compilation CUDA). transformers figé à 5.15.1 (5.20 et 5.21 cassent Qwen3-TTS).
@@ -86,8 +86,19 @@ Validé le 2026-10-28 : les 11 critères de `docs/CAHIER_DES_CHARGES.md` §13 (b
 - Mémoire propre d'un agent : bouton « remettre sa mémoire à zéro » qui archive l'ancienne dans `agents/memoires-archivees/` (décision de PB).
 - Vérifié : suppression validée puis refusée avec le vrai agent-fichiers (`examples/essai_validation.rs`) ; interface vérifiée dans le navigateur avec le mode démo ; banc 29/29 ; 44 tests unitaires.
 
+## État actuel — Lot T4 (2026-10-31)
+- Panneau Agents, section « Agent Market » : catalogue lu (Market officiel par défaut, ou fichier `agents.json` local pour les essais), une entrée invalide ignorée avec son motif sans gêner les autres ; bouton Installer ou « Mettre à jour (x → y) ».
+- Installation (`installation.rs`) : seuls les agents « Orchestra Certified » pour leur version (D25, D35) ; paquet téléchargé, taille et SHA-256 comparées au catalogue avant ouverture ; manifeste v2 contrôlé (format 2.x, champs, même id et version que le catalogue, CHANGELOG, modèles des types de tâche) ; tout refus est affiché dans Conscience avec son motif.
+- Mise à jour : programme remplacé, mémoire propre gardée (D32), ancienne version mise de côté dans `agents/anciennes-versions/` ; trace `installation.json` (source, empreinte, certification) dans le dossier de l'agent.
+- Agent installé devenu non conforme : gardé, utilisable, avertissement visible (D37).
+- Identifiants (D34) : demandés dans le panneau Agents avec leur raison, rangés dans le Gestionnaire d'identification de Windows sous `orchestra/<id>/<nom>` (bibliothèque `keyring`) ; jamais réaffichés ni écrits ailleurs.
+- Mode développement (Paramètres, désactivé par défaut) : agents non certifiés acceptés avec le badge « Non certifié », et installation depuis un fichier .zip.
+- Nouvelles bibliothèques (accord de PB) : `zip`, `sha2`, `keyring` (MIT/Apache).
+- Agent Market : PR #7 ajoute les 3 agents de test en `non_certifie` (visibles en mode développement seulement) et aligne le README sur D26 ; à retirer quand les vrais agents seront publiés (décision de PB).
+- Vérifié : `examples/essai_installation.rs` avec les vrais paquets des Releases, 10/10 (certifié installé, non certifié refusé puis accepté en mode développement, empreinte et taille fausses refusées, format 3.x refusé, mise à jour 1.0.2 → 1.0.3 avec mémoire gardée, avertissement D37, mission de bout en bout) ; coffre de Windows écrit, relu puis vidé (test manuel) ; 48 tests unitaires ; interface vérifiée en mode démo.
+
 ## Prochaine action
-PB essaie la validation dans l'application (demander à Orchestra de supprimer un fichier du projet) ; puis plan du lot T4 (installation depuis l'Agent Market).
+PB fusionne la PR #7 de l'Agent Market s'il est d'accord ; puis plan du lot T5 (vérification et confiance).
 
 ## Décisions
 - 2026-10-25 — Application de bureau Windows en Tauri 2 (Rust + React/TypeScript), installateur léger.
@@ -133,11 +144,12 @@ PB essaie la validation dans l'application (demander à Orchestra de supprimer u
 - [x] Cahier des charges — Lot T1 : contrat (2026-10-30)
 - [x] Cahier des charges — Lot T2 : porte du modèle (2026-10-30)
 - [x] Cahier des charges — Lot T3 : dossiers de mission et de projet (2026-10-30)
-- [ ] Cahier des charges — Lot T4 : installation (prochain)
+- [x] Cahier des charges — Lot T4 : installation (2026-10-31)
+- [ ] Cahier des charges — Lot T5 : vérification et confiance (prochain)
 - [ ] Cahier des charges — Lots A, B, T1 à T9, C, D, S, M2, M3, M1 (ordre de la section 11)
 - [x] Délégation sur le vrai Ollama vérifiée par l'évaluation (6 tâches déléguées au bon agent, 3/3)
 - [ ] PB teste une vraie délégation sur Ollama dans l'interface
-- [ ] Brancher l'Agent Market réel (`https://pbdan-dev.github.io/Agent_Market/`)
+- [x] Brancher l'Agent Market réel (`https://pbdan-dev.github.io/Agent_Market/`, lot T4)
 - [ ] Brancher Mail Adagio comme agent
 - [ ] Ajout autonome de fonctionnalités (Orchestra crée ou installe ses propres agents)
 - [ ] Mémoire optimisée (index par embeddings, résumés, oubli)
@@ -166,3 +178,4 @@ PB essaie la validation dans l'application (demander à Orchestra de supprimer u
 - 2026-10-30 — Lot T1 : contrat stdio-json, manifeste 2.0, agents de démo retirés, agents de test installés ; banc 17/17.
 - 2026-10-30 (soir) — Lot T2 : porte du modèle, traces, contrôle des outils, limites, carte graphique ; banc 29/29 ; Mail Adagio par la porte (boîte de démonstration).
 - 2026-10-30 (nuit) — Lot T3 : projet choisi dans l'interface, carte de mission en trois parties, validation à 4 portées, mémoire propre des agents.
+- 2026-10-31 — Lot T4 : installation depuis l'Agent Market (certification, empreinte, manifeste v2, mise à jour qui garde la mémoire, identifiants dans le coffre de Windows, mode développement) ; PR #7 sur Agent_Market.
