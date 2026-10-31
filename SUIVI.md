@@ -94,11 +94,18 @@ Validé le 2026-10-28 : les 11 critères de `docs/CAHIER_DES_CHARGES.md` §13 (b
 - Identifiants (D34) : demandés dans le panneau Agents avec leur raison, rangés dans le Gestionnaire d'identification de Windows sous `orchestra/<id>/<nom>` (bibliothèque `keyring`) ; jamais réaffichés ni écrits ailleurs.
 - Mode développement (Paramètres, désactivé par défaut) : agents non certifiés acceptés avec le badge « Non certifié », et installation depuis un fichier .zip.
 - Nouvelles bibliothèques (accord de PB) : `zip`, `sha2`, `keyring` (MIT/Apache).
-- Agent Market : PR #7 ajoute les 3 agents de test en `non_certifie` (visibles en mode développement seulement) et aligne le README sur D26 ; à retirer quand les vrais agents seront publiés (décision de PB).
+- Agent Market : PR #7 (fusionnée le 31/10) ajoute les 3 agents de test en `non_certifie` (visibles en mode développement seulement) et aligne le README sur D26 ; à retirer quand les vrais agents seront publiés (décision de PB).
 - Vérifié : `examples/essai_installation.rs` avec les vrais paquets des Releases, 10/10 (certifié installé, non certifié refusé puis accepté en mode développement, empreinte et taille fausses refusées, format 3.x refusé, mise à jour 1.0.2 → 1.0.3 avec mémoire gardée, avertissement D37, mission de bout en bout) ; coffre de Windows écrit, relu puis vidé (test manuel) ; 48 tests unitaires ; interface vérifiée en mode démo.
 
+## État actuel — Lot T5 (2026-10-31)
+- Après chaque mission (`verification.rs`), Orchestra compare ce que l'agent déclare à ce qu'il constate : empreintes SHA-256 de chaque fichier du projet avant et après (fichier annoncé absent, fichier créé, modifié ou supprimé sans être annoncé), actions déclarées contre appels vus par la porte, outils hors de la liste de l'agent, action irréversible sans validation ou malgré un refus, mémoire propre modifiée sans le dire, livrable contrôlé avec son modèle (D33), « partiel » sans `manquant`, écarts au contrat. Un échec avoué n'est pas un écart.
+- Résultat dans `verification.md` (dossier de mission) et dans une partie « Vérification » de la carte de mission ; la voix prévient en cas d'écart.
+- Confiance (`agents/confiance.json`, décisions de PB du 31/10) : au 1er écart, l'agent est retiré des « Agents de confiance » et ne le redevient que par « rétablir la confiance » ; à 3 écarts au total, quarantaine : installé mais jamais choisi, jusqu'à « lever la quarantaine » (compteur remis à zéro, historique gardé). Boutons et badges dans le panneau Agents.
+- Un agent non certifié n'est jamais promu « de confiance » (les 3 agents de test ne le sont donc plus ; ils restent utilisables).
+- Vérifié : `examples/essai_verification.rs` avec 5 agents piégés et le vrai agent-fichiers, 10/10 ; banc des agents 29/29 ; 54 tests unitaires ; interface vérifiée en mode démo.
+
 ## Prochaine action
-PB fusionne la PR #7 de l'Agent Market s'il est d'accord ; puis plan du lot T5 (vérification et confiance).
+Plan du lot T6 (intégrité : chaîne de hachage des traces).
 
 ## Décisions
 - 2026-10-25 — Application de bureau Windows en Tauri 2 (Rust + React/TypeScript), installateur léger.
@@ -145,7 +152,8 @@ PB fusionne la PR #7 de l'Agent Market s'il est d'accord ; puis plan du lot T5 (
 - [x] Cahier des charges — Lot T2 : porte du modèle (2026-10-30)
 - [x] Cahier des charges — Lot T3 : dossiers de mission et de projet (2026-10-30)
 - [x] Cahier des charges — Lot T4 : installation (2026-10-31)
-- [ ] Cahier des charges — Lot T5 : vérification et confiance (prochain)
+- [x] Cahier des charges — Lot T5 : vérification et confiance (2026-10-31)
+- [ ] Cahier des charges — Lot T6 : intégrité (prochain)
 - [ ] Cahier des charges — Lots A, B, T1 à T9, C, D, S, M2, M3, M1 (ordre de la section 11)
 - [x] Délégation sur le vrai Ollama vérifiée par l'évaluation (6 tâches déléguées au bon agent, 3/3)
 - [ ] PB teste une vraie délégation sur Ollama dans l'interface
@@ -178,4 +186,5 @@ PB fusionne la PR #7 de l'Agent Market s'il est d'accord ; puis plan du lot T5 (
 - 2026-10-30 — Lot T1 : contrat stdio-json, manifeste 2.0, agents de démo retirés, agents de test installés ; banc 17/17.
 - 2026-10-30 (soir) — Lot T2 : porte du modèle, traces, contrôle des outils, limites, carte graphique ; banc 29/29 ; Mail Adagio par la porte (boîte de démonstration).
 - 2026-10-30 (nuit) — Lot T3 : projet choisi dans l'interface, carte de mission en trois parties, validation à 4 portées, mémoire propre des agents.
-- 2026-10-31 — Lot T4 : installation depuis l'Agent Market (certification, empreinte, manifeste v2, mise à jour qui garde la mémoire, identifiants dans le coffre de Windows, mode développement) ; PR #7 sur Agent_Market.
+- 2026-10-31 — Lot T4 : installation depuis l'Agent Market (certification, empreinte, manifeste v2, mise à jour qui garde la mémoire, identifiants dans le coffre de Windows, mode développement) ; PR #7 sur Agent_Market, fusionnée par PB.
+- 2026-10-31 — Lot T5 : vérification de chaque mission (déclaré contre constaté), verification.md, confiance retirée au 1er écart, quarantaine au 3e ; essai avec agents piégés 10/10.
