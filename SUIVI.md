@@ -119,8 +119,14 @@ Validé le 2026-10-28 : les 11 critères de `docs/CAHIER_DES_CHARGES.md` §13 (b
 - Vue « Missions » (onglet) : date, projet, agent, mission, état, vérification, ouvrir le dossier, reprendre ; mémoire de la carte graphique (nvidia-smi) et « Mode série ».
 - Vérifié : `examples/essai_reprise.rs` 7/7 (pause et reprise, porte suspendue, arrêt propre puis reprise sans refaire la 1re opération, arrêt immédiat en 0,1 s) ; interface vérifiée en mode démo (boutons, file d'attente, vue Missions) ; banc 29/29, essais T5 10/10 et T6 9/9 toujours bons.
 
+## État actuel — Lot T9 (2026-10-31)
+- Suivi des projets (`suivi.rs`), en lecture seule : outils du cerveau d'Orchestra `projet_historique`, `projet_lister`, `projet_lire` (texte, Markdown, code ; .docx et .xlsx extraits à la main, .pdf avec `pdf-extract`, MIT, accord de PB). Gros fichier : une page de 6 000 caractères à la fois avec sa structure, ou les passages qui contiennent les mots cherchés. Chemins hors du projet refusés. Tous les projets lisibles (décision de PB).
+- Fin de mission : résumé de 5 à 10 lignes par le modèle d'Orchestra (sortie contrainte, sans réflexion, accord de PB pour cet appel en plus), état du projet et prochaines étapes → `projets/<nom>/SUIVI.md` (seul fichier qu'Orchestra écrit dans un projet ; état gardé dans `suivi/<nom>.json`). Aucun outil ne sait écrire un livrable.
+- Consigne : 4e façon de répondre, « Suivre les projets » (historique ou SUIVI.md d'abord, puis seulement les livrables utiles).
+- Vérifié avec le vrai modèle (qwen3.5:9b), `examples/essai_suivi.rs` : 2 missions d'agent-brouillons sur `salon-2027`, SUIVI.md écrit, puis 5 questions : 5/5 au premier passage (stand, budget, destinataire, nouvelle date, nombre de missions), livrables inchangés. À la 5e, les fichiers étaient cités par leur dossier de mission : l'historique donne maintenant les fichiers produits, et le test l'exige. Second passage impossible : la carte graphique était occupée par ComfyUI (cerveau sans réponse en 60 s) ; à relancer, avec l'évaluation du routage (la consigne a changé).
+
 ## Prochaine action
-PB fusionne la PR #9 d'Agent_Market (catalogue : agent-fichiers 1.0.1) ; puis plan du lot T9 (suivi des projets par Orchestra). PR #8 et #5 fusionnées le 31/10, Release agent-fichiers-1.0.1 publiée (non certifié).
+Relancer `essai_suivi` et l'évaluation du routage quand la carte graphique est libre ; PB fusionne la PR #9 d'Agent_Market ; puis plan du lot T8 (agents hébergés), dernier lot T avant C, D, S, M2, M3, M1.
 
 ## Décisions
 - 2026-10-25 — Application de bureau Windows en Tauri 2 (Rust + React/TypeScript), installateur léger.
@@ -170,7 +176,8 @@ PB fusionne la PR #9 d'Agent_Market (catalogue : agent-fichiers 1.0.1) ; puis pl
 - [x] Cahier des charges — Lot T5 : vérification et confiance (2026-10-31)
 - [x] Cahier des charges — Lot T6 : intégrité (2026-10-31)
 - [x] Cahier des charges — Lot T7 : exécution, arrêt, reprise (2026-10-31)
-- [ ] Cahier des charges — Lot T9 : suivi des projets (prochain)
+- [x] Cahier des charges — Lot T9 : suivi des projets (2026-10-31)
+- [ ] Cahier des charges — Lot T8 : agents hébergés (prochain)
 - [ ] Cahier des charges — Lots A, B, T1 à T9, C, D, S, M2, M3, M1 (ordre de la section 11)
 - [x] Délégation sur le vrai Ollama vérifiée par l'évaluation (6 tâches déléguées au bon agent, 3/3)
 - [ ] PB teste une vraie délégation sur Ollama dans l'interface
@@ -207,3 +214,4 @@ PB fusionne la PR #9 d'Agent_Market (catalogue : agent-fichiers 1.0.1) ; puis pl
 - 2026-10-31 — Lot T5 : vérification de chaque mission (déclaré contre constaté), verification.md, confiance retirée au 1er écart, quarantaine au 3e ; essai avec agents piégés 10/10.
 - 2026-10-31 — Lot T6 : traces chaînées (journal, échanges, actions), vérification au lancement et à l'ouverture d'une mission, cassure : preuve gardée, écart pour l'agent, alerte.
 - 2026-10-31 — Lot T7 : pause, arrêt propre, arrêt immédiat, limites en pause avec question, reprise depuis le point de reprise (champ `reprise` du contrat), file d'attente, vue Missions ; PR #8 Agent_Market et #5 Orchestra_Agents.
+- 2026-10-31 — Lot T9 : suivi des projets en lecture seule (historique, liste, lecture ciblée, .docx/.xlsx/.pdf), SUIVI.md de chaque projet tenu par Orchestra ; 5/5 questions justes avec le vrai modèle.
