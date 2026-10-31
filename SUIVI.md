@@ -125,8 +125,22 @@ Validé le 2026-10-28 : les 11 critères de `docs/CAHIER_DES_CHARGES.md` §13 (b
 - Consigne : 4e façon de répondre, « Suivre les projets » (historique ou SUIVI.md d'abord, puis seulement les livrables utiles).
 - Vérifié avec le vrai modèle (qwen3.5:9b), `examples/essai_suivi.rs` : 2 missions d'agent-brouillons sur `salon-2027`, SUIVI.md écrit, puis 5 questions : 5/5 au premier passage (stand, budget, destinataire, nouvelle date, nombre de missions), livrables inchangés. À la 5e, les fichiers étaient cités par leur dossier de mission : l'historique donne maintenant les fichiers produits, et le test l'exige. Second passage impossible : la carte graphique était occupée par ComfyUI (cerveau sans réponse en 60 s) ; à relancer, avec l'évaluation du routage (la consigne a changé).
 
+## État actuel — Lot T9 : tests repris le 31/10 au soir (carte graphique libérée)
+- ComfyUI gardait ses modèles en mémoire graphique (21,7 Go occupés sur 24) : fermé par PB, il reste 2,7 Go au repos.
+- Corrections après les tests : nouvel essai quand Ollama refuse un appel d'outil mal écrit (« XML syntax error ») ; relance unique quand le modèle a lu des fichiers ou délégué sans conclure ; projet actif indiqué au début de chaque message (« projet actif : … ») et consigne « cherche d'abord dans le projet actif » ; « lire sert à répondre, ranger ou modifier est une production » ; l'historique d'un projet donne les fichiers produits ; l'évaluation crée `projets/divers/notes.txt` (t17).
+- Résultats (qwen3.6:27b pour l'évaluation, qwen3.5:9b pour essai_suivi) : aiguillage 14/18 sur 3 passages (13/18 avant ces corrections ; échecs restants t07, t08, t14, t15, où Orchestra répond qu'il ne peut pas ou demande une précision au lieu de passer par la délégation : la notation « hors_capacite » est peut-être à revoir) ; mémoire 19/20 ; essai_suivi 5/5 quand les deux missions ont lieu, sinon Orchestra décrit fidèlement le projet réel (une seule mission) : l'instabilité vient du lancement de la mission par qwen3.5:9b, pas de la lecture.
+
+## État actuel — Lot T8 (2026-10-31)
+- Agents hébergés (`heberge.rs`, D2) : mission envoyée en POST HTTPS (http refusé), réponse en lignes JSON (événements puis compte rendu) ou compte rendu seul. Ne part que la mission, sans chemin local (projet désigné par son nom), sans manifeste, mémoire ni fichier ; copie de ce qui est parti dans `envoye.json`.
+- Installation depuis le catalogue sans paquet : statut `livrable_seul` (ou non certifié en mode développement) ; « ce qui quittera la machine » (adresse, données envoyées, conservation déclarée) affiché et confirmé avant l'installation, gardé dans `installation.json`.
+- Contrôle automatique du livrable : compte rendu valide, aucun fichier annoncé (pas d'accès aux fichiers), texte non vide selon `format_retour`, durée dans la limite ; sinon `echec` avec motif.
+- Badges « transparent » (local) et « livrable seul » (hébergé) dans le panneau Agents ; jamais « de confiance » automatiquement (règle du lot T5).
+- Écart au cahier, tranché par moi (réversible) : la clé éventuelle d'un agent hébergé n'est pas dans `config.json` (comme le dit T8) mais dans le coffre de Windows comme identifiant déclaré (D34, et lot S-c qui sort les clés de `config.json`).
+- Arrêt pendant l'appel : l'appel est abandonné (échec avec motif).
+- Vérifié : `examples/essai_heberge.rs` avec un faux agent hébergé local en HTTPS (certificat de test), 11/11 ; banc 29/29, essai T5 10/10, essai T7 7/7 avec agent-fichiers 1.0.1 (6/7 avec la 1.0.0 installée, qui ne sait pas reprendre : à mettre à jour depuis le panneau Agents en mode développement). Bibliothèques de test seulement (dev) : rcgen, rustls, tokio-rustls (MIT/Apache).
+
 ## Prochaine action
-Relancer `essai_suivi` et l'évaluation du routage quand la carte graphique est libre ; PB fusionne la PR #9 d'Agent_Market ; puis plan du lot T8 (agents hébergés), dernier lot T avant C, D, S, M2, M3, M1.
+Plan du lot C (section 11 du cahier), puis D, S, M2, M3, M1. À décider avec PB : revoir la notation « hors_capacite » de l'évaluation de l'aiguillage.
 
 ## Décisions
 - 2026-10-25 — Application de bureau Windows en Tauri 2 (Rust + React/TypeScript), installateur léger.
@@ -177,7 +191,8 @@ Relancer `essai_suivi` et l'évaluation du routage quand la carte graphique est 
 - [x] Cahier des charges — Lot T6 : intégrité (2026-10-31)
 - [x] Cahier des charges — Lot T7 : exécution, arrêt, reprise (2026-10-31)
 - [x] Cahier des charges — Lot T9 : suivi des projets (2026-10-31)
-- [ ] Cahier des charges — Lot T8 : agents hébergés (prochain)
+- [x] Cahier des charges — Lot T8 : agents hébergés (2026-10-31)
+- [ ] Cahier des charges — Lot C (prochain)
 - [ ] Cahier des charges — Lots A, B, T1 à T9, C, D, S, M2, M3, M1 (ordre de la section 11)
 - [x] Délégation sur le vrai Ollama vérifiée par l'évaluation (6 tâches déléguées au bon agent, 3/3)
 - [ ] PB teste une vraie délégation sur Ollama dans l'interface
@@ -215,3 +230,4 @@ Relancer `essai_suivi` et l'évaluation du routage quand la carte graphique est 
 - 2026-10-31 — Lot T6 : traces chaînées (journal, échanges, actions), vérification au lancement et à l'ouverture d'une mission, cassure : preuve gardée, écart pour l'agent, alerte.
 - 2026-10-31 — Lot T7 : pause, arrêt propre, arrêt immédiat, limites en pause avec question, reprise depuis le point de reprise (champ `reprise` du contrat), file d'attente, vue Missions ; PR #8 Agent_Market et #5 Orchestra_Agents.
 - 2026-10-31 — Lot T9 : suivi des projets en lecture seule (historique, liste, lecture ciblée, .docx/.xlsx/.pdf), SUIVI.md de chaque projet tenu par Orchestra ; 5/5 questions justes avec le vrai modèle.
+- 2026-10-31 (soir) — Tests du T9 repris après fermeture de ComfyUI ; corrections (projet actif, relances) : aiguillage 14/18, mémoire 19/20. Lot T8 : agents hébergés « livrable seul », 11/11 avec un faux agent HTTPS.
