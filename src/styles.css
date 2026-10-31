@@ -533,3 +533,15 @@ pre { margin: 0; font-family: var(--mono); font-size: 12px; white-space: pre-wra
 .projet-chip option { background: #0f172a; }
 .ap-autorisations { padding: 6px 14px; border-top: 1px solid var(--border); font-size: 12px; }
 .ap-autorisations .ap-aut { display: flex; justify-content: space-between; gap: 8px; margin: 3px 0; }
+
+/* Lot T4 : installation des agents */
+.card.avert { border-color: rgba(251, 191, 36, .45); }
+.ap-section { padding: 6px 14px 2px; font-size: 12px; display: flex; align-items: center; gap: 6px; border-top: 1px solid var(--border); }
+.ap-section .right { margin-left: auto; }
+.tag.certifie { border-color: rgba(134, 239, 172, .5); color: #86efac; }
+.tag.noncertifie { border-color: rgba(251, 191, 36, .5); color: #fbbf24; }
+.ap-avert { color: #fbbf24; font-size: 11.5px; margin-top: 3px; }
+.ap-motif { font-size: 11px; opacity: .75; margin-top: 2px; }
+.ap-identifiants { margin-top: 6px; display: flex; flex-direction: column; gap: 5px; }
+.ap-identifiants .ap-id { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 12px; }
+.ap-identifiants input { flex: 1; min-width: 140px; background: rgba(255,255,255,.05); border: 1px solid var(--border); border-radius: 6px; color: inherit; padding: 3px 6px; font: inherit; }

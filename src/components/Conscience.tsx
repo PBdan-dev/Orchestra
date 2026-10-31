@@ -118,6 +118,8 @@ function EntryView({ e, streaming, agentName, agentIcon }: { e: Entry; streaming
       return <div className="entry muted"><span className="t">{time(e.at)}</span><I.save size={12} /> Rien de durable à retenir de cet échange.</div>;
     case "mission":
       return <MissionCard m={e} name={agentName(e.agentId)} icon={agentIcon(e.agentId)} />;
+    case "avertissement":
+      return <div className="card avert"><div className="card-head"><I.alert size={13} /> Avertissement</div><div className="small">{e.message}</div></div>;
     case "error":
       return <div className="card error"><div className="card-head"><I.alert size={13} /> Erreur</div><div className="small">{e.message}</div></div>;
   }

@@ -21,14 +21,22 @@ fn market_endpoint(url: &str) -> String {
     }
 }
 
-pub async fn fetch_remote(http: &reqwest::Client, cfg: &Config) -> Result<Vec<Manifest>, String> {
-    if cfg.market_url.trim().is_empty() {
-        return Err("aucune URL d'Agent Market configurée".into());
+/// Agent Market officiel (D19), utilisé quand aucune adresse n'est configurée.
+pub const MARKET_OFFICIEL: &str = "https://pbdan-dev.github.io/Agent_Market/";
+
+/// Lit le catalogue : adresse https du Market, ou chemin d'un fichier `agents.json` local
+/// (essais). Une entrée invalide est ignorée avec son motif (lot T4). Renvoie aussi la source.
+pub async fn fetch_catalogue(http: &reqwest::Client, cfg: &Config) -> Result<(agents::Lecture, String), String> {
+    let brut = if cfg.market_url.trim().is_empty() { MARKET_OFFICIEL } else { cfg.market_url.trim() };
+    if !brut.starts_with("http://") && !brut.starts_with("https://") {
+        let chemin = std::path::Path::new(brut.trim_start_matches("file:///"));
+        let text = std::fs::read_to_string(chemin).map_err(|e| format!("catalogue local illisible ({}) : {e}", chemin.display()))?;
+        return Ok((agents::parse_registry(&text), chemin.display().to_string()));
     }
-    let url = market_endpoint(&cfg.market_url);
+    let url = market_endpoint(brut);
     let resp = http
         .get(&url)
-        .timeout(Duration::from_secs(6))
+        .timeout(Duration::from_secs(10))
         .send()
         .await
         .map_err(|e| format!("Market injoignable ({url}) : {e}"))?;
@@ -36,7 +44,11 @@ pub async fn fetch_remote(http: &reqwest::Client, cfg: &Config) -> Result<Vec<Ma
         return Err(format!("Market a répondu {} ({url})", resp.status()));
     }
     let text = resp.text().await.map_err(|e| e.to_string())?;
-    let l = agents::parse_registry(&text);
+    Ok((agents::parse_registry(&text), url))
+}
+
+pub async fn fetch_remote(http: &reqwest::Client, cfg: &Config) -> Result<Vec<Manifest>, String> {
+    let (l, _) = fetch_catalogue(http, cfg).await?;
     if l.agents.is_empty() {
         let motifs = if l.ignores.is_empty() { String::new() } else { format!(" ({})", l.ignores.join(" ; ")) };
         return Err(format!("Market : aucun agent lisible dans la réponse{motifs}"));
@@ -68,17 +80,18 @@ pub async fn find_agent(
         .collect();
     log.push(format!("{} agent(s) installé(s) examiné(s)", candidates.len()));
 
-    // Agent Market : pour information jusqu'au lot T4 (installation)
+    // Agent Market : Orchestra n'installe jamais seul ; il signale les agents à installer (panneau Agents)
     match fetch_remote(http, cfg).await {
         Ok(list) => {
             let mieux: Vec<String> = list
                 .iter()
                 .filter(|m| !candidates.iter().any(|c| c.manifest.id == m.id) && agents::match_score(m, need) >= 1.0)
+                .filter(|m| cfg.mode_developpement || m.certification == "orchestra_certified")
                 .map(|m| m.name.clone())
                 .collect();
             log.push(format!("Agent Market : {} agent(s) au catalogue", list.len()));
             if !mieux.is_empty() {
-                log.push(format!("  à installer pour ce besoin (lot T4) : {}", mieux.join(", ")));
+                log.push(format!("  à installer depuis le panneau Agents pour ce besoin : {}", mieux.join(", ")));
             }
         }
         Err(e) => log.push(e),

@@ -4,6 +4,7 @@ pub mod brain;
 pub mod config;
 pub mod contrat;
 pub mod evaluation;
+pub mod installation;
 pub mod events;
 mod journal;
 pub mod market;
@@ -78,10 +79,91 @@ async fn load_model(state: State<'_, AppState>) -> CmdResult<BrainInfo> {
     Ok(b.detect().await)
 }
 
+/// Refus d'installation : motif affiché dans Conscience et noté au journal (lot T4).
+fn signaler_refus(app: &AppHandle, quoi: &str, motif: &str) {
+    let message = format!("Installation de {quoi} refusée : {motif}");
+    events::emit(app, events::Event::Avertissement { run_id: "installation".into(), message });
+}
+
+fn signaler_installation(app: &AppHandle, i: &installation::Installation) {
+    events::emit(app, events::Event::AgentInstalle {
+        agent_id: i.manifest.id.clone(),
+        version: i.manifest.version.clone(),
+        ancienne_version: i.ancienne_version.clone(),
+        certification: i.certification.clone(),
+        identifiants_manquants: i.identifiants.iter().filter(|x| !x.present).map(|x| x.nom.clone()).collect(),
+    });
+}
+
+/// Installe ou met à jour un agent du catalogue de l'Agent Market (lot T4).
 #[tauri::command]
-fn install_agent(_state: State<AppState>, id: String) -> CmdResult<Manifest> {
-    // paquet à télécharger, empreinte et certification à vérifier : lot T4
-    Err(format!("L'installation de {id} depuis le catalogue arrive avec le lot T4 (paquet vérifié par empreinte)."))
+async fn install_agent(app: AppHandle, state: State<'_, AppState>, id: String) -> CmdResult<installation::Installation> {
+    let cfg = state.config.lock().unwrap().clone();
+    let r = async {
+        let (lecture, source) = market::fetch_catalogue(&state.http, &cfg).await?;
+        let entree = lecture.agents.into_iter().find(|m| m.id == id).ok_or_else(|| format!("{id} absent du catalogue (ou entrée invalide)"))?;
+        installation::installer_depuis_catalogue(&state.http, &state.paths, &entree.brut, cfg.mode_developpement, &source).await
+    }
+    .await;
+    match r {
+        Ok(i) => {
+            signaler_installation(&app, &i);
+            Ok(i)
+        }
+        Err(e) => {
+            signaler_refus(&app, &id, &e);
+            Err(e)
+        }
+    }
+}
+
+/// Mode développement : installe un agent depuis un fichier .zip local (badge « Non certifié »).
+#[tauri::command]
+fn install_agent_zip(app: AppHandle, state: State<AppState>, chemin: String) -> CmdResult<installation::Installation> {
+    let mode_dev = state.config.lock().unwrap().mode_developpement;
+    let chemin = chemin.trim().trim_matches('"').to_string();
+    match installation::installer_fichier(&state.paths, std::path::Path::new(&chemin), mode_dev) {
+        Ok(i) => {
+            signaler_installation(&app, &i);
+            Ok(i)
+        }
+        Err(e) => {
+            signaler_refus(&app, &chemin, &e);
+            Err(e)
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct Catalogue {
+    entrees: Vec<installation::EntreeCatalogue>,
+    /// Entrées ignorées, avec leur motif.
+    ignores: Vec<String>,
+    source: String,
+}
+
+/// Catalogue de l'Agent Market : chaque entrée avec ce qui permet, ou non, de l'installer.
+#[tauri::command]
+async fn catalogue(state: State<'_, AppState>) -> CmdResult<Catalogue> {
+    let cfg = state.config.lock().unwrap().clone();
+    let (lecture, source) = market::fetch_catalogue(&state.http, &cfg).await?;
+    Ok(Catalogue { entrees: installation::lire_catalogue(lecture.agents, &state.paths, cfg.mode_developpement), ignores: lecture.ignores, source })
+}
+
+/// Identifiants déclarés par un agent installé et leur présence dans le coffre (D34).
+#[tauri::command]
+fn identifiants_agent(state: State<AppState>, id: String) -> CmdResult<Vec<installation::Identifiant>> {
+    let m = agents::get_installed(&state.paths, &id).ok_or_else(|| format!("{id} n'est pas installé"))?;
+    Ok(installation::identifiants(&m))
+}
+
+/// Range un identifiant dans le Gestionnaire d'identification de Windows (D34). La valeur
+/// n'est ni renvoyée, ni écrite au journal.
+#[tauri::command]
+fn enregistrer_identifiant(state: State<AppState>, id: String, nom: String, valeur: String) -> CmdResult<()> {
+    let m = agents::get_installed(&state.paths, &id).ok_or_else(|| format!("{id} n'est pas installé"))?;
+    installation::enregistrer_identifiant(&m, &nom, &valeur)
+
 }
 
 /// Désinstalle un agent : son dossier est mis de côté dans `agents/desinstalles/` (rien n'est
@@ -374,6 +456,10 @@ pub fn run() {
             detect_brain,
             load_model,
             install_agent,
+            install_agent_zip,
+            catalogue,
+            identifiants_agent,
+            enregistrer_identifiant,
             uninstall_agent,
             send_message,
             list_agents,

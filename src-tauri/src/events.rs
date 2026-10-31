@@ -36,6 +36,8 @@ pub enum Event {
     Coupe { run_id: String, quoi: String, detail: String },
     /// Avertissement visible dans Conscience et noté au journal (repli, appel invalide…)
     Avertissement { run_id: String, message: String },
+    /// Agent installé ou mis à jour depuis l'Agent Market ou un fichier (lot T4).
+    AgentInstalle { agent_id: String, version: String, ancienne_version: Option<String>, certification: String, identifiants_manquants: Vec<String> },
     /// Mission d'un agent (lot T3) : début, avec ses dossiers.
     MissionDebut { run_id: String, mission_id: String, agent_id: String, projet: String, dossier_mission: String, dossier_projet: String },
     /// Pensée du modèle de l'agent, vue par la porte (D14).

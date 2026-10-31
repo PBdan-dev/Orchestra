@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useStore } from "../store";
 import { api } from "../tauri";
-import type { Manifest } from "../types";
+import type { Catalogue, Identifiant, Installation, Manifest } from "../types";
 import { AgentGlyph, I } from "./Icons";
 
 /**
@@ -35,6 +35,36 @@ export function AgentsPanel() {
   };
   const PORTEE: Record<string, string> = { type_session: "pour la session", tout_session: "tout, pour la session", permanent: "tout, permanent" };
   const [busyId, setBusyId] = useState<string | null>(null);
+  const installAgentZip = useStore((s) => s.installAgentZip);
+  const modeDev = useStore((s) => s.config?.mode_developpement ?? false);
+  // Agent Market (lot T4)
+  const [catalogue, setCatalogue] = useState<Catalogue | null>(null);
+  const [erreurCatalogue, setErreurCatalogue] = useState("");
+  const [message, setMessage] = useState<{ ok: boolean; texte: string } | null>(null);
+  const [ouvrirIds, setOuvrirIds] = useState<string | null>(null);
+  const chargerCatalogue = async () => {
+    setErreurCatalogue("");
+    try { setCatalogue(await api.catalogue()); } catch (e) { setErreurCatalogue(String(e)); }
+  };
+  useEffect(() => { chargerCatalogue(); }, [installed.length, modeDev]);
+  const apres = (i: Installation) => {
+    const manquants = i.identifiants.filter((x) => !x.present).length;
+    const quoi = i.ancienne_version ? `mis à jour (${i.ancienne_version} → ${i.manifest.version})` : `installé (${i.manifest.version})`;
+    setMessage({ ok: true, texte: `${i.manifest.name} ${quoi}.${manquants ? ` ${manquants} identifiant(s) à renseigner ci-dessous.` : ""}` });
+    if (manquants) setOuvrirIds(i.manifest.id);
+    chargerCatalogue();
+  };
+  const installer = async (id: string) => {
+    setMessage(null);
+    try { apres(await installAgent(id)); } catch (e) { setMessage({ ok: false, texte: `Installation refusée : ${String(e)}` }); }
+  };
+  const installerZip = async () => {
+    const chemin = window.prompt("Chemin complet du paquet .zip de l'agent (mode développement, badge « Non certifié ») :");
+    if (!chemin || !chemin.trim()) return;
+    setMessage(null);
+    try { apres(await installAgentZip(chemin.trim())); } catch (e) { setMessage({ ok: false, texte: `Installation refusée : ${String(e)}` }); }
+  };
+  const aInstaller = (catalogue?.entrees ?? []).filter((c) => c.installe !== c.manifest.version);
 
   const all: Manifest[] = [...installed, ...registry.filter((r) => !installed.some((i) => i.id === r.id))];
   const wrap = async (id: string, fn: () => Promise<void>) => { setBusyId(id); try { await fn(); } finally { setBusyId(null); } };
@@ -56,9 +86,14 @@ export function AgentsPanel() {
             <div key={m.id} className={`ap-row ${onStage ? "on" : ""}`} style={{ ["--c" as any]: c }}>
               <span className="ap-glyph"><AgentGlyph icon={m.icon} size={15} /></span>
               <div className="ap-info">
-                <div className="ap-name">{m.name} {isInstalled ? <span className="tag ok">installé</span> : <span className="tag">registre</span>}</div>
+                <div className="ap-name">
+                  {m.name} <span className="muted small">{m.version}</span> {isInstalled ? <span className="tag ok">installé</span> : <span className="tag">registre</span>}{" "}
+                  {isInstalled && <BadgeCertification statut={m.certification} />}
+                </div>
                 <div className="ap-desc">{m.description}</div>
                 <div className="ap-tools">{m.tools.map((t) => <span key={t} className="mini">{t}</span>)}</div>
+                {m.avertissement && <div className="ap-avert"><I.alert size={11} /> {m.avertissement}</div>}
+                {isInstalled && <IdentifiantsAgent agent={m} ouvert={ouvrirIds === m.id} />}
               </div>
               <div className="ap-actions">
                 <button className={`glass-btn sm ${onStage ? "active" : ""}`} onClick={() => (onStage ? unplug(m.id) : plug(m))}>
@@ -68,12 +103,38 @@ export function AgentsPanel() {
                 {isInstalled ? (
                   <button className="link-btn danger" disabled={busyId === m.id} onClick={() => wrap(m.id, () => uninstallAgent(m.id))}>désinstaller</button>
                 ) : (
-                  <button className="link-btn" disabled={busyId === m.id} onClick={() => wrap(m.id, () => installAgent(m.id))}>installer</button>
+                  <button className="link-btn" disabled={busyId === m.id} onClick={() => wrap(m.id, () => installer(m.id))}>installer</button>
                 )}
               </div>
             </div>
           );
         })}
+      </div>
+      <div className="ap-section">
+        <I.plug size={12} /> Agent Market <span className="muted small">· {catalogue ? `${catalogue.entrees.length} agent(s)` : "…"}</span>
+        <button className="link-btn right" onClick={chargerCatalogue}><I.refresh size={11} /> actualiser</button>
+      </div>
+      <div className="ap-list">
+        {message && <div className={`small ${message.ok ? "ok" : "warn"}`} style={{ padding: "2px 4px" }}>{message.texte}</div>}
+        {erreurCatalogue && <div className="small warn" style={{ padding: "2px 4px" }}>{erreurCatalogue}</div>}
+        {catalogue && aInstaller.length === 0 && !erreurCatalogue && <p className="muted small">Rien de nouveau à installer{catalogue.entrees.length === 0 ? " : le catalogue est vide" : ""}.</p>}
+        {catalogue && catalogue.ignores.length > 0 && <div className="ap-motif" title={catalogue.ignores.join("\n")}>{catalogue.ignores.length} entrée(s) du catalogue ignorée(s) car invalides (survoler pour le motif)</div>}
+        {aInstaller.map((c) => (
+          <div key={c.manifest.id} className="ap-row" style={{ ["--c" as any]: c.manifest.color || "#818cf8" }}>
+            <span className="ap-glyph"><AgentGlyph icon={c.manifest.icon} size={15} /></span>
+            <div className="ap-info">
+              <div className="ap-name">{c.manifest.name} <span className="muted small">{c.manifest.version}</span> <BadgeCertification statut={c.installable && c.motif ? "non_certifie" : c.manifest.certification} /></div>
+              <div className="ap-desc">{c.manifest.description}</div>
+              {!c.installable && <div className="ap-motif">{c.motif}</div>}
+            </div>
+            <div className="ap-actions">
+              <button className="glass-btn sm" disabled={!c.installable || busyId === c.manifest.id} onClick={() => wrap(c.manifest.id, () => installer(c.manifest.id))}>
+                {busyId === c.manifest.id ? "vérification…" : c.installe ? `Mettre à jour (${c.installe} → ${c.manifest.version})` : "Installer"}
+              </button>
+            </div>
+          </div>
+        ))}
+        {modeDev && <button className="link-btn" onClick={installerZip}><I.save size={11} /> installer depuis un fichier .zip (mode développement)</button>}
       </div>
       <div className="ap-autorisations">
         <div><I.alert size={12} /> Actions irréversibles autorisées sans question</div>
@@ -89,5 +150,55 @@ export function AgentsPanel() {
         <button className="link-btn" onClick={() => api.openFolder("agents")}><I.external size={11} /> ouvrir le dossier agents</button>
       </footer>
     </motion.aside>
+  );
+}
+
+/** Badge de certification (D25). */
+function BadgeCertification({ statut }: { statut?: string }) {
+  if (statut === "orchestra_certified") return <span className="tag certifie" title="Vérifié par l'Agent Market">Orchestra Certified</span>;
+  if (statut === "livrable_seul") return <span className="tag" title="Agent hébergé : seul le livrable est contrôlé">Livrable seul</span>;
+  return <span className="tag noncertifie" title="Non vérifié par l'Agent Market (mode développement)">Non certifié</span>;
+}
+
+/**
+ * Identifiants déclarés par l'agent (D34) : demandés à PB avec leur raison, rangés dans le
+ * Gestionnaire d'identification de Windows sous orchestra/<id>/<nom>. La valeur n'est jamais réaffichée.
+ */
+function IdentifiantsAgent({ agent, ouvert }: { agent: Manifest; ouvert: boolean }) {
+  const [ids, setIds] = useState<Identifiant[]>([]);
+  const [valeurs, setValeurs] = useState<Record<string, string>>({});
+  const [voir, setVoir] = useState(ouvert);
+  const [erreur, setErreur] = useState("");
+  const charger = () => api.identifiantsAgent(agent.id).then(setIds).catch(() => setIds([]));
+  useEffect(() => { charger(); }, [agent.id, agent.version]);
+  useEffect(() => { if (ouvert) setVoir(true); }, [ouvert]);
+  if (ids.length === 0) return null;
+  const manquants = ids.filter((i) => !i.present).length;
+  const enregistrer = async (nom: string) => {
+    setErreur("");
+    try {
+      await api.enregistrerIdentifiant(agent.id, nom, valeurs[nom] ?? "");
+      setValeurs((v) => ({ ...v, [nom]: "" }));
+      await charger();
+    } catch (e) {
+      setErreur(String(e));
+    }
+  };
+  return (
+    <div className="ap-identifiants">
+      <button className="link-btn" onClick={() => setVoir(!voir)} style={{ alignSelf: "flex-start" }}>
+        <I.alert size={11} /> {manquants ? `${manquants} identifiant(s) à renseigner` : `identifiants rangés (${ids.length})`} {voir ? "· replier" : "· voir"}
+      </button>
+      {voir && ids.map((i) => (
+        <div key={i.nom} className="ap-id">
+          <code>{i.nom}</code> <span className="muted small">({i.type}) {i.raison}</span>
+          {i.present && <span className="tag ok">rangé</span>}
+          <input type="password" autoComplete="off" placeholder={i.present ? "remplacer la valeur…" : "valeur"} value={valeurs[i.nom] ?? ""} onChange={(e) => setValeurs((v) => ({ ...v, [i.nom]: e.target.value }))} />
+          <button className="glass-btn sm" disabled={!(valeurs[i.nom] ?? "")} onClick={() => enregistrer(i.nom)}>Ranger dans le coffre de Windows</button>
+        </div>
+      ))}
+      {voir && <div className="muted small">Rangé sous orchestra/{agent.id}/&lt;nom&gt;, jamais dans un fichier ni dans les traces.</div>}
+      {erreur && <div className="small warn">{erreur}</div>}
+    </div>
   );
 }

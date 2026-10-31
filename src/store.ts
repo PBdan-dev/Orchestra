@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { api, onEvent } from "./tauri";
 import { VoiceClient, type VoiceEvent } from "./voice";
 import type {
-  AgentNode, Autorisation, BrainInfo, ChatMessage, Config, Entry, Manifest, MissionVue, OrchestraEvent, PathsInfo, Phase, Projets, VoiceLatency, VoiceModels, VoiceStatus,
+  AgentNode, Autorisation, BrainInfo, ChatMessage, Config, Entry, Installation, Manifest, MissionVue, OrchestraEvent, PathsInfo, Phase, Projets, VoiceLatency, VoiceModels, VoiceStatus,
 } from "./types";
 
 export type View = "stage" | "memory" | "journal" | "settings";
@@ -117,7 +117,8 @@ interface State {
   plug: (m: Manifest) => void;
   /** Débranche un agent de la scène (ses sous-agents aussi). Rien n'est supprimé sur le disque. */
   unplug: (id: string) => void;
-  installAgent: (id: string) => Promise<void>;
+  installAgent: (id: string) => Promise<Installation>;
+  installAgentZip: (chemin: string) => Promise<Installation>;
   uninstallAgent: (id: string) => Promise<void>;
   refreshVoice: () => Promise<void>;
   /** ouvre ou ferme la session vocale (démarre le serveur si besoin) */
@@ -367,8 +368,15 @@ export const useStore = create<State>((set, get) => ({
   },
 
   installAgent: async (id) => {
-    await api.installAgent(id);
+    const i = await api.installAgent(id);
     await get().refreshAgents();
+    return i;
+  },
+
+  installAgentZip: async (chemin) => {
+    const i = await api.installAgentZip(chemin);
+    await get().refreshAgents();
+    return i;
   },
 
   uninstallAgent: async (id) => {
@@ -780,6 +788,16 @@ export const useStore = create<State>((set, get) => ({
           };
         });
         break;
+      case "avertissement":
+        push({ kind: "avertissement", id: uid(), runId: e.run_id, at: now, message: e.message });
+        break;
+      case "agent_installe": {
+        const quoi = e.ancienne_version ? `mis à jour (${e.ancienne_version} → ${e.version})` : `installé (version ${e.version})`;
+        const badge = e.certification === "orchestra_certified" ? "Orchestra Certified" : "Non certifié";
+        const ids = e.identifiants_manquants.length ? ` · identifiant(s) à renseigner : ${e.identifiants_manquants.join(", ")}` : "";
+        push({ kind: "phase", id: uid(), runId: "installation", at: now, phase: "idle", label: `Agent ${e.agent_id} ${quoi} · ${badge}${ids}` });
+        break;
+      }
       case "error": {
         push({ kind: "error", id: uid(), runId: e.run_id, at: now, message: e.message });
         set((s) => ({

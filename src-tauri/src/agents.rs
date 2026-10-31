@@ -32,6 +32,8 @@ pub struct Manifest {
     pub icon: String,
     /// orchestra_certified | livrable_seul | non_certifie
     pub certification: String,
+    /// Agent installé lu avec un format devenu incompatible : utilisable, avec cet avertissement (D37).
+    pub avertissement: String,
     #[serde(skip)]
     pub brut: Value,
     /// Dossier de l'agent installé (`agents/installes/<id>/`).
@@ -78,9 +80,32 @@ impl Manifest {
             color: s("/color"),
             icon: s("/icon"),
             certification: s("/certification/statut"),
+            avertissement: String::new(),
             brut: v.clone(),
             dossier: None,
         })
+    }
+
+    /// Lecture sans contrôle du schéma (agent installé au format devenu incompatible, D37).
+    pub fn souple(v: &Value) -> Manifest {
+        let s = |p: &str| v.pointer(p).and_then(|x| x.as_str()).unwrap_or("").to_string();
+        Manifest {
+            id: s("/id"),
+            name: if s("/name").is_empty() { s("/id") } else { s("/name") },
+            version: s("/version"),
+            author: v["author"]["nom"].as_str().or(v["author"].as_str()).unwrap_or("").to_string(),
+            description: s("/description"),
+            capabilities: v["capabilities"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default(),
+            model: s("/modele/demande"),
+            system_prompt: s("/fiche/consignes"),
+            tools: v.pointer("/fiche/fonctions").and_then(|f| f.as_array()).map(|a| a.iter().filter_map(|f| f["nom"].as_str().map(String::from)).collect()).unwrap_or_default(),
+            color: s("/color"),
+            icon: s("/icon"),
+            certification: s("/certification/statut"),
+            avertissement: String::new(),
+            brut: v.clone(),
+            dossier: None,
+        }
     }
 
     pub fn taches(&self) -> Vec<Tache> {
@@ -187,7 +212,21 @@ pub fn dossier_installe(paths: &Paths, id: &str) -> PathBuf {
 fn lire_installe(dossier: &Path) -> Result<Manifest, String> {
     let texte = std::fs::read_to_string(dossier.join("manifeste.json")).map_err(|e| format!("manifeste.json illisible ({e})"))?;
     let v: Value = serde_json::from_str(&texte).map_err(|e| format!("manifeste.json invalide ({e})"))?;
-    let mut m = Manifest::depuis_v2(&v)?;
+    let mut m = match Manifest::depuis_v2(&v) {
+        Ok(m) => m,
+        // D37 : un agent déjà installé dont le format n'est plus celui attendu reste utilisable,
+        // avec un avertissement, s'il a au moins un id et une commande de lancement
+        Err(motif) if v["id"].is_string() && v.pointer("/execution/commande").is_some_and(|c| c.is_string()) => {
+            let mut m = Manifest::souple(&v);
+            m.avertissement = format!("manifeste (format {}) non conforme à cette version d'Orchestra : {motif}", v["format_manifeste"].as_str().unwrap_or("absent"));
+            m
+        }
+        Err(motif) => return Err(motif),
+    };
+    // certification retenue à l'installation (catalogue de l'Agent Market, lot T4)
+    if let Some(c) = std::fs::read_to_string(dossier.join("installation.json")).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|i| i["certification"].as_str().map(String::from)) {
+        m.certification = c;
+    }
     m.dossier = Some(dossier.to_path_buf());
     Ok(m)
 }

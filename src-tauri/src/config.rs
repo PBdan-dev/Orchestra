@@ -14,8 +14,10 @@ pub struct Config {
     pub claude_api_key: String,
     pub gemini_api_key: String,
     pub openrouter_api_key: String,
-    /// URL de l'Agent Market. Vide = registre local seulement.
+    /// URL de l'Agent Market, ou chemin d'un catalogue local (essais). Vide = Market officiel (D19).
     pub market_url: String,
+    /// Mode développement (lot T4) : accepte les agents non certifiés, avec le badge « Non certifié ».
+    pub mode_developpement: bool,
     /// Index vectoriel local via les embeddings d'Ollama (optionnel).
     pub embeddings_enabled: bool,
     pub embedding_model: String,
@@ -72,6 +74,7 @@ impl Default for Config {
             gemini_api_key: String::new(),
             openrouter_api_key: String::new(),
             market_url: String::new(),
+            mode_developpement: false,
             embeddings_enabled: false,
             embedding_model: "nomic-embed-text".into(),
             user_name: String::new(),

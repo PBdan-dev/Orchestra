@@ -2,7 +2,7 @@
  * Mode démo navigateur : quand l'interface tourne hors de Tauri (ex. `npm run dev` ouvert
  * dans un navigateur), ce faux backend rejoue un scénario complet pour travailler le design.
  */
-import type { BrainInfo, Config, Manifest, MemoryFile, OrchestraEvent, PathsInfo, VoiceStatus } from "./types";
+import type { BrainInfo, Catalogue, Config, Identifiant, Installation, Manifest, MemoryFile, OrchestraEvent, PathsInfo, VoiceStatus } from "./types";
 
 const listeners: ((e: OrchestraEvent) => void)[] = [];
 const emit = (e: OrchestraEvent) => listeners.forEach((l) => l(e));
@@ -10,7 +10,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const config: Config = {
   provider: "ollama", model: "", ollama_url: "http://127.0.0.1:11434", lmstudio_url: "http://127.0.0.1:1234",
-  claude_api_key: "", gemini_api_key: "", openrouter_api_key: "", market_url: "", embeddings_enabled: false,
+  claude_api_key: "", gemini_api_key: "", openrouter_api_key: "", market_url: "", mode_developpement: false, embeddings_enabled: false,
   embedding_model: "nomic-embed-text", user_name: "PB", max_agent_steps: 6,
   voice_enabled: false, voice_autostart: true, voice_mode: "mains-libres", voice_ptt_key: "F2", voice_read_chat: false,
   voice_barge_in: true, voice_llm: "qwen3.5:9b", voice_speaker: "Ryan", voice_reference: "", voice_port: 8765,
@@ -26,6 +26,11 @@ const redacteur: Manifest = {
   color: "#b794f4", icon: "pen",
 };
 const fichiers: Manifest = { ...redacteur, id: "agent-fichiers", name: "Agent Fichiers", description: "Organise et lit des fichiers.", capabilities: ["fichiers"], tools: ["now", "list_dir", "read_file", "write_file"], color: "#4fd1c5", icon: "folder" };
+
+/** Démo du lot T4 : un agent certifié avec un identifiant, un non certifié. */
+const mail: Manifest = { ...redacteur, id: "agent-mail", name: "Mail Adagio", version: "2.1.0", description: "Trie et résume tes mails, prépare des brouillons.", capabilities: ["mail"], tools: ["read_mails", "action_sensitive_envoyer"], color: "#63b3ed", icon: "mail", certification: "orchestra_certified" };
+const brouillons: Manifest = { ...redacteur, id: "agent-brouillons", name: "Brouillons", version: "1.0.3", description: "Rédige des brouillons de mails.", certification: "non_certifie" };
+const idsDemo: Record<string, Identifiant[]> = { "agent-mail": [{ nom: "gmail", type: "mot_de_passe_application", raison: "lire et classer tes mails Gmail", present: false }] };
 
 let mockLoaded = false;
 let mockInstalled: Manifest[] = [];
@@ -115,7 +120,27 @@ export const mockApi = {
   saveConfig: async (c: Config) => { Object.assign(config, c); },
   detectBrain: async (): Promise<BrainInfo> => ({ provider: "ollama", model: "qwen3.5:9b", online: true, models: ["qwen3.5:9b", "qwen3.6:27b"], detail: mockLoaded ? "modèle chargé, prêt" : "modèle non chargé", loaded: mockLoaded, state: mockLoaded ? "ready" : "not_loaded" }),
   loadModel: async (): Promise<BrainInfo> => { await sleep(2500); mockLoaded = true; return mockApi.detectBrain(); },
-  installAgent: async (id: string) => { const m = [redacteur, fichiers].find((a) => a.id === id)!; if (!mockInstalled.find((a) => a.id === id)) mockInstalled.push(m); return m; },
+  installAgent: async (id: string): Promise<Installation> => {
+    await sleep(900);
+    const m = [redacteur, fichiers, mail, brouillons].find((a) => a.id === id)!;
+    if (m.certification === "non_certifie" && !config.mode_developpement) throw new Error("non certifié : seuls les agents « Orchestra Certified » s'installent (mode développement désactivé)");
+    if (!mockInstalled.find((a) => a.id === id)) mockInstalled.push(m);
+    emit({ type: "agent_installe", agent_id: id, version: m.version, ancienne_version: null, certification: m.certification ?? "non_certifie", identifiants_manquants: (idsDemo[id] ?? []).filter((i) => !i.present).map((i) => i.nom) });
+    return { manifest: m, ancienne_version: null, identifiants: idsDemo[id] ?? [], certification: m.certification ?? "non_certifie" };
+  },
+  installAgentZip: async (): Promise<Installation> => { throw new Error("démo navigateur : pas d'installation depuis un fichier"); },
+  catalogue: async (): Promise<Catalogue> => ({
+    source: "https://pbdan-dev.github.io/Agent_Market/agents.json",
+    ignores: ["agent-casse : $ : champ obligatoire « name » absent"],
+    entrees: [
+      { manifest: mail, installable: true, motif: "", installe: mockInstalled.find((a) => a.id === "agent-mail")?.version ?? null },
+      ...(config.mode_developpement
+        ? [{ manifest: brouillons, installable: true, motif: "non certifié (mode développement)", installe: mockInstalled.find((a) => a.id === "agent-brouillons")?.version ?? null }]
+        : []),
+    ],
+  }),
+  identifiantsAgent: async (id: string) => idsDemo[id] ?? [],
+  enregistrerIdentifiant: async (id: string, nom: string) => { (idsDemo[id] ?? []).forEach((i) => { if (i.nom === nom) i.present = true; }); },
   uninstallAgent: async (id: string) => { mockInstalled = mockInstalled.filter((a) => a.id !== id); },
   sendMessage: async (text: string) => { const id = Math.random().toString(36).slice(2, 8); setTimeout(() => (/supprime/i.test(text) ? scenarioMission(id) : scenario(id, text)), 300); return id; },
   listAgents: async () => ({ installed: mockInstalled.slice(), registry: [redacteur, fichiers] }),

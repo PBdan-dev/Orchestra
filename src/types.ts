@@ -23,7 +23,17 @@ export interface Manifest {
   tools: string[];
   color: string;
   icon: string;
+  /** orchestra_certified | livrable_seul | non_certifie */
+  certification?: string;
+  /** Agent installé au format devenu incompatible : utilisable, avec cet avertissement (D37). */
+  avertissement?: string;
 }
+
+/** Identifiant déclaré par un agent (D34), rangé dans le coffre de Windows. */
+export interface Identifiant { nom: string; type: string; raison: string; present: boolean }
+export interface Installation { manifest: Manifest; ancienne_version: string | null; identifiants: Identifiant[]; certification: string }
+export interface EntreeCatalogue { manifest: Manifest; installable: boolean; motif: string; installe: string | null }
+export interface Catalogue { entrees: EntreeCatalogue[]; ignores: string[]; source: string }
 
 export interface Recalled {
   file: string;
@@ -46,6 +56,7 @@ export type OrchestraEvent =
   | { type: "done"; run_id: string; answer: string; intent: string; message_historique?: string }
   | { type: "coupe"; run_id: string; quoi: string; detail: string }
   | { type: "avertissement"; run_id: string; message: string }
+  | { type: "agent_installe"; agent_id: string; version: string; ancienne_version: string | null; certification: string; identifiants_manquants: string[] }
   | { type: "mission_debut"; run_id: string; mission_id: string; agent_id: string; projet: string; dossier_mission: string; dossier_projet: string }
   | { type: "mission_pensee"; run_id: string; mission_id: string; agent_id: string; texte: string }
   | { type: "mission_action"; run_id: string; mission_id: string; agent_id: string; nature: "observee" | "declaree"; action: string; detail: string; raison: string }
@@ -65,6 +76,7 @@ export interface Config {
   gemini_api_key: string;
   openrouter_api_key: string;
   market_url: string;
+  mode_developpement: boolean;
   /** projet où vont les missions et les livrables (D36) */
   projet_actif?: string;
   embeddings_enabled: boolean;
@@ -183,6 +195,7 @@ export type Entry =
   | { kind: "memorized"; id: string; runId: string; at: number; file: string; section: string; line: string }
   | { kind: "nothing"; id: string; runId: string; at: number }
   | { kind: "error"; id: string; runId: string; at: number; message: string }
+  | { kind: "avertissement"; id: string; runId: string; at: number; message: string }
   | { kind: "user"; id: string; runId: string; at: number; text: string }
   | ({ kind: "mission"; id: string; runId: string; at: number } & MissionVue);
 
