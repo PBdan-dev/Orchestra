@@ -139,8 +139,18 @@ Validé le 2026-10-28 : les 11 critères de `docs/CAHIER_DES_CHARGES.md` §13 (b
 - Arrêt pendant l'appel : l'appel est abandonné (échec avec motif).
 - Vérifié : `examples/essai_heberge.rs` avec un faux agent hébergé local en HTTPS (certificat de test), 11/11 ; banc 29/29, essai T5 10/10, essai T7 7/7 avec agent-fichiers 1.0.1 (6/7 avec la 1.0.0 installée, qui ne sait pas reprendre : à mettre à jour depuis le panneau Agents en mode développement). Bibliothèques de test seulement (dev) : rcgen, rustls, tokio-rustls (MIT/Apache).
 
+## État actuel — Lot C (2026-10-31)
+- Compaction par paliers (`compaction.rs`) : au-delà du seuil haut, les plus anciens échanges (jusqu'au seuil bas) sont fondus avec l'ancien résumé en UN résumé réécrit, en 5 rubriques (sujet, décisions, questions ouvertes, consignes de PB, missions), borné à environ 800 tokens (décision de PB). Le code garde les décisions, consignes et missions que le modèle oublierait en réécrivant, et retire les doublons.
+- À l'inactivité seulement : l'interface lance la compaction après 2 min sans saisie, sans parole et sans mission (décision de PB) ; elle s'annule dès que PB tape, parle ou envoie, et sera refaite à la pause suivante. Événements dans Conscience.
+- Fichier lisible et modifiable `memoire/sessions/<AAAA-MM-JJ_HHMM>.md`, relu à chaque tour (une correction de PB compte au tour suivant) ; résumé placé dans le message système, les messages qu'il couvre ne sont plus envoyés.
+- Profil relu à chaque compaction ; comptage des tokens calibré sur `prompt_eval_count` de l'appel de compaction (hors cache).
+- Outil `retrouver` (conversations archivées et résumés de session), consigne associée. Sera remplacé par le rappel sémantique du lot M2.
+- Voix : plus de coupure des messages à 2 000 caractères ; le résumé et les messages qu'il ne couvre pas passent au serveur voix (message `context`, champ `resume`).
+- Vérifié avec le vrai modèle (qwen3.5:9b), `examples/essai_compaction.rs` (seuils abaissés à 1 500 / 700 tokens) : 40 échanges, 7 compactions, puis 6/6 questions de contrôle sur les premiers échanges (nom du projet, budget, consigne horaire, date, question ouverte, responsable). Réponse quand PB parle pendant une compaction : 4,5 s (médiane 7,8 s), la compaction est annulée. Premier passage 4/6 avant la fusion sûre des rubriques. Qualité à surveiller : le petit modèle range encore des questions de culture générale dans « questions ouvertes ».
+- « Un seul calcul complet par compaction » : `prompt_eval_count` n'est pas fiable avec le cache d'Ollama (constat du lot A) ; à mesurer sur `prompt_eval_ms` dans l'application.
+
 ## Prochaine action
-Plan du lot C (section 11 du cahier), puis D, S, M2, M3, M1. Notation « hors_capacite » revue avec PB le 31/10 : une réponse directe « pas possible, aucun agent » compte comme juste (16/18 sur le dernier passage complet).
+Plan du lot D (voix : source unique, souvenirs en voix, coupure de parole, budgets) ; le test vocal demande que PB lance le serveur voix.
 
 ## Décisions
 - 2026-10-25 — Application de bureau Windows en Tauri 2 (Rust + React/TypeScript), installateur léger.
@@ -192,7 +202,8 @@ Plan du lot C (section 11 du cahier), puis D, S, M2, M3, M1. Notation « hors_ca
 - [x] Cahier des charges — Lot T7 : exécution, arrêt, reprise (2026-10-31)
 - [x] Cahier des charges — Lot T9 : suivi des projets (2026-10-31)
 - [x] Cahier des charges — Lot T8 : agents hébergés (2026-10-31)
-- [ ] Cahier des charges — Lot C (prochain)
+- [x] Cahier des charges — Lot C : compaction (2026-10-31)
+- [ ] Cahier des charges — Lot D : voix (prochain)
 - [ ] Cahier des charges — Lots A, B, T1 à T9, C, D, S, M2, M3, M1 (ordre de la section 11)
 - [x] Délégation sur le vrai Ollama vérifiée par l'évaluation (6 tâches déléguées au bon agent, 3/3)
 - [ ] PB teste une vraie délégation sur Ollama dans l'interface
@@ -231,3 +242,4 @@ Plan du lot C (section 11 du cahier), puis D, S, M2, M3, M1. Notation « hors_ca
 - 2026-10-31 — Lot T7 : pause, arrêt propre, arrêt immédiat, limites en pause avec question, reprise depuis le point de reprise (champ `reprise` du contrat), file d'attente, vue Missions ; PR #8 Agent_Market et #5 Orchestra_Agents.
 - 2026-10-31 — Lot T9 : suivi des projets en lecture seule (historique, liste, lecture ciblée, .docx/.xlsx/.pdf), SUIVI.md de chaque projet tenu par Orchestra ; 5/5 questions justes avec le vrai modèle.
 - 2026-10-31 (soir) — Tests du T9 repris après fermeture de ComfyUI ; corrections (projet actif, relances) : aiguillage 14/18, mémoire 19/20. Lot T8 : agents hébergés « livrable seul », 11/11 avec un faux agent HTTPS.
+- 2026-10-31 (nuit) — Lot C : compaction à l'inactivité en un résumé à 5 rubriques, modifiable, annulée quand PB parle ; outil retrouver ; 6/6 questions de contrôle après 40 échanges.
