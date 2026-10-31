@@ -191,6 +191,10 @@ fn preparer(dossier: &Path, memoire_test: &str) -> anyhow::Result<Paths> {
     if let Some(reel) = dossier.parent().and_then(|eval| eval.parent()) {
         copier_dossier(&reel.join("agents").join("installes"), &paths.installes)?;
     }
+    // projet actif de test (lot T9 : Orchestra lit le projet avant de déléguer) : notes.txt pour t17
+    let divers = paths.projets.join("divers");
+    std::fs::create_dir_all(&divers)?;
+    std::fs::write(divers.join("notes.txt"), "Notes de réunion de mardi.")?;
     Ok(paths)
 }
 

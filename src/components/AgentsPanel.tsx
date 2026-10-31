@@ -55,6 +55,17 @@ export function AgentsPanel() {
     chargerCatalogue();
   };
   const installer = async (id: string) => {
+    // agent hébergé (lot T8) : ce qui quittera la machine, affiché et confirmé avant l'installation
+    const c = catalogue?.entrees.find((x) => x.manifest.id === id);
+    if (c?.ce_qui_part && !window.confirm(`${c.manifest.name} est un agent hébergé (livrable seul) : il travaille sur un serveur, pas sur ton ordinateur.
+
+Ce qui quittera ta machine à chaque mission :
+- adresse : ${c.ce_qui_part.adresse}
+- données : ${c.ce_qui_part.donnees_envoyees}
+- conservation : ${c.ce_qui_part.conservation}
+- Orchestra envoie ${c.ce_qui_part.envoye_par_orchestra}.
+
+L'installer ?`)) return;
     setMessage(null);
     try { apres(await installAgent(id)); } catch (e) { setMessage({ ok: false, texte: `Installation refusée : ${String(e)}` }); }
   };
@@ -102,6 +113,7 @@ export function AgentsPanel() {
                 <div className="ap-name">
                   {m.name} <span className="muted small">{m.version}</span> {isInstalled ? <span className="tag ok">installé</span> : <span className="tag">registre</span>}{" "}
                   {isInstalled && <BadgeCertification statut={m.certification} />}{" "}
+                  {isInstalled && <BadgeExecution execution={m.execution} certification={m.certification} />}{" "}
                   {confiance[m.id]?.statut === "quarantaine" && <span className="tag quarantaine" title="Orchestra ne le choisit plus">en quarantaine · {confiance[m.id].ecarts} écarts</span>}
                   {confiance[m.id]?.statut === "retire" && <span className="tag retire" title="Écart relevé lors d'une mission : il n'est plus « de confiance »">confiance retirée</span>}
                 </div>
@@ -143,6 +155,7 @@ export function AgentsPanel() {
               <div className="ap-name">{c.manifest.name} <span className="muted small">{c.manifest.version}</span> <BadgeCertification statut={c.installable && c.motif ? "non_certifie" : c.manifest.certification} /></div>
               <div className="ap-desc">{c.manifest.description}</div>
               {!c.installable && <div className="ap-motif">{c.motif}</div>}
+              {c.ce_qui_part && <div className="ap-motif">Agent hébergé : part vers {c.ce_qui_part.adresse} · {c.ce_qui_part.donnees_envoyees}</div>}
             </div>
             <div className="ap-actions">
               <button className="glass-btn sm" disabled={!c.installable || busyId === c.manifest.id} onClick={() => wrap(c.manifest.id, () => installer(c.manifest.id))}>
@@ -218,4 +231,11 @@ function IdentifiantsAgent({ agent, ouvert }: { agent: Manifest; ouvert: boolean
       {erreur && <div className="small warn">{erreur}</div>}
     </div>
   );
+}
+
+/** Badge d'exécution (lot T8) : local = transparent (pensée et actions vues par la porte), hébergé = livrable seul. */
+function BadgeExecution({ execution, certification }: { execution?: string; certification?: string }) {
+  if (execution === "heberge" && certification === "livrable_seul") return null;
+  if (execution === "heberge") return <span className="tag noncertifie" title="Travaille sur un serveur : seul son livrable est contrôlé, ni sa pensée ni ses actions ne sont visibles">livrable seul</span>;
+  return <span className="tag" title="Travaille sur ton ordinateur : sa pensée et ses appels d'outils passent par la porte et sont visibles">transparent</span>;
 }

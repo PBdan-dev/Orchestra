@@ -27,12 +27,14 @@ export interface Manifest {
   certification?: string;
   /** Agent installé au format devenu incompatible : utilisable, avec cet avertissement (D37). */
   avertissement?: string;
+  /** local (transparent) | heberge (livrable seul, lot T8) */
+  execution?: string;
 }
 
 /** Identifiant déclaré par un agent (D34), rangé dans le coffre de Windows. */
 export interface Identifiant { nom: string; type: string; raison: string; present: boolean }
 export interface Installation { manifest: Manifest; ancienne_version: string | null; identifiants: Identifiant[]; certification: string }
-export interface EntreeCatalogue { manifest: Manifest; installable: boolean; motif: string; installe: string | null }
+export interface EntreeCatalogue { manifest: Manifest; installable: boolean; motif: string; installe: string | null; ce_qui_part?: { adresse: string; donnees_envoyees: string; conservation: string; envoye_par_orchestra: string } | null }
 export interface Catalogue { entrees: EntreeCatalogue[]; ignores: string[]; source: string }
 
 export interface Recalled {

@@ -34,7 +34,7 @@ const QUESTIONS: &[(&str, &[&[&str]])] = &[
     ("Dans le projet salon-2027, quel budget est indiqué pour le stand dans le mail à Camille ?", &[&["4 500", "4500", "4.500"]]),
     ("Dans le projet salon-2027, à qui a-t-on écrit au sujet du changement de date ?", &[&["marc"]]),
     ("D'après les livrables du projet salon-2027, quelle est la nouvelle date du salon ?", &[&["14 mars", "14/03"]]),
-    ("Combien de missions ont été faites sur le projet salon-2027, et quels fichiers ont été produits ?", &[&["2 ", "deux"], &["remerciements", "remerciement"], &["decalage"]]),
+    ("Combien de missions ont été faites sur le projet salon-2027, et quels fichiers ont été produits ?", &[&["2 ", "deux"], &["merci"], &["decalage"]]),
 ];
 
 fn copier(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {

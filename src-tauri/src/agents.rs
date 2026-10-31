@@ -34,6 +34,8 @@ pub struct Manifest {
     pub certification: String,
     /// Agent installé lu avec un format devenu incompatible : utilisable, avec cet avertissement (D37).
     pub avertissement: String,
+    /// local (transparent : pensée et actions vues par la porte) | heberge (livrable seul, lot T8)
+    pub execution: String,
     #[serde(skip)]
     pub brut: Value,
     /// Dossier de l'agent installé (`agents/installes/<id>/`).
@@ -81,6 +83,7 @@ impl Manifest {
             icon: s("/icon"),
             certification: s("/certification/statut"),
             avertissement: String::new(),
+            execution: s("/execution/type"),
             brut: v.clone(),
             dossier: None,
         })
@@ -103,6 +106,7 @@ impl Manifest {
             icon: s("/icon"),
             certification: s("/certification/statut"),
             avertissement: String::new(),
+            execution: s("/execution/type"),
             brut: v.clone(),
             dossier: None,
         }

@@ -7,6 +7,7 @@ pub mod evaluation;
 pub mod integrite;
 pub mod installation;
 pub mod events;
+pub mod heberge;
 mod journal;
 pub mod market;
 pub mod memory;

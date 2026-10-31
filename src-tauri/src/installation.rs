@@ -53,6 +53,8 @@ pub struct EntreeCatalogue {
     pub motif: String,
     /// Version déjà installée, s'il y en a une.
     pub installe: Option<String>,
+    /// Agent hébergé : ce qui quittera la machine, affiché avant l'installation (lot T8).
+    pub ce_qui_part: Option<Value>,
 }
 
 fn s<'a>(v: &'a Value, p: &str) -> &'a str {
@@ -78,8 +80,16 @@ pub fn controle_format(v: &Value) -> Result<(), String> {
 
 /// L'entrée du catalogue peut-elle être installée ? Renvoie la certification retenue (D25).
 pub fn autorisation(entree: &Value, mode_dev: bool) -> Result<String, String> {
+    // agent hébergé (lot T8, D2, D25) : badge « livrable seul » au mieux, jamais « Orchestra Certified »
     if s(entree, "/execution/type") == "heberge" {
-        return Err("agent hébergé : son raccordement arrive avec le lot T8".into());
+        if !s(entree, "/execution/endpoint").starts_with("https://") {
+            return Err("agent hébergé sans adresse HTTPS : refusé".into());
+        }
+        return match s(entree, "/certification/statut") {
+            "livrable_seul" | "orchestra_certified" => Ok("livrable_seul".into()),
+            _ if mode_dev => Ok("non_certifie".into()),
+            _ => Err("agent hébergé non vérifié par l'Agent Market (mode développement désactivé)".into()),
+        };
     }
     let statut = s(entree, "/certification/statut");
     let version = s(entree, "/version");
@@ -309,8 +319,47 @@ pub fn installer_paquet(paths: &Paths, data: &[u8], entree: Option<&Value>, cert
 pub async fn installer_depuis_catalogue(http: &reqwest::Client, paths: &Paths, entree: &Value, mode_dev: bool, source: &str) -> Result<Installation, String> {
     controle_format(entree)?;
     let certification = autorisation(entree, mode_dev)?;
+    if s(entree, "/execution/type") == "heberge" {
+        return installer_heberge(paths, entree, &certification, source);
+    }
     let data = telecharger(http, entree).await?;
     installer_paquet(paths, &data, Some(entree), &certification, source)
+}
+
+/// Agent hébergé (lot T8) : rien à télécharger ; son manifeste est rangé dans
+/// `agents/installes/<id>/` avec la trace de ce qui quittera la machine.
+pub fn installer_heberge(paths: &Paths, entree: &Value, certification: &str, source: &str) -> Result<Installation, String> {
+    let mut v = entree.clone();
+    if let Some(o) = v.as_object_mut() {
+        o.remove("paquet");
+    }
+    let m = Manifest::depuis_v2(&v).map_err(|e| format!("manifeste incomplet : {e}"))?;
+    crate::heberge::endpoint(&m)?;
+    let dest = agents::dossier_installe(paths, &m.id);
+    let ancienne_version = std::fs::read_to_string(dest.join("manifeste.json")).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|a| a["version"].as_str().map(String::from));
+    std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+    std::fs::write(dest.join("manifeste.json"), serde_json::to_string_pretty(&v).unwrap_or_default()).map_err(|e| e.to_string())?;
+    let trace = json!({
+        "source": source,
+        "version": m.version,
+        "certification": certification,
+        "installe_le": chrono::Local::now().to_rfc3339(),
+        "ancienne_version": ancienne_version,
+        "ce_qui_part": crate::heberge::ce_qui_part(&m),
+    });
+    std::fs::write(dest.join("installation.json"), serde_json::to_string_pretty(&trace).unwrap_or_default()).map_err(|e| e.to_string())?;
+    let manifest = agents::get_installed(paths, &m.id).ok_or("agent installé mais illisible")?;
+    let identifiants = identifiants(&manifest);
+    Ok(Installation { manifest, ancienne_version, identifiants, certification: certification.into() })
+}
+
+/// Clé d'un agent hébergé (D34), lue dans le coffre de Windows : le premier identifiant déclaré
+/// de type clé ou jeton qui y est rangé.
+pub fn cle_heberge(m: &Manifest) -> Option<String> {
+    m.brut["identifiants"].as_array()?.iter().filter(|i| matches!(i["type"].as_str(), Some("cle_api" | "jeton" | "jeton_oauth"))).find_map(|i| {
+        let nom = i["nom"].as_str()?;
+        entree_coffre(&m.id, nom).ok()?.get_password().ok()
+    })
 }
 
 /// Installation d'un .zip local : mode développement seulement, badge « Non certifié » (D25).
@@ -339,7 +388,8 @@ pub fn lire_catalogue(entrees: Vec<Manifest>, paths: &Paths, mode_dev: bool) -> 
                 Err(e) => (false, e),
             };
             let installe = installes.iter().find(|i| i.id == m.id).map(|i| i.version.clone());
-            EntreeCatalogue { manifest: m, installable, motif, installe }
+            let ce_qui_part = (!m.est_local()).then(|| crate::heberge::ce_qui_part(&m));
+            EntreeCatalogue { manifest: m, installable, motif, installe, ce_qui_part }
         })
         .collect()
 }
@@ -441,8 +491,14 @@ mod tests {
         assert!(autorisation(&e, false).unwrap_err().contains("0.9.0"));
         e["certification"]["version_certifiee"] = json!("1.0.0");
         assert_eq!(autorisation(&e, false).unwrap(), "orchestra_certified");
-        e["execution"]["type"] = json!("heberge");
-        assert!(autorisation(&e, true).unwrap_err().contains("T8"));
+        e["execution"] = json!({ "type": "heberge", "endpoint": "https://agent.exemple.fr/mission" });
+        assert_eq!(autorisation(&e, false).unwrap(), "livrable_seul", "hébergé certifié : au mieux « livrable seul »");
+        e["certification"] = json!({ "statut": "non_certifie" });
+        assert!(autorisation(&e, false).unwrap_err().contains("hébergé"));
+        e["certification"] = json!({ "statut": "livrable_seul" });
+        assert_eq!(autorisation(&e, false).unwrap(), "livrable_seul");
+        e["execution"]["endpoint"] = json!("http://agent.exemple.fr");
+        assert!(autorisation(&e, true).unwrap_err().contains("HTTPS"));
     }
 
     /// Écrit, relit puis supprime un identifiant d'essai dans le vrai coffre de Windows.
