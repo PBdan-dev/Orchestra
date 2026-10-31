@@ -120,7 +120,7 @@ Validé le 2026-10-28 : les 11 critères de `docs/CAHIER_DES_CHARGES.md` §13 (b
 - Vérifié : `examples/essai_reprise.rs` 7/7 (pause et reprise, porte suspendue, arrêt propre puis reprise sans refaire la 1re opération, arrêt immédiat en 0,1 s) ; interface vérifiée en mode démo (boutons, file d'attente, vue Missions) ; banc 29/29, essais T5 10/10 et T6 9/9 toujours bons.
 
 ## Prochaine action
-PB fusionne les PR #8 (Agent_Market) et #5 (Orchestra_Agents) ; puis plan du lot T9 (suivi des projets par Orchestra).
+PB fusionne la PR #9 d'Agent_Market (catalogue : agent-fichiers 1.0.1) ; puis plan du lot T9 (suivi des projets par Orchestra). PR #8 et #5 fusionnées le 31/10, Release agent-fichiers-1.0.1 publiée (non certifié).
 
 ## Décisions
 - 2026-10-25 — Application de bureau Windows en Tauri 2 (Rust + React/TypeScript), installateur léger.
