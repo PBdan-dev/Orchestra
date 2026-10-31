@@ -17,6 +17,7 @@ pub mod pilote;
 pub mod porte;
 pub mod modele;
 pub mod schema;
+pub mod suivi;
 pub mod tools;
 pub mod validations;
 pub mod verification;
