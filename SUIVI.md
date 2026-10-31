@@ -104,8 +104,15 @@ Validé le 2026-10-28 : les 11 critères de `docs/CAHIER_DES_CHARGES.md` §13 (b
 - Un agent non certifié n'est jamais promu « de confiance » (les 3 agents de test ne le sont donc plus ; ils restent utilisables).
 - Vérifié : `examples/essai_verification.rs` avec 5 agents piégés et le vrai agent-fichiers, 10/10 ; banc des agents 29/29 ; 54 tests unitaires ; interface vérifiée en mode démo.
 
+## État actuel — Lot T6 (2026-10-31)
+- Chaîne d'empreintes SHA-256 (`integrite.rs`) : chaque ligne du journal, de `echanges.jsonl` et de `actions.jsonl` porte `prev` (empreinte de la ligne précédente) ; `<fichier>.chaine` garde le nombre de lignes et l'empreinte de la dernière (fin coupée, dernière ligne modifiée). Les traces antérieures au lot sont « non chaînées », sans alerte. Signature par clé locale : plus tard (D15).
+- Vérification au lancement (en arrière-plan, résultat dans Conscience) et à l'ouverture du dossier d'une mission.
+- Cassure (décision de PB du 31/10) : copie mise à l'abri dans `integrite/preuves/` ; si elle est dans le dossier d'une mission, écart du lot T5 pour l'agent de la mission (confiance retirée, quarantaine au cumul) ; alerte rouge en haut de Conscience jusqu'au clic « J'ai vu » ; rien n'est réparé ni effacé ; une cassure déjà signalée n'est pas recomptée (`integrite/ruptures-signalees.json`). PB a choisi de voir à l'usage si c'est assez strict.
+- Limite : un agent qui modifie à la fois une trace et son fichier `.chaine` en recalculant toute la chaîne n'est pas détecté ; la signature par clé locale (D15) couvrira ce cas.
+- Vérifié : `examples/essai_integrite.rs`, 9/9 (vraie porte avec réponse fixe, ligne modifiée, ligne retirée, fin coupée, preuve, écart compté une seule fois) ; banc 29/29, essais T4 et T5 toujours 10/10 ; 58 tests unitaires.
+
 ## Prochaine action
-Plan du lot T6 (intégrité : chaîne de hachage des traces).
+Plan du lot T7 (exécution, arrêt, reprise).
 
 ## Décisions
 - 2026-10-25 — Application de bureau Windows en Tauri 2 (Rust + React/TypeScript), installateur léger.
@@ -153,7 +160,8 @@ Plan du lot T6 (intégrité : chaîne de hachage des traces).
 - [x] Cahier des charges — Lot T3 : dossiers de mission et de projet (2026-10-30)
 - [x] Cahier des charges — Lot T4 : installation (2026-10-31)
 - [x] Cahier des charges — Lot T5 : vérification et confiance (2026-10-31)
-- [ ] Cahier des charges — Lot T6 : intégrité (prochain)
+- [x] Cahier des charges — Lot T6 : intégrité (2026-10-31)
+- [ ] Cahier des charges — Lot T7 : exécution, arrêt, reprise (prochain)
 - [ ] Cahier des charges — Lots A, B, T1 à T9, C, D, S, M2, M3, M1 (ordre de la section 11)
 - [x] Délégation sur le vrai Ollama vérifiée par l'évaluation (6 tâches déléguées au bon agent, 3/3)
 - [ ] PB teste une vraie délégation sur Ollama dans l'interface
@@ -188,3 +196,4 @@ Plan du lot T6 (intégrité : chaîne de hachage des traces).
 - 2026-10-30 (nuit) — Lot T3 : projet choisi dans l'interface, carte de mission en trois parties, validation à 4 portées, mémoire propre des agents.
 - 2026-10-31 — Lot T4 : installation depuis l'Agent Market (certification, empreinte, manifeste v2, mise à jour qui garde la mémoire, identifiants dans le coffre de Windows, mode développement) ; PR #7 sur Agent_Market, fusionnée par PB.
 - 2026-10-31 — Lot T5 : vérification de chaque mission (déclaré contre constaté), verification.md, confiance retirée au 1er écart, quarantaine au 3e ; essai avec agents piégés 10/10.
+- 2026-10-31 — Lot T6 : traces chaînées (journal, échanges, actions), vérification au lancement et à l'ouverture d'une mission, cassure : preuve gardée, écart pour l'agent, alerte.
