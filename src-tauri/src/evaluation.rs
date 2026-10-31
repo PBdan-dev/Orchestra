@@ -119,8 +119,11 @@ pub fn pose_une_question(reponse: &str) -> bool {
     fin.contains('?') || [" dis moi ", " precise moi ", " precise ", " indique moi ", " donne moi "].iter().any(|m| plie.contains(m))
 }
 
-pub fn note_tache(t: &Tache, decision: &str) -> bool {
+pub fn note_tache(t: &Tache, decision: &str, reponse: &str) -> bool {
     match t.attendu.as_str() {
+        // décision de PB (31/10) : dire directement que ce n'est pas possible (aucun agent pour ça)
+        // vaut autant que chercher un agent puis l'expliquer
+        "hors_capacite" => decision == "hors_capacite" || (decision == "repondre" && refuse_faute_d_agent(reponse)),
         "deleguer" => match decision.strip_prefix("deleguer:") {
             Some(a) => t.agent.is_empty() || t.agent == a,
             None => false,
@@ -130,6 +133,12 @@ pub fn note_tache(t: &Tache, decision: &str) -> bool {
         "repondre" => decision == "repondre" || decision == "preciser",
         autre => decision == autre,
     }
+}
+
+/// La réponse dit-elle que ce n'est pas possible (pas d'agent ni de capacité pour ça) ?
+pub fn refuse_faute_d_agent(reponse: &str) -> bool {
+    let f = memory::fold(reponse);
+    ["ne peux pas", "je ne suis pas en mesure", "pas la capacite", "aucun agent", "pas d agent", "n ai pas acces", "pas possible", "impossible"].iter().any(|m| f.contains(m))
 }
 
 // ---------- Exécution ----------
@@ -295,7 +304,7 @@ pub async fn lancer(opts: Options, journal: impl Fn(&str)) -> anyhow::Result<Pat
             journal(&format!("[{}/{}] tâche {} · passage {p}", essais.len() + 1, total, tache.id));
             let (t, souv, err, duree, mesures) = un_essai(&opts, &cfg, &http, &memoire_test, &dossier_mesures, &tache.demande).await;
             let d = decision(&t);
-            let reussi = err.is_none() && note_tache(tache, &d);
+            let reussi = err.is_none() && note_tache(tache, &d, &t.reponse);
             essais.push(Essai { jeu: "taches".into(), id: tache.id.clone(), passage: p, entree: tache.demande.clone(), decision: d, reponse: t.reponse, reussi, souvenirs: souv, erreur: err, duree_ms: duree, mesures });
         }
         if !conversation.is_empty() {
@@ -559,18 +568,22 @@ mod tests {
     #[test]
     fn notation_des_taches() {
         let mut t = Tache { id: "t".into(), demande: "x".into(), attendu: "deleguer".into(), agent: "agent-redacteur".into(), note: String::new() };
-        assert!(note_tache(&t, "deleguer:agent-redacteur"));
-        assert!(!note_tache(&t, "deleguer:agent-fichiers"));
+        assert!(note_tache(&t, "deleguer:agent-redacteur", ""));
+        assert!(!note_tache(&t, "deleguer:agent-fichiers", ""));
         t.agent.clear();
-        assert!(note_tache(&t, "deleguer:agent-fichiers"));
+        assert!(note_tache(&t, "deleguer:agent-fichiers", ""));
         t.attendu = "preciser".into();
-        assert!(note_tache(&t, "preciser"));
-        assert!(!note_tache(&t, "repondre"));
+        assert!(note_tache(&t, "preciser", ""));
+        assert!(!note_tache(&t, "repondre", ""));
         t.attendu = "repondre".into();
-        assert!(note_tache(&t, "repondre"));
-        assert!(note_tache(&t, "preciser"));
-        assert!(!note_tache(&t, "deleguer:agent-fichiers"));
-        assert!(!note_tache(&t, "hors_capacite"));
+        assert!(note_tache(&t, "repondre", ""));
+        assert!(note_tache(&t, "preciser", ""));
+        assert!(!note_tache(&t, "deleguer:agent-fichiers", ""));
+        assert!(!note_tache(&t, "hors_capacite", ""));
+        t.attendu = "hors_capacite".into();
+        assert!(note_tache(&t, "repondre", "Je ne peux pas réserver de billet : aucun agent ne sait le faire."));
+        assert!(!note_tache(&t, "repondre", "Voici les horaires des trains."));
+        assert!(!note_tache(&t, "preciser", "Quel jour veux-tu partir ?"));
     }
 
     #[test]

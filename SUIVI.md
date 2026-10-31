@@ -140,7 +140,7 @@ Validé le 2026-10-28 : les 11 critères de `docs/CAHIER_DES_CHARGES.md` §13 (b
 - Vérifié : `examples/essai_heberge.rs` avec un faux agent hébergé local en HTTPS (certificat de test), 11/11 ; banc 29/29, essai T5 10/10, essai T7 7/7 avec agent-fichiers 1.0.1 (6/7 avec la 1.0.0 installée, qui ne sait pas reprendre : à mettre à jour depuis le panneau Agents en mode développement). Bibliothèques de test seulement (dev) : rcgen, rustls, tokio-rustls (MIT/Apache).
 
 ## Prochaine action
-Plan du lot C (section 11 du cahier), puis D, S, M2, M3, M1. À décider avec PB : revoir la notation « hors_capacite » de l'évaluation de l'aiguillage.
+Plan du lot C (section 11 du cahier), puis D, S, M2, M3, M1. Notation « hors_capacite » revue avec PB le 31/10 : une réponse directe « pas possible, aucun agent » compte comme juste (16/18 sur le dernier passage complet).
 
 ## Décisions
 - 2026-10-25 — Application de bureau Windows en Tauri 2 (Rust + React/TypeScript), installateur léger.
