@@ -25,7 +25,8 @@ export type VoiceEvent =
   | { type: "thinking"; on: boolean }
   | { type: "thought"; text: string }
   | { type: "decision"; text: string }
-  | { type: "interrupt" }
+  | { type: "interrupt"; enLecture?: boolean }
+  | { type: "bot_dit"; text: string }
   | { type: "latency"; total_ms: number; stt_ms: number | null; llm_ms: number | null; tts_ms: number | null; vad_ms: number; [k: string]: unknown }
   | { type: "playback"; playing: boolean }
   | { type: "conn"; state: "off" | "connecting" | "on" | "error"; detail?: string };
@@ -112,7 +113,11 @@ export class VoiceClient {
       if (typeof m.data === "string") {
         let e: VoiceEvent;
         try { e = JSON.parse(m.data); } catch { return; }
-        if (e.type === "interrupt") this.flushPlayback();
+        if (e.type === "interrupt") {
+          // D3 : était-on en train de dire une réponse ? (l'interface ne garde alors que le texte dit)
+          e = { ...e, enLecture: this.playing };
+          this.flushPlayback();
+        }
         if (e.type === "ready") this.onEvent({ type: "conn", state: "on" });
         this.onEvent(e);
       } else {

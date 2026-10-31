@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 import time
 from datetime import datetime
@@ -43,6 +44,7 @@ from pipecat.frames.frames import (
     TranscriptionFrame,
     TTSAudioRawFrame,
     TTSSpeakFrame,
+    TTSTextFrame,
     VADUserStartedSpeakingFrame,
     VADUserStoppedSpeakingFrame,
 )
@@ -84,7 +86,8 @@ BLOC_1 = (
     "Réponds en français, à l'oral : phrases courtes et naturelles, une à trois en général ; va à l'essentiel. "
     "Jamais de Markdown, de listes, d'emoji ni de code : tout ce que tu écris est lu à voix haute. "
     "Écris les nombres et les sigles comme on les prononce. "
-    "Chaque message de l'utilisateur commence par la date et l'heure entre crochets : sers-t'en si on te les demande, sans les répéter sinon. "
+    "Chaque message de l'utilisateur commence par la date et l'heure entre crochets, puis les souvenirs utiles pour cette question : "
+    "sers-t'en quand ils sont pertinents, sans les réciter ni répéter la date. "
     "Quand on te demande un travail concret (écrire ou lire un fichier, rédiger un document, "
     "utiliser un agent, chercher quelque chose), appelle l'outil confier_a_orchestra avec la tâche "
     "formulée clairement. "
@@ -126,29 +129,17 @@ def lire_profil() -> str:
     return "\n".join(out)
 
 
-# Mémoire complète (décision de PB, 29/10) : en attendant le rappel en voix (lot D), toute la mémoire
-# est donnée au cerveau vocal, figée en début de conversation pour ne pas casser le cache.
-MEMOIRE_MAX_CAR = 6000
-
-
-def lire_memoire() -> str:
-    try:
-        texte = C.MEMOIRE.read_text(encoding="utf-8")
-    except OSError:
-        return ""
-    # on saute l'en-tête explicatif : les faits commencent à la première section
-    i = texte.find("## ")
-    texte = (texte[i:] if i >= 0 else texte).strip()
-    if len(texte) > MEMOIRE_MAX_CAR:
-        logger.info(f"Mémoire vocale coupée à {MEMOIRE_MAX_CAR} caractères (sur {len(texte)})")
-        texte = texte[:MEMOIRE_MAX_CAR] + "\n[… mémoire coupée ici, faute de place : le reste est dans orchestra.md]"
-    return texte
+# Lot D (décision de PB du 31/10) : comme en chat, le profil (bloc 2) et le résumé de la conversation
+# (bloc 3) viennent du cœur d'Orchestra par le message `context` ; les souvenirs utiles sont demandés
+# à chaque phrase (D2). La mémoire n'est plus donnée en entier ni coupée à 6 000 caractères.
+_resume: str = ""
 
 
 def nouvelle_session():
-    """Début de conversation : la mémoire est relue puis figée."""
-    global _profil
-    _profil = lire_memoire()
+    """Début de conversation : profil relu (en attendant celui que le cœur envoie avec `context`)."""
+    global _profil, _resume
+    _profil = lire_profil()
+    _resume = ""
 
 
 def system_prompt() -> str:
@@ -161,14 +152,20 @@ def system_prompt() -> str:
     if len(consignes) > 3000:
         logger.info(f"Consignes vocales coupées à 3 000 caractères (sur {len(consignes)})")
         consignes = consignes[:3000] + " [… consignes coupées, trop longues]"
-    profil = _profil if _profil is not None else lire_memoire()
-    return (
+    profil = _profil if _profil is not None else lire_profil()
+    texte = (
         BLOC_1
         + "\n\n"
         + (f"Consignes de l'utilisateur sur ta façon de répondre (à respecter en priorité) :\n{consignes}\n\n" if consignes else "")
         + "Ce que tu sais de l'utilisateur :\n"
         + (profil or "(rien pour l'instant)")
     )
+    if _resume:
+        texte += (
+            "\n\nDébut de la conversation (résumé) : les premiers échanges ne sont plus affichés, voici leur résumé, "
+            "à jour et fiable.\n<donnees>\n" + _resume + "\n</donnees>"
+        )
+    return texte
 
 
 def modele_derive(base: str) -> str:
@@ -202,24 +199,94 @@ async def modele_vocal(s: C.VoiceSettings, base: str) -> str:
         return base
 
 
-class DateDuTour(FrameProcessor):
-    """Bloc 5 : la date et l'heure en tête du dernier message de l'utilisateur, juste avant le cerveau.
+RAPPEL_DELAI_S = 0.05  # D2 : au-delà de 50 ms, réponse sans souvenirs
+_client_rappel = None  # un seul client, créé une fois (créer un client httpx coûte ≈ 200 ms)
 
-    Le prompt système ne change donc plus à chaque minute (cache), et la date reste exacte.
+
+async def souvenirs(texte: str) -> str:
+    """Souvenirs utiles pour la phrase, demandés au cœur d'Orchestra (même rappel qu'en chat).
+    50 ms au plus en tout ; au-delà ou en cas d'erreur, réponse sans souvenirs, noté au journal."""
+    global _client_rappel
+    url, jeton = os.environ.get("ORCHESTRA_RAPPEL_URL"), os.environ.get("ORCHESTRA_RAPPEL_JETON")
+    if not url or not jeton:
+        return "Aucun souvenir pertinent."
+    import httpx
+
+    if _client_rappel is None:
+        _client_rappel = httpx.AsyncClient(headers={"Authorization": f"Bearer {jeton}"}, trust_env=False)
+    t0 = time.perf_counter()
+    try:
+        r = await asyncio.wait_for(_client_rappel.post(f"{url}/rappel", json={"texte": texte}), RAPPEL_DELAI_S)
+        r.raise_for_status()
+        logger.debug(f"Souvenirs obtenus en {(time.perf_counter() - t0) * 1000:.0f} ms")
+        return str(r.json().get("souvenirs") or "Aucun souvenir pertinent.")
+    except Exception as e:
+        logger.info(f"Souvenirs non obtenus en {(time.perf_counter() - t0) * 1000:.0f} ms ({type(e).__name__}) : réponse sans souvenirs")
+        return "Aucun souvenir pertinent."
+
+
+async def prechauffer_rappel():
+    """Crée le client et ouvre la connexion avant la première phrase (sinon ≈ 300 ms la première fois)."""
+    global RAPPEL_DELAI_S
+    delai, RAPPEL_DELAI_S = RAPPEL_DELAI_S, 2.0
+    try:
+        await souvenirs("préchauffage")
+    finally:
+        RAPPEL_DELAI_S = delai
+
+
+def sans_reflexion(msgs: list) -> list:
+    """D5 : l'appel à `reflechir` et son résultat sortent de la conversation ; seule reste la réponse
+    dite. Pipecat garde déjà le texte prononcé (« Attends, je réfléchis. » puis la réponse) comme
+    message d'Orchestra : la réponse n'est ajoutée que si elle n'y figure pas."""
+    ids = set()
+    out = []
+    for i, m in enumerate(msgs):
+        if not isinstance(m, dict):
+            out.append(m)
+            continue
+        appels = m.get("tool_calls") or []
+        noms = [((a.get("function") or {}).get("name") if isinstance(a, dict) else None) for a in appels]
+        if appels and all(n == "reflechir" for n in noms):
+            ids.update(a.get("id") for a in appels if isinstance(a, dict))
+            if m.get("content"):
+                out.append({"role": "assistant", "content": m["content"]})
+            continue
+        if m.get("role") == "tool" and m.get("tool_call_id") in ids:
+            try:
+                dite = json.loads(m.get("content") or "{}").get("reponse_dite")
+            except (ValueError, AttributeError):
+                dite = None
+            deja_dite = dite and any(
+                isinstance(x, dict) and x.get("role") == "assistant" and dite[:40] in str(x.get("content") or "")
+                for x in msgs[i + 1 :]
+            )
+            if dite and not deja_dite:
+                out.append({"role": "assistant", "content": dite})
+            continue
+        out.append(m)
+    return out
+
+
+class DateDuTour(FrameProcessor):
+    """Bloc 5, comme en chat : la date, l'heure et les souvenirs utiles en tête du dernier message de
+    l'utilisateur, juste avant le cerveau. Le prompt système ne change donc pas (cache).
+    Avant chaque tour, les traces de `reflechir` sont retirées de la conversation (D5).
     """
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
         if isinstance(frame, LLMContextFrame) and direction == FrameDirection.DOWNSTREAM:
-            msgs = frame.context.get_messages()
+            msgs = sans_reflexion(frame.context.get_messages())
             for m in reversed(msgs):
                 if not isinstance(m, dict) or m.get("role") == "system":
                     continue
                 c = m.get("content")
                 if m.get("role") == "user" and isinstance(c, str) and not c.startswith("["):
-                    m["content"] = f"[{maintenant()}] {c}"
-                    frame.context.set_messages(msgs)
+                    s = await souvenirs(c)
+                    m["content"] = f"[{maintenant()}]\n[Souvenirs pour cette question :\n{s}]\n\n{c}"
                 break
+            frame.context.set_messages(msgs)
         await self.push_frame(frame, direction)
 
 
@@ -307,6 +374,23 @@ class UIBridge(BaseObserver):
                 await self.send(r)
 
 
+class TexteDit(FrameProcessor):
+    """D3 : le texte réellement prononcé. La sortie audio ne laisse passer chaque phrase qu'au moment
+    où son audio part ; placé juste après elle, ce processeur l'envoie à l'interface (`bot_dit`).
+    À une coupure de parole, l'interface (qui tient la conversation, D1) ne garde que ce texte,
+    suivi de « [interrompu] »."""
+
+    def __init__(self, bridge: "UIBridge", **kw):
+        super().__init__(**kw)
+        self._bridge = bridge
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, TTSTextFrame) and direction == FrameDirection.DOWNSTREAM and frame.text.strip():
+            await self._bridge.send({"type": "bot_dit", "text": frame.text})
+        await self.push_frame(frame, direction)
+
+
 class CompteurMicro(FrameProcessor):
     """Diagnostic : toutes les 10 s, combien de morceaux de micro sont arrivés, et combien avec du son."""
 
@@ -354,21 +438,18 @@ class ClientCommands(FrameProcessor):
             m = frame.message
             kind = m.get("type")
             if kind == "context":
-                # lot C : plus de coupure à 2 000 caractères ; le résumé de la conversation (C9)
-                # remplace les échanges qu'il couvre (l'interface n'envoie que les suivants)
+                # lot D (D1) : source unique. Le cœur envoie le profil, le résumé de la conversation et
+                # les messages qu'il ne couvre pas ; plus de fenêtre [-40:] ni de coupure des messages.
+                global _profil, _resume
+                if "profil" in m:
+                    _profil = str(m.get("profil") or "")
+                _resume = str(m.get("resume") or "").strip()
                 hist = [
                     {"role": x["role"], "content": str(x["content"])}
-                    for x in m.get("messages", [])[-40:]
+                    for x in m.get("messages", [])
                     if x.get("role") in ("user", "assistant") and x.get("content")
                 ]
-                systeme = system_prompt()
-                resume = str(m.get("resume") or "").strip()
-                if resume:
-                    systeme += (
-                        "\n\n## Début de la conversation (résumé)\nLes premiers échanges ne sont plus affichés : "
-                        "voici leur résumé, à jour et fiable.\n<donnees>\n" + resume + "\n</donnees>"
-                    )
-                self._ctx.set_messages([{"role": "system", "content": systeme}, *hist])
+                self._ctx.set_messages([{"role": "system", "content": system_prompt()}, *hist])
                 return
             if kind == "user_text" and m.get("text"):
                 # message tapé pendant le mode voix : même cerveau rapide, réponse dite à voix haute
@@ -391,6 +472,19 @@ class ClientCommands(FrameProcessor):
                 return
             if kind == "stop":
                 await self.broadcast_interruption()
+                return
+            if kind == "contexte_debug":
+                # contrôle (lot D) : rôles et début des messages de la conversation, sans le prompt système
+                apercu = [
+                    {
+                        "role": x.get("role"),
+                        "outil": ",".join(((c.get("function") or {}).get("name") or "") for c in (x.get("tool_calls") or []) if isinstance(c, dict)),
+                        "texte": str(x.get("content") or "")[:160],
+                    }
+                    for x in self._ctx.get_messages()
+                    if isinstance(x, dict) and x.get("role") != "system"
+                ]
+                await self.push_frame(OutputTransportMessageUrgentFrame(message={"type": "contexte", "messages": apercu}))
                 return
         await self.push_frame(frame, direction)
 
@@ -553,6 +647,7 @@ async def main(s: C.VoiceSettings):
     context = LLMContext(messages=[{"role": "system", "content": system_prompt()}], tools=tools)
     agg = LLMContextAggregatorPair(context)
 
+
     transport = SingleClientWebsocketServerTransport(
         params=SingleClientWebsocketServerParams(
             audio_in_enabled=True,
@@ -576,6 +671,7 @@ async def main(s: C.VoiceSettings):
             llm,
             tts,
             transport.output(),
+            TexteDit(bridge),
             agg.assistant(),
         ]
     )
@@ -596,6 +692,7 @@ async def main(s: C.VoiceSettings):
         nouvelle_session()
         context.set_messages([{"role": "system", "content": system_prompt()}])
         asyncio.create_task(garder_charge(s))
+        asyncio.create_task(prechauffer_rappel())
         await bridge.send({"type": "ready", "stt": "voxtral-mini-4b-realtime", "llm": s.llm_model, "tts": s.tts})
 
     logger.info(f"Serveur voix prêt sur ws://{s.host}:{s.port} (TTS : {s.tts}, cerveau : {s.llm_model})")

@@ -38,10 +38,21 @@ async function contexteVoix(msgs: ChatMessage[]) {
   const h = historyOf(msgs);
   try {
     const e = await api.etatSession();
-    voice.send({ type: "context", messages: h.slice(Math.min(e.couvre, h.length)), resume: e.resume ?? "" });
+    voice.send({ type: "context", messages: h.slice(Math.min(e.couvre, h.length)), resume: e.resume ?? "", profil: e.profil });
   } catch {
     voice.send({ type: "context", messages: h });
   }
+}
+
+/** Lot D (D3) : texte réellement prononcé de la dernière réponse vocale (phrases dont l'audio est parti). */
+let dernierVocal: string | null = null;
+let texteDit = "";
+
+/** Ce qui reste d'une réponse coupée : la partie dite, suivie de « [interrompu] ». */
+export function partieDite(contenu: string, dit: string): string {
+  const d = dit.trim();
+  if (d.length >= contenu.trim().length) return contenu;
+  return d ? `${d} [interrompu]` : "[interrompu]";
 }
 
 /** Mode série (lot T7) : à la fin d'un tour, la demande suivante de la file part. */
@@ -610,6 +621,8 @@ export const useStore = create<State>((set, get) => ({
         set((st) => ({ entries: [...st.entries, { kind: "phase", id: uid(), runId: "voix", at: Date.now(), phase: "speaking", label: "Je formule ma réponse" }] }));
         const id = uid();
         voiceDraft = id;
+        dernierVocal = id;
+        texteDit = "";
         set((st) => ({ messages: [...st.messages, { id, role: "assistant", content: "", streaming: true, voice: true, at: Date.now() }] }));
         break;
       }
@@ -617,6 +630,22 @@ export const useStore = create<State>((set, get) => ({
         live.tokens += 1;
         set((st) => ({ messages: st.messages.map((m) => (m.id === voiceDraft ? { ...m, content: m.content + e.text } : m)) }));
         break;
+      case "bot_dit": {
+        // une phrase de la dernière réponse vient d'être dite (« Attends, je réfléchis. » n'en fait pas partie)
+        const t = e.text.trim();
+        const m = s.messages.find((x) => x.id === dernierVocal);
+        if (t && m && m.content.includes(t)) texteDit = texteDit ? `${texteDit} ${t}` : t;
+        break;
+      }
+      case "interrupt": {
+        if (!e.enLecture || !dernierVocal) break;
+        const id = dernierVocal;
+        set((st) => ({ messages: st.messages.map((m) => (m.id === id ? { ...m, streaming: false, content: partieDite(m.content, texteDit) } : m)) }));
+        if (voiceDraft === id) voiceDraft = null;
+        dernierVocal = null;
+        contexteVoix(get().messages);
+        break;
+      }
       case "bot_end":
         set((st) => ({
           messages: st.messages

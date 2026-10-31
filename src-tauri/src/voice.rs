@@ -188,6 +188,7 @@ impl VoiceProcess {
         cmd.args(["-m", "orchestra_voix.server", "--port", &cfg.voice_port.to_string(), "--llm", &cfg.voice_llm, "--speaker", &cfg.voice_speaker])
             .env("ORCHESTRA_HOME", &paths.root)
             .env("PYTHONIOENCODING", "utf-8")
+            .envs(crate::rappel::adresse().map(|(u, j)| vec![("ORCHESTRA_RAPPEL_URL", u), ("ORCHESTRA_RAPPEL_JETON", j)]).unwrap_or_default())
             .current_dir(voix(paths))
             .stdin(Stdio::null())
             .stdout(Stdio::null())

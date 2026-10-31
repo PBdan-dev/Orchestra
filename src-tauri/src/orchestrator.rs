@@ -92,7 +92,7 @@ ses projets, des informations stables). Ignore l'éphémère, les simples questi
 Réponds par un objet JSON {\"faits\": [{\"section\": \"Utilisateur\" | \"Préférences\" | \"Projets\" | \"Connaissances\", \"fait\": \"une phrase courte\"}]}, liste vide s'il n'y a rien à retenir.";
 
 /// Budget du profil (bloc 2) : ≈ 500 tokens.
-const PROFIL_MAX_CAR: usize = 1750;
+pub const PROFIL_MAX_CAR: usize = 1750;
 
 /// État d'une conversation, gardé d'un tour à l'autre : profil figé et début de l'historique affiché.
 #[derive(Default, Debug)]

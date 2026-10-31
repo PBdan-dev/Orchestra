@@ -15,6 +15,7 @@ pub mod memory;
 pub mod mesures;
 pub mod orchestrator;
 pub mod paths;
+pub mod rappel;
 pub mod pilote;
 pub mod porte;
 pub mod modele;
@@ -318,13 +319,16 @@ struct EtatSession {
     /// Messages [0, couvre) remplacés par le résumé.
     couvre: usize,
     resume: Option<String>,
+    /// Profil (bloc 2), figé pour la conversation : le même en chat et en voix (lot D, D1).
+    profil: String,
 }
 
 /// Résumé et début de la conversation, pour le mode voix (C9) et l'interface.
 #[tauri::command]
 fn etat_session(state: State<AppState>) -> EtatSession {
     let s = state.session.lock().unwrap();
-    EtatSession { couvre: s.couvre, resume: s.fichier.as_ref().and_then(|f| std::fs::read_to_string(f).ok()) }
+    let profil = s.profil.clone().unwrap_or_else(|| memory::profil(&state.paths, orchestrator::PROFIL_MAX_CAR).0);
+    EtatSession { couvre: s.couvre, resume: s.fichier.as_ref().and_then(|f| std::fs::read_to_string(f).ok()), profil }
 }
 
 /// Confiance d'Orchestra dans chaque agent (lot T5) : statut et écarts.
@@ -638,6 +642,10 @@ pub fn run() {
             let http = reqwest::Client::builder().user_agent("Orchestra/0.1").connect_timeout(brain::DELAI_CONNEXION).build().map_err(|e| anyhow::anyhow!("http : {e}"))?;
             let paths_autorisations = paths.agents.join("autorisations.json");
             let state = AppState { config: Mutex::new(config), paths, http, busy: AtomicBool::new(false), voice: voice::VoiceProcess::default(), session: Default::default(), validations: std::sync::Arc::new(validations::Validations::new(paths_autorisations)), pilote: Default::default(), compaction: Mutex::new(None) };
+            // souvenirs pour le mode voix (lot D) : ouvert avant le serveur voix, qui en reçoit l'adresse
+            if let Err(e) = tauri::async_runtime::block_on(rappel::ouvrir(state.paths.clone())) {
+                eprintln!("rappel vocal indisponible : {e}");
+            }
             {
                 let cfg = state.config.lock().unwrap().clone();
                 if cfg.voice_enabled && cfg.voice_autostart {
