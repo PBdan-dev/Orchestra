@@ -554,3 +554,17 @@ pre { margin: 0; font-family: var(--mono); font-size: 12px; white-space: pre-wra
 /* Lot T6 : intégrité des traces */
 .alerte-integrite { margin: 8px 10px 0; padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(248, 113, 113, .6); background: rgba(248, 113, 113, .1); display: flex; flex-direction: column; gap: 5px; }
 .alerte-integrite .glass-btn { align-self: flex-start; }
+
+/* Lot T7 : pilotage, file d'attente, vue Missions */
+.pilotage { border: 1px solid var(--border); border-radius: 10px; padding: 7px 9px; display: flex; flex-direction: column; gap: 4px; }
+.pilotage.limite { border-color: rgba(251, 191, 36, .6); background: rgba(251, 191, 36, .08); }
+.file-attente { margin: 4px 0; padding: 6px 9px; border-radius: 10px; border: 1px dashed var(--border); font-size: 12px; display: flex; flex-direction: column; gap: 3px; }
+.file-attente .fa-item { display: flex; gap: 8px; justify-content: space-between; }
+.msg.note .bubble { opacity: .75; font-style: italic; }
+.missions-view { padding: 16px 20px; overflow: auto; height: 100%; }
+.missions-view table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.missions-view th, .missions-view td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.missions-view th { font-weight: 500; opacity: .7; }
+.missions-view .entete { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.missions-view .barre { width: 140px; height: 6px; border-radius: 3px; background: rgba(255,255,255,.08); overflow: hidden; display: inline-block; vertical-align: middle; }
+.missions-view .barre > span { display: block; height: 100%; background: #7dd3fc; }

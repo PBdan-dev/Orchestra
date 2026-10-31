@@ -226,7 +226,7 @@ async fn un_essai(opts: &Options, cfg: &Config, http: &reqwest::Client, memoire_
 /// Un tour dans un dossier de test déjà prêt, avec l'historique donné.
 async fn un_tour(cfg: &Config, http: &reqwest::Client, paths: Paths, dossier_mesures: &Path, entree: &str, historique: Vec<crate::brain::Msg>, session: Arc<Mutex<Session>>) -> Resultat {
     let releve = Arc::new(Releve::vers(dossier_mesures.to_path_buf()));
-    let ctx = Contexte { cfg: cfg.clone(), paths, http: http.clone(), releve: releve.clone(), session, arreter_voix: None, validations: None };
+    let ctx = Contexte { cfg: cfg.clone(), paths, http: http.clone(), releve: releve.clone(), session, arreter_voix: None, validations: None, pilote: None };
     let sortie = Collecte::default();
     let debut = Instant::now();
     let res = orchestrator::tour(&sortie, &ctx, "eval", entree, historique).await;

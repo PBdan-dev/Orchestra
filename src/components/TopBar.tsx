@@ -7,6 +7,7 @@ import { I } from "./Icons";
 
 const TABS: { id: View; label: string; icon: keyof typeof I }[] = [
   { id: "stage", label: "Scène", icon: "stage" },
+  { id: "missions", label: "Missions", icon: "folder" },
   { id: "memory", label: "Mémoire", icon: "memory" },
   { id: "journal", label: "Journal", icon: "journal" },
 ];

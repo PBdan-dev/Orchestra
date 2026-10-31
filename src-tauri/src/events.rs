@@ -52,6 +52,10 @@ pub enum Event {
     MemoireAgent { run_id: String, mission_id: String, agent_id: String, changements: Vec<serde_json::Value> },
     /// Fin de mission (le journal du jour référence ainsi chaque mission).
     MissionFin { run_id: String, mission_id: String, agent_id: String, etat: String, motif: String },
+    /// Limite D29 atteinte (lot T7) : la mission est en pause, PB décide de continuer ou d'arrêter.
+    LimiteAtteinte { run_id: String, mission_id: String, agent_id: String, texte: String },
+    /// Ordre de PB appliqué à la mission en cours (pause, reprendre, arret, arret_immediat).
+    MissionOrdre { mission_id: String, ordre: String },
     /// Vérification de la mission (lot T5) : écarts, contrôles, et confiance qui en découle.
     MissionVerification { run_id: String, mission_id: String, agent_id: String, ecarts: Vec<String>, controles: Vec<String>, statut: String, total_ecarts: u32, confiance_retiree: bool },
     /// Action irréversible en attente de la réponse de PB (D28).

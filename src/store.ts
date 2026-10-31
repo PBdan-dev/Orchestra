@@ -5,7 +5,7 @@ import type {
   AgentNode, Autorisation, BrainInfo, ChatMessage, Config, Entry, Installation, Manifest, Rupture, MissionVue, OrchestraEvent, PathsInfo, Phase, Projets, VoiceLatency, VoiceModels, VoiceStatus,
 } from "./types";
 
-export type View = "stage" | "memory" | "journal" | "settings";
+export type View = "stage" | "missions" | "memory" | "journal" | "settings";
 export type Inspect = { type: "agent"; id: string } | { type: "core" } | null;
 
 let seq = 0;
@@ -17,7 +17,20 @@ let dictBusy = false;
 let voiceRun = false;
 export let voice: VoiceClient;
 /** Historique renvoyé au cerveau : le message de l'utilisateur tel qu'Orchestra l'a envoyé (date et souvenirs compris), pour que le début du prompt reste identique d'un tour à l'autre (cache). */
-const historyOf = (msgs: ChatMessage[]) => msgs.filter((m) => !m.streaming && !m.sim).map((m) => ({ role: m.role, content: m.contexte ?? m.content }));
+const historyOf = (msgs: ChatMessage[]) => msgs.filter((m) => !m.streaming && !m.sim && !m.note).map((m) => ({ role: m.role, content: m.contexte ?? m.content }));
+
+/** Mode série (lot T7) : à la fin d'un tour, la demande suivante de la file part. */
+function suivanteDeLaFile() {
+  setTimeout(() => {
+    const s = useStore.getState();
+    if (s.busy || s.fileAttente.length === 0) return;
+    const [t, ...reste] = s.fileAttente;
+    // le message mis en file était affiché : il est remplacé par le vrai envoi
+    const i = s.messages.findIndex((m) => m.note && m.role === "user" && m.content === t);
+    useStore.setState({ fileAttente: reste, messages: i >= 0 ? s.messages.filter((_, k) => k !== i) : s.messages });
+    useStore.getState().send(t, true);
+  }, 300);
+}
 
 /** Énergie partagée avec le canvas (lue à chaque frame, hors React). */
 export const live = {
@@ -62,6 +75,13 @@ interface State {
   autorisations: Autorisation[];
   /** Traces cassées (lot T6) : alerte affichée jusqu'à ce que PB l'ait vue. */
   alertesIntegrite: Rupture[];
+  /** Demandes tapées pendant qu'Orchestra travaille : envoyées une à une ensuite (mode série, lot T7). */
+  fileAttente: string[];
+  /** Mission en cours (lot T7) : pilotable depuis sa carte. */
+  missionEnCours: string | null;
+  commanderMission: (missionId: string, ordre: string) => Promise<void>;
+  reprendreMission: (missionId: string) => Promise<void>;
+  retirerDeLaFile: (i: number) => void;
   vuIntegrite: () => void;
   bootDone: boolean;
   memoryFocus: string | null;
@@ -174,6 +194,28 @@ export const useStore = create<State>((set, get) => ({
   projets: null,
   autorisations: [],
   alertesIntegrite: [],
+  fileAttente: [],
+  missionEnCours: null,
+  retirerDeLaFile: (i) => set((s) => ({ fileAttente: s.fileAttente.filter((_, k) => k !== i) })),
+  commanderMission: async (missionId, ordre) => {
+    await api.commanderMission(missionId, ordre);
+  },
+  reprendreMission: async (missionId) => {
+    if (get().busy) throw new Error("Orchestra est déjà occupé : attends la fin de la demande en cours.");
+    set((s) => ({
+      busy: true,
+      phase: "delegating",
+      phaseLabel: "Je reprends la mission",
+      messages: [...s.messages, { id: uid(), role: "assistant", content: "", streaming: true, at: Date.now() }],
+    }));
+    try {
+      const runId = await api.reprendreMission(missionId);
+      set({ runId });
+    } catch (e) {
+      set((s) => ({ busy: false, phase: "idle", messages: s.messages.map((m) => (m.streaming && !m.voice ? { ...m, streaming: false, content: `⚠ ${String(e)}` } : m)) }));
+      throw e;
+    }
+  },
   vuIntegrite: () => set({ alertesIntegrite: [] }),
   bootDone: false,
   memoryFocus: null,
@@ -311,7 +353,20 @@ export const useStore = create<State>((set, get) => ({
       live.pulse(0.6);
       return;
     }
-    if (get().busy) return;
+    // mode série (D7, lot T7) : pendant un travail, la demande attend son tour, visible dans la file
+    if (get().busy) {
+      const n = get().fileAttente.length + 1;
+      set((s) => ({
+        fileAttente: [...s.fileAttente, t],
+        messages: [...s.messages, { id: uid(), role: "user", content: t, at: Date.now(), note: true }, {
+          id: uid(), role: "assistant", note: true, at: Date.now(),
+          content: s.missionEnCours
+            ? `Une mission est en cours : je ne peux pas discuter pendant qu'un agent travaille. Ta demande attend son tour (n° ${n} dans la file) ; je la traiterai juste après.`
+            : `Je termine ma réponse en cours : ta demande attend son tour (n° ${n} dans la file).`,
+        }],
+      }));
+      return;
+    }
     const history = historyOf(get().messages);
     const userMsg: ChatMessage = { id: uid(), role: "user", content: t, at: Date.now() };
     const draft: ChatMessage = { id: uid(), role: "assistant", content: "", streaming: true, at: Date.now() };
@@ -753,9 +808,12 @@ export const useStore = create<State>((set, get) => ({
           if (last?.content) voice.say(last.content);
         }
         voiceRun = false;
+        suivanteDeLaFile();
         break;
       }
       case "mission_debut":
+        set({ missionEnCours: e.mission_id });
+        if (voice?.connected) voice.say("Je lance la mission. Tant qu'elle tourne, je ne peux pas discuter ; je te préviens quand elle est finie.");
         push({
           kind: "mission", id: uid(), runId: e.run_id, at: now, missionId: e.mission_id, agentId: e.agent_id, projet: e.projet,
           dossierMission: e.dossier_mission, dossierProjet: e.dossier_projet, pensees: [], actions: [], livrables: null, memoire: [], validations: [],
@@ -776,7 +834,16 @@ export const useStore = create<State>((set, get) => ({
         mission(e.mission_id, () => ({ memoire: e.changements }));
         break;
       case "mission_fin":
-        mission(e.mission_id, () => ({ etat: e.etat, motif: e.motif }));
+        mission(e.mission_id, () => ({ etat: e.etat, motif: e.motif, enPause: false, limite: undefined }));
+        set({ missionEnCours: null });
+        if (voice?.connected) voice.say("La mission est terminée.");
+        break;
+      case "limite_atteinte":
+        mission(e.mission_id, () => ({ enPause: true, limite: e.texte }));
+        if (voice?.connected) voice.say("La mission a atteint une limite et elle est en pause. Dis-moi à l'écran si on continue.");
+        break;
+      case "mission_ordre":
+        mission(e.mission_id, () => (e.ordre === "pause" ? { enPause: true } : e.ordre === "reprendre" ? { enPause: false, limite: undefined } : { arretDemande: true, limite: undefined }));
         break;
       case "mission_verification":
         mission(e.mission_id, () => ({ verification: { ecarts: e.ecarts, controles: e.controles, statut: e.statut, totalEcarts: e.total_ecarts, confianceRetiree: e.confiance_retiree } }));
@@ -819,6 +886,7 @@ export const useStore = create<State>((set, get) => ({
         break;
       }
       case "error": {
+        setTimeout(suivanteDeLaFile, 0);
         push({ kind: "error", id: uid(), runId: e.run_id, at: now, message: e.message });
         set((s) => ({
           busy: false,

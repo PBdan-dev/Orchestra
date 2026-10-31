@@ -13,6 +13,7 @@ pub mod memory;
 pub mod mesures;
 pub mod orchestrator;
 pub mod paths;
+pub mod pilote;
 pub mod porte;
 pub mod modele;
 pub mod schema;
@@ -39,6 +40,8 @@ pub struct AppState {
     pub session: std::sync::Arc<Mutex<orchestrator::Session>>,
     /// Validations des actions irréversibles et autorisations (D28).
     pub validations: std::sync::Arc<validations::Validations>,
+    /// Mission en cours, pilotée depuis l'interface (lot T7).
+    pub pilote: std::sync::Arc<pilote::Pilote>,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -168,6 +171,101 @@ async fn verifier_integrite(app: AppHandle, state: State<'_, AppState>, mission:
         deja_signalees: b.deja_signalees,
     });
     Ok(b)
+}
+
+/// Ordre de PB pour la mission en cours (lot T7) : pause, reprendre, arret, arret_immediat.
+/// L'arrêt immédiat n'arrive ici qu'après confirmation dans l'interface (D5).
+#[tauri::command]
+fn commander_mission(app: AppHandle, state: State<AppState>, mission_id: String, ordre: String) -> CmdResult<()> {
+    state.pilote.commander(&mission_id, &ordre)?;
+    events::emit(&app, events::Event::MissionOrdre { mission_id, ordre });
+    Ok(())
+}
+
+/// Reprise d'une mission arrêtée, depuis son point de reprise (lot T7, D6).
+#[tauri::command]
+async fn reprendre_mission(app: AppHandle, state: State<'_, AppState>, mission_id: String) -> CmdResult<String> {
+    if state.busy.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Err("Orchestra est déjà en train de traiter une demande.".into());
+    }
+    let run_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
+    let rid = run_id.clone();
+    tauri::async_runtime::spawn(async move {
+        orchestrator::reprendre(app, rid, mission_id).await;
+    });
+    Ok(run_id)
+}
+
+#[derive(Serialize)]
+struct MissionResume {
+    id: String,
+    date: String,
+    projet: String,
+    agent_id: String,
+    but: String,
+    etat: String,
+    ecarts: Option<usize>,
+    reprenable: bool,
+}
+
+/// Vue « Missions » (lot T7) : toutes les missions, de la plus récente à la plus ancienne.
+#[tauri::command]
+fn lister_missions(state: State<AppState>) -> Vec<MissionResume> {
+    let mut l: Vec<MissionResume> = std::fs::read_dir(&state.paths.missions)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .map(|e| {
+            let d = e.path();
+            let lire = |f: &str| std::fs::read_to_string(d.join(f)).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()).unwrap_or_default();
+            let m = lire("mission.json");
+            let cr = lire("compte_rendu.json");
+            // « ## Résultat : aucun écart » ou « ## Résultat : 2 écart(s) » (lot T5)
+            let ecarts = std::fs::read_to_string(d.join("verification.md"))
+                .ok()
+                .and_then(|t| t.lines().find(|l| l.starts_with("## Résultat : ")).map(|l| l["## Résultat : ".len()..].split_whitespace().next().and_then(|n| n.parse().ok()).unwrap_or(0)));
+            MissionResume {
+                id: e.file_name().to_string_lossy().to_string(),
+                date: m["cree_le"].as_str().unwrap_or("").to_string(),
+                projet: std::path::Path::new(m["projet"].as_str().unwrap_or("")).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+                agent_id: m["agent_id"].as_str().unwrap_or("").to_string(),
+                but: m["but"].as_str().unwrap_or("").to_string(),
+                etat: cr["etat"].as_str().unwrap_or(if state.pilote.mission_en_cours().as_deref() == Some(&e.file_name().to_string_lossy()) { "en_cours" } else { "inconnu" }).to_string(),
+                ecarts,
+                reprenable: d.join("reprise.json").exists(),
+            }
+        })
+        .collect();
+    l.sort_by(|a, b| b.date.cmp(&a.date));
+    l
+}
+
+#[derive(Serialize)]
+struct MemoireGraphique {
+    /// Mo
+    totale: u64,
+    utilisee: u64,
+    detail: String,
+}
+
+/// Mémoire de la carte graphique (nvidia-smi), affichée avec le mode série (lot T7).
+#[tauri::command]
+fn memoire_graphique() -> CmdResult<MemoireGraphique> {
+    let mut c = std::process::Command::new("nvidia-smi");
+    c.args(["--query-gpu=name,memory.total,memory.used", "--format=csv,noheader,nounits"]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        c.creation_flags(0x0800_0000);
+    }
+    let o = c.output().map_err(|e| format!("nvidia-smi indisponible : {e}"))?;
+    let t = String::from_utf8_lossy(&o.stdout);
+    let p: Vec<&str> = t.lines().next().unwrap_or("").split(',').map(|x| x.trim()).collect();
+    if p.len() < 3 {
+        return Err("carte graphique non détectée".into());
+    }
+    Ok(MemoireGraphique { totale: p[1].parse().unwrap_or(0), utilisee: p[2].parse().unwrap_or(0), detail: p[0].to_string() })
 }
 
 /// Confiance d'Orchestra dans chaque agent (lot T5) : statut et écarts.
@@ -478,7 +576,7 @@ pub fn run() {
             memory::seed_main(&paths, &config.user_name).map_err(|e| anyhow::anyhow!("mémoire : {e}"))?;
             let http = reqwest::Client::builder().user_agent("Orchestra/0.1").connect_timeout(brain::DELAI_CONNEXION).build().map_err(|e| anyhow::anyhow!("http : {e}"))?;
             let paths_autorisations = paths.agents.join("autorisations.json");
-            let state = AppState { config: Mutex::new(config), paths, http, busy: AtomicBool::new(false), voice: voice::VoiceProcess::default(), session: Default::default(), validations: std::sync::Arc::new(validations::Validations::new(paths_autorisations)) };
+            let state = AppState { config: Mutex::new(config), paths, http, busy: AtomicBool::new(false), voice: voice::VoiceProcess::default(), session: Default::default(), validations: std::sync::Arc::new(validations::Validations::new(paths_autorisations)), pilote: Default::default() };
             {
                 let cfg = state.config.lock().unwrap().clone();
                 if cfg.voice_enabled && cfg.voice_autostart {
@@ -496,6 +594,10 @@ pub fn run() {
             install_agent,
             install_agent_zip,
             verifier_integrite,
+            commander_mission,
+            reprendre_mission,
+            lister_missions,
+            memoire_graphique,
             confiance_agents,
             lever_quarantaine,
             retablir_confiance,

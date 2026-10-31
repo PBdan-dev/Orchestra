@@ -74,7 +74,8 @@ export function Composer() {
   }, [dictFinal.seq]);
 
   const submit = () => {
-    if (!text.trim() || (busy && !voiceOn)) return;
+    // pendant un travail, la demande part dans la file d'attente (mode série, lot T7)
+    if (!text.trim()) return;
     send(text);
     setText("");
   };
@@ -116,7 +117,7 @@ export function Composer() {
         </div>
       )}
       <div className="composer-inner glass">
-        <textarea ref={ref} value={text} placeholder={voiceOn ? "Parle, ou écris : je te réponds à voix haute" : busy ? "Orchestra travaille…" : "Écris à Orchestra…"}
+        <textarea ref={ref} value={text} placeholder={voiceOn ? "Parle, ou écris : je te réponds à voix haute" : busy ? "Orchestra travaille : ta demande attendra son tour" : "Écris à Orchestra…"}
           onChange={(e) => { setText(e.target.value); listening(); }}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }} />
         {!voiceOn && voiceInstalled && (
@@ -125,7 +126,7 @@ export function Composer() {
             <I.mic size={18} />
           </button>
         )}
-        <button className="send-btn" onClick={submit} disabled={!text.trim() || (busy && !voiceOn)} title="Envoyer (Entrée)"><I.send size={18} /></button>
+        <button className="send-btn" onClick={submit} disabled={!text.trim()} title={busy ? "Mettre en file d'attente (Entrée)" : "Envoyer (Entrée)"}><I.send size={18} /></button>
       </div>
       <div className="composer-foot">
         <span className="foot-status" style={{ ["--c" as any]: status.color }}><span className="pill-dot" /> {status.label}{brain?.model ? ` · ${brain.model}` : ""}</span>

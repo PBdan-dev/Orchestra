@@ -9,6 +9,7 @@ import { Composer } from "./components/Composer";
 import { MemoryView } from "./components/MemoryView";
 import { SettingsView } from "./components/SettingsView";
 import { JournalView } from "./components/JournalView";
+import { MissionsView } from "./components/MissionsView";
 
 export default function App() {
   const boot = useStore((s) => s.boot);
@@ -53,6 +54,7 @@ export default function App() {
               <Conversation />
             </motion.div>
           )}
+          {view === "missions" && <motion.div key="missions" className="layout-view" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}><MissionsView /></motion.div>}
           {view === "memory" && <motion.div key="memory" className="layout-view" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}><MemoryView /></motion.div>}
           {view === "journal" && <motion.div key="journal" className="layout-view" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}><JournalView /></motion.div>}
           {view === "settings" && <motion.div key="settings" className="layout-view" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}><SettingsView /></motion.div>}

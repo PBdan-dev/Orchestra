@@ -111,6 +111,31 @@ pub fn echec(mission_id: &str, motif: &str) -> Value {
     })
 }
 
+/// Compte rendu d'une mission coupée par un arrêt immédiat (D5, lot T7).
+pub fn arret_force(mission_id: &str) -> Value {
+    json!({
+        "mission_id": mission_id, "etat": "arrete_force",
+        "motif": "arrêt immédiat demandé par PB : fichiers possiblement incomplets",
+        "resultat": { "texte": "", "fichiers": [] }, "actions_declarees": [],
+        "verification": { "controle": [], "non_controle": ["mission coupée : fichiers possiblement incomplets"] }, "point_de_reprise": null
+    })
+}
+
+/// Message interne (jamais transmis à l'agent) : couper le programme de l'agent.
+pub const ARRET_IMMEDIAT: &str = "__arret_immediat";
+
+/// Mission de reprise (lot T7, décision de PB du 31/10) : la mission d'origine, avec un nouvel
+/// identifiant et le point de reprise écrit par l'agent, rendu tel quel dans `reprise`.
+pub fn mission_reprise(origine: &Value, point_de_reprise: &Value) -> Result<Value, String> {
+    let mut v = origine.clone();
+    let agent = origine["agent_id"].as_str().unwrap_or("agent");
+    v["id"] = json!(id_mission(agent));
+    v["cree_le"] = json!(chrono::Local::now().to_rfc3339());
+    v["reprise"] = json!({ "mission_origine": origine["id"], "point_de_reprise": point_de_reprise });
+    valider_mission(&v)?;
+    Ok(v)
+}
+
 /// Découpe la commande de lancement (`python agent.py`, guillemets admis).
 pub fn decouper_commande(c: &str) -> Vec<String> {
     let mut out = vec![];
@@ -197,34 +222,38 @@ where
     envoyer(&mut entree, &mut journal, mission).await?;
 
     let mut horloge = tokio::time::interval(Duration::from_secs(20));
-    // pendant qu'une validation attend PB, l'agent attend aussi : pas de délai de silence
+    // pendant qu'une validation attend PB, ou pendant une pause, l'agent attend aussi : pas de délai de silence
     let mut attente_validation = false;
+    // message de PB ou d'Orchestra pendant la mission (validation, pause, reprendre, arrêt, arrêt immédiat)
+    macro_rules! externe {
+        ($msg:expr) => {{
+            let msg: Value = $msg;
+            if msg["type"] == ARRET_IMMEDIAT {
+                let _ = enfant.kill().await;
+                d.compte_rendu = arret_force(&mission_id);
+                break;
+            }
+            if msg["type"] == "validation" || msg["type"] == "reprendre" {
+                attente_validation = false;
+            }
+            if valider_message(&msg).is_ok() && envoyer(&mut entree, &mut journal, &msg).await.is_err() {
+                d.ecarts.push("message impossible à transmettre à l'agent".into());
+            }
+            continue;
+        }};
+    }
     loop {
         let delai = if attente_validation { Duration::from_secs(7 * 24 * 3600) } else { SILENCE_AGENT };
         // messages venus de l'interface (validation), notes de la porte, horloge des limites,
         // en même temps que la sortie de l'agent
-        if let Some(rx) = externes.as_mut() {
-            if let Ok(msg) = rx.try_recv() {
-                if msg["type"] == "validation" {
-                    attente_validation = false;
-                }
-                if valider_message(&msg).is_ok() && envoyer(&mut entree, &mut journal, &msg).await.is_err() {
-                    d.ecarts.push("message impossible à transmettre à l'agent".into());
-                }
-                continue;
-            }
+        if let Some(msg) = externes.as_mut().and_then(|rx| rx.try_recv().ok()) {
+            externe!(msg);
         }
         let lu = if let Some(p) = porte.as_mut() {
             tokio::select! {
                 l = tokio::time::timeout(delai, lignes.next_line()) => l,
                 Some(msg) = async { match externes.as_mut() { Some(rx) => rx.recv().await, None => std::future::pending().await } } => {
-                    if msg["type"] == "validation" {
-                        attente_validation = false;
-                    }
-                    if valider_message(&msg).is_ok() && envoyer(&mut entree, &mut journal, &msg).await.is_err() {
-                        d.ecarts.push("message impossible à transmettre à l'agent".into());
-                    }
-                    continue;
+                    externe!(msg);
                 }
                 Some(note) = p.notes.recv() => {
                     for msg in sur_note(&note) {
@@ -243,13 +272,7 @@ where
             tokio::select! {
                 l = tokio::time::timeout(delai, lignes.next_line()) => l,
                 Some(msg) = async { match externes.as_mut() { Some(rx) => rx.recv().await, None => std::future::pending().await } } => {
-                    if msg["type"] == "validation" {
-                        attente_validation = false;
-                    }
-                    if valider_message(&msg).is_ok() && envoyer(&mut entree, &mut journal, &msg).await.is_err() {
-                        d.ecarts.push("message impossible à transmettre à l'agent".into());
-                    }
-                    continue;
+                    externe!(msg);
                 }
             }
         };
@@ -286,7 +309,7 @@ where
             if let Some(p) = porte.as_ref() {
                 p.porte.progres();
             }
-            if ev["type"] == "validation_requise" {
+            if ev["type"] == "validation_requise" || ev["type"] == "en_pause" {
                 attente_validation = true;
             }
             for msg in sur_evenement(ev) {

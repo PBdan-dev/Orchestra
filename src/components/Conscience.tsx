@@ -190,6 +190,9 @@ function MissionCard({ m, name, icon }: { m: MissionVue; name: string; icon: str
       </div>
       {m.motif && <div className="small muted">{m.motif}</div>}
 
+      {enCours && <PilotageMission m={m} name={name} />}
+      {!enCours && m.etat && ["arrete_proprement", "arrete_force", "en_pause"].includes(m.etat) && <RepriseMission m={m} name={name} />}
+
       {m.validations.map((v) => <ValidationCard key={v.cle} v={v} agent={name} />)}
 
       <div className="mission-part">
@@ -302,6 +305,50 @@ function ValidationCard({ v, agent }: { v: ValidationMission; agent: string }) {
       <div className="validation-discrets">
         <button className="link-btn" disabled={envoi} onClick={() => go(true, "tout_session", `Autoriser ${agent} à faire TOUTES ses actions irréversibles sans te demander, jusqu'à la fermeture d'Orchestra ?`)}>tout autoriser pour la session</button>
         <button className="link-btn" disabled={envoi} onClick={() => go(true, "permanent", `Autoriser ${agent} à faire TOUTES ses actions irréversibles sans te demander, de façon permanente ? Tu pourras retirer cette autorisation dans le panneau Agents.`)}>tout autoriser de façon permanente</button>
+      </div>
+      {erreur && <div className="small warn">{erreur}</div>}
+    </div>
+  );
+}
+
+/** Pilotage de la mission en cours (lot T7) : pause, reprendre, arrêt propre, arrêt immédiat (D5). */
+function PilotageMission({ m, name }: { m: MissionVue; name: string }) {
+  const commander = useStore((s) => s.commanderMission);
+  const [erreur, setErreur] = useState("");
+  const go = async (ordre: string, confirmation?: string) => {
+    if (confirmation && !window.confirm(confirmation)) return;
+    setErreur("");
+    try { await commander(m.missionId, ordre); } catch (e) { setErreur(String(e)); }
+  };
+  return (
+    <div className={`pilotage ${m.limite ? "limite" : ""}`}>
+      {m.limite && <div className="small"><I.alert size={12} /> Limite atteinte : {m.limite}. La mission est en pause. <b>On continue ?</b></div>}
+      {m.arretDemande && <div className="small muted">Arrêt demandé : {name} termine son étape en cours et note où il en est.</div>}
+      <div className="validation-boutons">
+        {m.enPause
+          ? <button className="glass-btn sm active" onClick={() => go("reprendre")}><I.play size={11} /> {m.limite ? "Continuer" : "Reprendre"}</button>
+          : !m.arretDemande && <button className="glass-btn sm" onClick={() => go("pause")}>❚❚ Pause</button>}
+        {!m.arretDemande && <button className="glass-btn sm" onClick={() => go("arret")} title="L'agent termine son étape, note où il en est, puis s'arrête">■ Arrêter</button>}
+        <button className="link-btn danger" onClick={() => go("arret_immediat", `Couper ${name} tout de suite ? Son programme est arrêté sans attendre la fin de l'étape : des fichiers peuvent rester incomplets.`)}>arrêt immédiat</button>
+      </div>
+      {erreur && <div className="small warn">{erreur}</div>}
+    </div>
+  );
+}
+
+/** Reprise d'une mission arrêtée, sur demande de PB (D6). */
+function RepriseMission({ m, name }: { m: MissionVue; name: string }) {
+  const reprendre = useStore((s) => s.reprendreMission);
+  const busy = useStore((s) => s.busy);
+  const [erreur, setErreur] = useState("");
+  const [fait, setFait] = useState(false);
+  return (
+    <div className="pilotage">
+      <div className="small">{m.etat === "arrete_force" ? "Mission coupée : des fichiers peuvent être incomplets." : `${name} a noté où il en était.`} Ce qui a déjà été fait ne sera pas refait.</div>
+      <div className="validation-boutons">
+        <button className="glass-btn sm" disabled={busy || fait} onClick={async () => { setErreur(""); try { await reprendre(m.missionId); setFait(true); } catch (e) { setErreur(String(e)); } }}>
+          <I.play size={11} /> {fait ? "Reprise lancée" : "Reprendre la mission"}
+        </button>
       </div>
       {erreur && <div className="small warn">{erreur}</div>}
     </div>

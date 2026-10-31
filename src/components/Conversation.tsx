@@ -17,6 +17,8 @@ export function Conversation() {
   const clear = useStore((s) => s.clearConversation);
   const busy = useStore((s) => s.busy);
   const voiceOn = useStore((s) => s.voiceOn);
+  const file = useStore((s) => s.fileAttente);
+  const retirerDeLaFile = useStore((s) => s.retirerDeLaFile);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -44,7 +46,7 @@ export function Conversation() {
         )}
         <AnimatePresence initial={false}>
           {messages.map((m) => (
-            <motion.div key={m.id} className={`msg ${m.role}`} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
+            <motion.div key={m.id} className={`msg ${m.role} ${m.note ? "note" : ""}`} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
               {m.role === "assistant" && (
                 <div className="msg-meta">
                   <span className="who">Orchestra</span>
@@ -61,6 +63,14 @@ export function Conversation() {
             </motion.div>
           ))}
         </AnimatePresence>
+        {file.length > 0 && (
+          <div className="file-attente">
+            <div className="muted">En attente ({file.length}) : envoyées une à une quand Orchestra aura fini</div>
+            {file.map((t, i) => (
+              <div key={i} className="fa-item"><span>{i + 1}. {t}</span><button className="link-btn" onClick={() => retirerDeLaFile(i)}>retirer</button></div>
+            ))}
+          </div>
+        )}
       </div>
     </section>
   );

@@ -98,6 +98,8 @@ struct Etat {
     notes: mpsc::UnboundedSender<Note>,
     /// Un appel au modèle à la fois (mode série, D7).
     file: tokio::sync::Mutex<()>,
+    /// Mission en pause ou arrêt demandé (lot T7) : le modèle n'est plus servi.
+    suspendue: Arc<std::sync::atomic::AtomicBool>,
     n: Mutex<u64>,
 }
 
@@ -130,6 +132,7 @@ impl Porte {
             compteurs: Mutex::new(Compteurs::default()),
             notes: tx,
             file: tokio::sync::Mutex::new(()),
+            suspendue: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             n: Mutex::new(0),
         });
         let e2 = etat.clone();
@@ -157,6 +160,12 @@ impl Porte {
     /// Vérifie les seuils de durée (appelée régulièrement par la mission).
     pub fn verifier_durees(&self) {
         verifier_limites(&self.etat);
+    }
+
+    /// Interrupteur du service du modèle (lot T7) : vrai pendant une pause ou après un arrêt
+    /// demandé ; l'appel en cours se termine, les suivants sont refusés.
+    pub fn interrupteur(&self) -> Arc<std::sync::atomic::AtomicBool> {
+        self.etat.suspendue.clone()
     }
 
     pub fn compteurs(&self) -> (u64, u64) {
@@ -230,6 +239,9 @@ async fn servir(flux: TcpStream, e: Arc<Etat>) -> anyhow::Result<()> {
     if !jeton_ok {
         let _ = e.notes.send(Note::Refus { texte: format!("requête sans le jeton de la mission ({} {})", r.methode, r.chemin) });
         return Ok(erreur(&mut flux, 401, "jeton de mission invalide").await?);
+    }
+    if e.suspendue.load(std::sync::atomic::Ordering::SeqCst) {
+        return Ok(erreur(&mut flux, 503, "mission en pause ou arrêtée : le modèle n'est plus servi").await?);
     }
     if r.methode != "POST" {
         return Ok(erreur(&mut flux, 404, "seules les requêtes POST sont servies").await?);
@@ -352,7 +364,7 @@ fn verifier_limites(e: &Etat) {
         alertes.push(("boucle".into(), "boucle détectée : la même requête 3 fois de suite".into(), false));
     }
     if ecoule > l.plafond {
-        alertes.push(("plafond".into(), format!("plafond d'{} h atteint : arrêt propre demandé", l.plafond.as_secs() / 3600), true));
+        alertes.push(("plafond".into(), format!("plafond d'{} h atteint", l.plafond.as_secs() / 3600), false));
     }
     for (cle, texte, arreter) in alertes {
         if !c.alertes.contains(&cle) {

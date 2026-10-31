@@ -150,6 +150,14 @@ export const mockApi = {
     emit({ type: "integrite", contexte: mission ? `mission ${mission}` : "lancement", ...b });
     return b;
   },
+  commanderMission: async (mission_id: string, ordre: string) => { emit({ type: "mission_ordre", mission_id, ordre }); },
+  reprendreMission: async () => "demo",
+  listerMissions: async () => [
+    { id: "2026-10-31_1607_agent-fichiers_ab12", date: "2026-10-31T16:07:00+01:00", projet: "divers", agent_id: "agent-fichiers", but: "Ranger les photos", etat: "arrete_proprement", ecarts: 0, reprenable: true },
+    { id: "2026-10-30_2235_agent-fichiers_9f3c", date: "2026-10-30T22:35:00+01:00", projet: "divers", agent_id: "agent-fichiers", but: "Supprimer brouillon.md", etat: "termine", ecarts: 0, reprenable: false },
+    { id: "2026-10-30_1851_mail-adagio_43ec", date: "2026-10-30T18:51:00+01:00", projet: "divers", agent_id: "mail-adagio", but: "Trier la boîte de démonstration", etat: "partiel", ecarts: 1, reprenable: false },
+  ],
+  memoireGraphique: async () => ({ totale: 24576, utilisee: 18900, detail: "NVIDIA GeForce RTX 3090" }),
   confianceAgents: async () => ({ "agent-fichiers": { statut: "retire", ecarts: 1, historique: [] } }),
   leverQuarantaine: async () => {},
   retablirConfiance: async () => {},

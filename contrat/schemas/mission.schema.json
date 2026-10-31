@@ -31,6 +31,15 @@
     "validation": { "type": "array", "items": { "type": "string" } },
     "manifeste": { "type": "object" },
     "demande_originale": { "type": "string" },
-    "cree_le": { "type": "string" }
+    "cree_le": { "type": "string" },
+    "reprise": {
+      "type": "object",
+      "required": ["mission_origine", "point_de_reprise"],
+      "description": "Facultatif. Reprise d'une mission arrêtée : point_de_reprise est rendu tel que l'agent l'a écrit dans son compte rendu ; l'agent ne refait jamais ce qu'il a déjà fait.",
+      "properties": {
+        "mission_origine": { "type": "string" },
+        "point_de_reprise": {}
+      }
+    }
   }
 }

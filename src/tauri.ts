@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { Autorisation, BilanIntegrite, BrainInfo, Catalogue, EtatConfiance, Identifiant, Installation, Config, Manifest, MemoryFile, OrchestraEvent, PathsInfo, Projets, VoiceModels, VoiceStatus } from "./types";
+import type { Autorisation, BilanIntegrite, MemoireGraphique, MissionResume, BrainInfo, Catalogue, EtatConfiance, Identifiant, Installation, Config, Manifest, MemoryFile, OrchestraEvent, PathsInfo, Projets, VoiceModels, VoiceStatus } from "./types";
 import { mockApi, mockOnEvent } from "./mock";
 
 /** Vrai quand l'interface tourne dans la fenêtre Tauri ; sinon on est en démo navigateur. */
@@ -14,6 +14,10 @@ const real = {
   installAgent: (id: string) => invoke<Installation>("install_agent", { id }),
   installAgentZip: (chemin: string) => invoke<Installation>("install_agent_zip", { chemin }),
   catalogue: () => invoke<Catalogue>("catalogue"),
+  commanderMission: (missionId: string, ordre: string) => invoke<void>("commander_mission", { missionId, ordre }),
+  reprendreMission: (missionId: string) => invoke<string>("reprendre_mission", { missionId }),
+  listerMissions: () => invoke<MissionResume[]>("lister_missions"),
+  memoireGraphique: () => invoke<MemoireGraphique>("memoire_graphique"),
   verifierIntegrite: (mission: string | null) => invoke<BilanIntegrite>("verifier_integrite", { mission }),
   confianceAgents: () => invoke<Record<string, EtatConfiance>>("confiance_agents"),
   leverQuarantaine: (id: string) => invoke<void>("lever_quarantaine", { id }),

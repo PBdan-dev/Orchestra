@@ -31,6 +31,8 @@ pub struct Contexte {
     pub arreter_voix: Option<Arc<dyn Fn() + Send + Sync>>,
     /// Validations des actions irréversibles (D28) ; `None` sans interface (refus automatique).
     pub validations: Option<Arc<crate::validations::Validations>>,
+    /// Pilotage de la mission en cours (pause, arrêt…, lot T7) ; `None` sans interface.
+    pub pilote: Option<Arc<crate::pilote::Pilote>>,
 }
 
 /// Ce qu'un tour a décidé et produit.
@@ -106,6 +108,7 @@ pub async fn run(app: AppHandle, run_id: String, text: String, history: Vec<Msg>
             releve: Arc::new(Releve::vers(state.paths.mesures.clone())),
             session: state.session.clone(),
             validations: Some(state.validations.clone()),
+            pilote: Some(state.pilote.clone()),
             arreter_voix: {
                 let a = app.clone();
                 Some(Arc::new(move || {
@@ -305,7 +308,7 @@ pub async fn tour(out: &dyn Sortie, ctx: &Contexte, run_id: &str, text: &str, hi
                         intention = "travail".into();
                         bilan.agent_necessaire = true;
                         bilan.besoin = besoin.clone();
-                        let r = deleguer_mission(out, run_id, &brain, &cfg, &paths, &http, &besoin, &mission, &raison, text, &mut bilan, &mut used_agent, ctx.arreter_voix.as_deref(), ctx.validations.as_deref()).await?;
+                        let r = deleguer_mission(out, run_id, &brain, &cfg, &paths, &http, &besoin, &mission, &raison, text, &mut bilan, &mut used_agent, ctx.arreter_voix.as_deref(), ctx.validations.as_deref(), ctx.pilote.as_deref()).await?;
                         phase(out, run_id, "speaking", "Je restitue le résultat");
                         r
                     }
@@ -425,6 +428,7 @@ async fn deleguer_mission(
     used_agent: &mut Option<Manifest>,
     arreter_voix: Option<&(dyn Fn() + Send + Sync)>,
     validations: Option<&crate::validations::Validations>,
+    pilote: Option<&crate::pilote::Pilote>,
 ) -> anyhow::Result<String> {
     thought(out, run_id, format!("\n→ Je délègue · besoin : {besoin} · raison : {raison}\n"));
     phase(out, run_id, "searching_agent", "Je cherche l'agent qu'il faut");
@@ -494,6 +498,34 @@ async fn deleguer_mission(
             return Ok(format!("La mission n'a pas pu être préparée pour l'agent « {} » : {motif}", m.name));
         }
     };
+    executer_mission(out, run_id, brain, cfg, paths, http, &m, &mission_json, &projet, &projet_nom, besoin, mission, bilan, used_agent, arreter_voix, validations, pilote).await
+}
+
+/// Exécute une mission préparée (ou une reprise) : porte, pilotage, validations, vérification.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn executer_mission(
+    out: &dyn Sortie,
+    run_id: &str,
+    brain: &Brain,
+    cfg: &Config,
+    paths: &Paths,
+    http: &reqwest::Client,
+    m: &Manifest,
+    mission_json: &Value,
+    projet: &std::path::Path,
+    projet_nom: &str,
+    besoin: &str,
+    mission: &str,
+    bilan: &mut Tour,
+    used_agent: &mut Option<Manifest>,
+    arreter_voix: Option<&(dyn Fn() + Send + Sync)>,
+    validations: Option<&crate::validations::Validations>,
+    pilote: Option<&crate::pilote::Pilote>,
+) -> anyhow::Result<String> {
+    let m = m.clone();
+    let mission_json = mission_json.clone();
+    let projet = projet.to_path_buf();
+    let projet_nom = projet_nom.to_string();
     let mission_id = mission_json["id"].as_str().unwrap_or("").to_string();
     emit(out, Event::AgentStatus { run_id: run_id.into(), agent_id: m.id.clone(), status: "running".into(), detail: mission.to_string() });
     phase(out, run_id, "working", &format!("{} travaille", m.name));
@@ -539,6 +571,7 @@ async fn deleguer_mission(
         let config_porte = porte::Config_ { cfg: cfg.clone(), http: http.clone(), agent: m.clone(), modele: modele_agent, dossier: dossier_mission.clone(), limites, reponse_fixe: None };
         porte_ouverte = Some(porte::Porte::ouvrir(config_porte).await?);
     }
+    let interrupteur = porte_ouverte.as_ref().map(|(p, _)| p.interrupteur());
     let avec_porte = porte_ouverte.as_mut().map(|(p, n)| contrat::AvecPorte { porte: &*p, notes: n });
 
     // Mémoire propre de l'agent (D32), avant la mission
@@ -562,6 +595,10 @@ async fn deleguer_mission(
     // Validation des actions irréversibles (D28) : autorisation en cours, sinon question à PB ;
     // sans interface (évaluation), refus automatique.
     let (vers_agent, mut depuis_interface) = tokio::sync::mpsc::unbounded_channel::<Value>();
+    // Pilotage (lot T7) : pause, reprendre, arrêt, arrêt immédiat depuis la carte de la mission
+    if let Some(p) = pilote {
+        p.commencer(&mission_id, vers_agent.clone(), interrupteur.clone());
+    }
     let compteur_validations = std::sync::atomic::AtomicU32::new(0);
 
     let deroulement = contrat::executer(
@@ -623,14 +660,26 @@ async fn deleguer_mission(
                 avertir(out, run_id, format!("Porte du modèle, {nom} : {texte}"));
                 vec![]
             }
-            porte::Note::Limite { texte, arreter } => {
-                avertir(out, run_id, format!("Limite de mission ({nom}) : {texte}"));
-                // décision de PB (30/10) : seul le plafond d'1 h demande un arrêt propre
-                if *arreter { vec![contrat::message(&mission_id, "arret")] } else { vec![] }
+            porte::Note::Limite { texte, .. } => {
+                // D29, lot T7 : pause et question à PB (jamais d'arrêt automatique) ; sans interface, avertissement seul
+                if pilote.is_some() {
+                    if let Some(i) = &interrupteur {
+                        i.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    emit(out, Event::LimiteAtteinte { run_id: run_id.into(), mission_id: mission_id.clone(), agent_id: m.id.clone(), texte: texte.clone() });
+                    phase(out, run_id, "working", "Mission en pause : on continue ?");
+                    vec![contrat::message(&mission_id, "pause")]
+                } else {
+                    avertir(out, run_id, format!("Limite de mission ({nom}) : {texte}"));
+                    vec![]
+                }
             }
         },
     )
     .await;
+    if let Some(p) = pilote {
+        p.finir(&mission_id);
+    }
     let mut decisions = decisions_auto.into_inner().unwrap_or_default();
     if let Some(v) = validations {
         decisions.extend(v.oublier_mission(&mission_id));
@@ -657,6 +706,20 @@ async fn deleguer_mission(
         }
         Err(e) => contrat::echec(&mission_id, &e.to_string()),
     };
+
+    // Point de reprise (lot T7) : mission arrêtée ou en pause → reprise.json, pour le bouton Reprendre
+    if matches!(cr["etat"].as_str(), Some("arrete_proprement" | "arrete_force" | "en_pause")) {
+        let effets: Vec<Value> = cr["actions_declarees"].as_array().into_iter().flatten().filter(|a| a["action"].as_str().is_some_and(|n| n.starts_with("action_"))).cloned().collect();
+        let reprise = json!({
+            "mission": mission_json,
+            "etat": cr["etat"],
+            "point_de_reprise": cr["point_de_reprise"],
+            "effets_deja_faits": effets,
+            "besoin": besoin,
+            "note": "Les actions de effets_deja_faits ne sont jamais refaites automatiquement : l'agent reçoit son point de reprise.",
+        });
+        let _ = std::fs::write(dossier_mission.join("reprise.json"), serde_json::to_string_pretty(&reprise).unwrap_or_default());
+    }
 
     // Actions déclarées par l'agent (marquées comme telles), puis actions.jsonl
     for a in cr["actions_declarees"].as_array().into_iter().flatten() {
@@ -969,4 +1032,78 @@ mod tests {
         assert!(BLOC_1.contains("deleguer") && BLOC_1.contains("lire_page"));
     }
 
+}
+
+/// Reprise d'une mission arrêtée (lot T7, D6), sur demande de PB : même agent, même projet,
+/// et le point de reprise écrit par l'agent, rendu tel quel (`reprise` de la mission).
+/// Les actions à effet déjà faites sont rappelées et ne sont jamais refaites par Orchestra.
+pub async fn reprendre(app: AppHandle, run_id: String, mission_origine: String) {
+    let (ctx, brain) = {
+        let state = app.state::<AppState>();
+        let cfg = state.config.lock().unwrap().clone();
+        let brain = Brain::new(cfg.clone(), state.http.clone());
+        let ctx = Contexte {
+            cfg,
+            paths: state.paths.clone(),
+            http: state.http.clone(),
+            releve: Arc::new(Releve::vers(state.paths.mesures.clone())),
+            session: state.session.clone(),
+            validations: Some(state.validations.clone()),
+            pilote: Some(state.pilote.clone()),
+            arreter_voix: {
+                let a = app.clone();
+                Some(Arc::new(move || {
+                    if let Some(st) = a.try_state::<AppState>() {
+                        st.voice.stop();
+                    }
+                }))
+            },
+        };
+        (ctx, brain)
+    };
+    let r = reprise(&app, &ctx, brain, &run_id, &mission_origine).await;
+    match r {
+        Ok(texte) => {
+            emit(&app, Event::Token { run_id: run_id.clone(), text: texte.clone() });
+            emit(&app, Event::Done { run_id: run_id.clone(), answer: texte, intent: "travail".into(), message_historique: String::new() });
+            phase(&app, &run_id, "idle", "");
+        }
+        Err(e) => {
+            emit(&app, Event::Error { run_id: run_id.clone(), message: e.to_string() });
+            phase(&app, &run_id, "idle", "");
+        }
+    }
+    if let Some(state) = app.try_state::<AppState>() {
+        state.busy.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+async fn reprise(out: &dyn Sortie, ctx: &Contexte, mut brain: Brain, run_id: &str, mission_origine: &str) -> anyhow::Result<String> {
+    let dossier = ctx.paths.missions.join(crate::paths::safe_name(mission_origine));
+    let r: Value = serde_json::from_str(&std::fs::read_to_string(dossier.join("reprise.json")).map_err(|_| anyhow::anyhow!("aucun point de reprise pour la mission {mission_origine}"))?)?;
+    let origine = r["mission"].clone();
+    let agent_id = origine["agent_id"].as_str().unwrap_or("").to_string();
+    let m = agents::get_installed(&ctx.paths, &agent_id).ok_or_else(|| anyhow::anyhow!("l'agent {agent_id} n'est plus installé"))?;
+    if !crate::verification::utilisable(&ctx.paths, &m.id) {
+        anyhow::bail!("{} est en quarantaine : lève-la d'abord dans le panneau Agents", m.name);
+    }
+    let _ = brain.detect().await;
+    phase(out, run_id, "delegating", &format!("Je reprends la mission de {}", m.name));
+    thought(out, run_id, format!("↻ Reprise de la mission {mission_origine} ({}), depuis le point de reprise de l'agent.\n", r["etat"].as_str().unwrap_or("")));
+    for a in r["effets_deja_faits"].as_array().into_iter().flatten() {
+        thought(out, run_id, format!("  déjà fait, jamais refait par Orchestra : {} ({})\n", a["action"].as_str().unwrap_or(""), a["detail"].as_str().unwrap_or("")));
+    }
+    let mission_json = contrat::mission_reprise(&origine, &r["point_de_reprise"]).map_err(|e| anyhow::anyhow!(e))?;
+    let projet = std::path::PathBuf::from(origine["projet"].as_str().unwrap_or(""));
+    let projet_nom = projet.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    emit(out, Event::AgentAttached { run_id: run_id.into(), agent: m.clone(), source: "reprise".into(), reason: format!("reprise de la mission {mission_origine}, demandée par PB") });
+    let mut bilan = Tour::default();
+    let mut used = None;
+    let besoin = r["besoin"].as_str().unwrap_or("").to_string();
+    let but = origine["but"].as_str().unwrap_or("").to_string();
+    let cr = executer_mission(out, run_id, &brain, &ctx.cfg, &ctx.paths, &ctx.http, &m, &mission_json, &projet, &projet_nom, &besoin, &but, &mut bilan, &mut used, ctx.arreter_voix.as_deref(), ctx.validations.as_deref(), ctx.pilote.as_deref()).await?;
+    let _ = std::fs::rename(dossier.join("reprise.json"), dossier.join("reprise-utilisee.json"));
+    // le compte rendu brut n'est pas montré tel quel : une phrase simple pour la conversation
+    let etat = cr.split("état : ").nth(1).and_then(|s| s.split([')', ',']).next()).unwrap_or("").to_string();
+    Ok(format!("Reprise de la mission de {} terminée (état : {etat}). Le détail est dans Conscience.", m.name))
 }
