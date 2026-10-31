@@ -149,8 +149,17 @@ Validé le 2026-10-28 : les 11 critères de `docs/CAHIER_DES_CHARGES.md` §13 (b
 - Vérifié avec le vrai modèle (qwen3.5:9b), `examples/essai_compaction.rs` (seuils abaissés à 1 500 / 700 tokens) : 40 échanges, 7 compactions, puis 6/6 questions de contrôle sur les premiers échanges (nom du projet, budget, consigne horaire, date, question ouverte, responsable). Réponse quand PB parle pendant une compaction : 4,5 s (médiane 7,8 s), la compaction est annulée. Premier passage 4/6 avant la fusion sûre des rubriques. Qualité à surveiller : le petit modèle range encore des questions de culture générale dans « questions ouvertes ».
 - « Un seul calcul complet par compaction » : `prompt_eval_count` n'est pas fiable avec le cache d'Ollama (constat du lot A) ; à mesurer sur `prompt_eval_ms` dans l'application.
 
+## État actuel — Lot D (2026-10-31)
+- Source unique (D1) : le cœur envoie au serveur voix le profil (bloc 2, le même qu'en chat), le résumé de la conversation (lot C) et les messages qu'il ne couvre pas ; le serveur ajoute seulement son bloc 1. Plus de fenêtre `[-40:]`, plus de lecture de la mémoire entière coupée à 6 000 caractères (décision de PB du 31/10 : profil + souvenirs ciblés, comme en chat).
+- Souvenirs en voix (D2) : point d'accès local `rappel.rs` (127.0.0.1, jeton, adresse donnée au serveur voix au lancement) ; à chaque phrase, date + souvenirs en tête du message, comme le bloc 5 du chat ; 2 à 3 ms par demande (client gardé ouvert, préchauffé à la connexion) ; au-delà de 50 ms, réponse sans souvenirs, noté au journal.
+- Coupure de parole (D3) : constat, pipecat (1.14) ne garde pas lui-même les réponses dans sa conversation ; c'est l'interface qui la tient (D1). Le serveur envoie désormais `bot_dit` pour chaque phrase dont l'audio est parti ; à une coupure pendant la lecture, l'interface ne garde que ces phrases, suivies de « [interrompu] », et renvoie la conversation au serveur. Granularité : la phrase (une phrase coupée en cours n'est pas gardée).
+- Réflexion à la demande (D5) : l'appel à `reflechir` et son résultat sont retirés de la conversation du serveur avant chaque tour ; côté interface, seule la réponse dite est gardée.
+- Budgets (D4) : modèle vocal dérivé `qwen3.5:9b-orchestra` à 8 192 tokens, inchangé.
+- Vérifié (carte graphique libre, données réelles) : `test_boucle` et `test_dialogue` passent ; fin de phrase → premier son, médiane ≈ 1,9 s avant comme après (avant : 1,7 à 2,6 s sur 8 mesures ; après : 1,85 à 2,2 s), mémoire graphique 18,6 Go avant comme après ; nouveau `test_coupure.py` : coupure gardée « partie dite + [interrompu] », aucune trace de `reflechir` (2 essais). `examples/serveur_rappel.rs` sert à tester la voix sans l'application.
+- Défaut constaté au passage, non corrigé (hors lot) : le cerveau vocal qwen3.5:9b se trompe sur le calcul de test (« trois boîtes de 12 œufs, j'en casse 7 ») et n'appelle pas toujours `reflechir`.
+
 ## Prochaine action
-Plan du lot D (voix : source unique, souvenirs en voix, coupure de parole, budgets) ; le test vocal demande que PB lance le serveur voix.
+Lot S (sécurité), à faire dans un nouveau fil en effort maximal (demande de PB du 31/10), puis M2, M3, M1.
 
 ## Décisions
 - 2026-10-25 — Application de bureau Windows en Tauri 2 (Rust + React/TypeScript), installateur léger.
@@ -203,7 +212,8 @@ Plan du lot D (voix : source unique, souvenirs en voix, coupure de parole, budge
 - [x] Cahier des charges — Lot T9 : suivi des projets (2026-10-31)
 - [x] Cahier des charges — Lot T8 : agents hébergés (2026-10-31)
 - [x] Cahier des charges — Lot C : compaction (2026-10-31)
-- [ ] Cahier des charges — Lot D : voix (prochain)
+- [x] Cahier des charges — Lot D : voix (2026-10-31)
+- [ ] Cahier des charges — Lot S : sécurité (prochain, nouveau fil en effort maximal)
 - [ ] Cahier des charges — Lots A, B, T1 à T9, C, D, S, M2, M3, M1 (ordre de la section 11)
 - [x] Délégation sur le vrai Ollama vérifiée par l'évaluation (6 tâches déléguées au bon agent, 3/3)
 - [ ] PB teste une vraie délégation sur Ollama dans l'interface
@@ -243,3 +253,4 @@ Plan du lot D (voix : source unique, souvenirs en voix, coupure de parole, budge
 - 2026-10-31 — Lot T9 : suivi des projets en lecture seule (historique, liste, lecture ciblée, .docx/.xlsx/.pdf), SUIVI.md de chaque projet tenu par Orchestra ; 5/5 questions justes avec le vrai modèle.
 - 2026-10-31 (soir) — Tests du T9 repris après fermeture de ComfyUI ; corrections (projet actif, relances) : aiguillage 14/18, mémoire 19/20. Lot T8 : agents hébergés « livrable seul », 11/11 avec un faux agent HTTPS.
 - 2026-10-31 (nuit) — Lot C : compaction à l'inactivité en un résumé à 5 rubriques, modifiable, annulée quand PB parle ; outil retrouver ; 6/6 questions de contrôle après 40 échanges.
+- 2026-10-31 (nuit) — Lot D : la voix reçoit profil, résumé et conversation du cœur, demande ses souvenirs à chaque phrase (2 à 3 ms), garde seulement la partie dite quand on la coupe ; latence et mémoire graphique inchangées.
