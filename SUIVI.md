@@ -169,8 +169,17 @@ Validé le 2026-10-28 : les 11 critères de `docs/CAHIER_DES_CHARGES.md` §13 (b
 - Non-régression : 94 tests unitaires (70 avant), intégration continue verte ; essais T3 OK, T4 10/10, T5 10/10, T6 9/9, T7 6/7 (comme avant : agent-fichiers 1.0.0 ne sait pas reprendre), T8 11/11, banc des agents 29/29, compaction 6/6, suivi 5/5 (4/5 au premier passage : l'agent avait nommé son brouillon sans « merci », que le test cherche dans le nom du fichier). Évaluation (qwen3.6:27b, 0,6), avant → après : mémoire 19/20 → 19/20 ; aiguillage 15/18 → 16/18 (89 %) ; tour médian 6,0 → 7,4 s (mémoire) et 8,8 → 11,8 s (aiguillage), à vitesse de génération égale (64 → 63 tokens/s) : prompt +87 tokens, réflexions plus longues sur t07 à t09 (écart dans la variation habituelle des passages : 8,8 à 12,7 s le 31/10). Rapports `rapport-2026-11-01_0118` et `_0121`.
 - Voix (le prompt vocal a changé) : `test_boucle` 3 fois, premier son 2,1 / 1,9 / 1,6 s (lot D : 1,85 à 2,2 s) ; `test_dialogue` 1,7 / 2,0 / 2,7 s ; `test_coupure` : coupure gardée « partie dite + [interrompu] », aucune trace de `reflechir` ; mémoire graphique 19,2 Go (lot D : 18,6 Go, même voix Q8, 2,3 Go pris au repos par d'autres programmes). Application recompilée : `Orchestra.exe` et `Orchestra-setup.exe` à la racine.
 
+## État actuel — Lot M2 (2026-11-01)
+- Plan : Claude Doc « Orchestra — plan du lot M2 ». Choix délégués par PB le 01/11 (« prends les choix que tu me recommanderais ») : A1 et B1 appliqués (voir Décisions).
+- `index.rs` : index du rappel en mémoire vive. À chaque message, seuls les fichiers dont la date ou la taille a changé sont relus (modifications de PB comprises). Cherche dans `orchestra.md` hors profil, les fiches des agents, `memoire/sessions/` et `memoire/resumes/` ; jamais dans « Agents de confiance », « Rôle », « Outils autorisés ». Mots : BM25 sans bibliothèque (mots utiles et radicaux de 5 lettres). Sens : `qwen3-embedding:0.6b` sur le processeur via Ollama, 256 dimensions renormalisées, un octet par valeur, dans `memoire/.index.bin` (vecteurs et usage, supprimable). Fusion par rang, fraîcheur (demi-vie 90 jours) pour Projets et Connaissances, petit bonus aux faits repris dans une réponse. Raison affichée dans Conscience (« mots : port, studio · sens 82 % »).
+- Branché : chat (3 s au plus pour le vecteur de la question), voix (35 ms), mémorisation (vecteurs des nouveaux faits en tâche de fond), configuration, outil `retrouver` (résumés d'abord, puis archives des seuls jours visés). Les résumés de conversation rappelés arrivent encadrés comme donnée (suite du lot S). Sans le modèle d'embedding : rappel par les mots seuls, signalé une fois dans Conscience ; installé après le lancement, il est pris en compte sans relancer.
+- Mesure sans modèle de chat (`examples/mesure_rappel.rs`, nouveau jeu `eval/rappel.jsonl` de 20 questions : 11 « mots », 9 « sens ») : questions « mots » 11/11 avant comme après, 11 dans les 3 premiers souvenirs (9 avant) ; questions « sens » 0/9 sans le modèle d'embedding, comme attendu ; rappel 0,2 ms sur la mémoire d'essai, 2,2 ms sur 2 053 faits (5,1 ms avant M2). Rapport `rappel-2026-11-01_0238`.
+- Non-régression (qwen3.6:27b, 0,6, 1 passage, modèle d'embedding absent) : mémoire 19/20 → 19/20 (échec h16 « solution de secours pour la voix », une question de sens) ; aiguillage 16/18 → 16/18 ; tour médian 7,4 → 7,0 s (mémoire) et 11,8 → 11,2 s (aiguillage) ; prompt de réponse 2 932 → 2 886 tokens (le profil n'est plus répété dans les souvenirs). Rapports `rapport-2026-11-01_0239` et `_0243`. 105 tests unitaires (94 à la fin du lot S), exemples et interface compilés.
+- Défaut corrigé au passage : le modèle écrivait parfois d'avance le JSON de la mémorisation (`{"faits": []}`) à la fin de sa réponse (2 fois sur 20 au lot S, 1 fois ici). Il est retiré, et l'interface affiche la réponse finale nettoyée (ce JSON restait affiché et pouvait être lu à voix haute).
+- En attente de `ollama pull qwen3-embedding:0.6b` (PB) : mesures du sens (`mesure_rappel`, évaluation mémoire, sens à temps dans les 35 ms de la voix, mémoire vive prise, cohabitation avec le modèle de chat).
+
 ## Prochaine action
-Plan du lot M2 (rappel par le sens), à soumettre à PB s'il contient des choix non couverts, puis M3 et M1.
+Lot M3 (propreté de la mémoire), choix pris par délégation de PB ; dès que PB a installé `qwen3-embedding:0.6b`, mesures du sens du lot M2.
 
 ## Décisions
 - 2026-10-25 — Application de bureau Windows en Tauri 2 (Rust + React/TypeScript), installateur léger.
@@ -195,6 +204,8 @@ Plan du lot M2 (rappel par le sens), à soumettre à PB s'il contient des choix 
 - 2026-10-28 — Critère de fin validé (11 points, dont les tests de sécurité proposés par PB) ; lot S de sécurité ; badge « Orchestra Certified » ; Market v0 sur GitHub, suivi dans `2026-10_agent-market`.
 - 2026-10-28 — Brut froid (archives, journal, pensées de mission) compressé en .zst à J+1 ; faits et résumés restent en .md.
 - 2026-10-31 — Lot S : A1, signature réelle (Ed25519) des agents certifiés par une clé du Market que PB garde ; B1, après un contenu extérieur, la lecture web n'accepte que les adresses écrites par PB, ou celles qu'il confirme ; C1, Orchestra ne mémorise que ce que PB dit lui-même.
+- 2026-11-01 — PB délègue ses choix pour M2, M3 et M1 (« prends les choix que tu me recommanderais et continue ») ; chaque décision lui est listée en fin de lot.
+- 2026-11-01 — Lot M2, par délégation de PB : A1, la voix garde son budget de 50 ms, le sens n'y est ajouté que si le vecteur de la phrase arrive en 35 ms ; B1, une ligne modifiée à la main reçoit son vecteur en tâche de fond. Choix techniques : un fait compte comme « utilisé » si la réponse reprend au moins 2 de ses mots utiles (bonus de 10 % par usage, 50 % au plus) ; fraîcheur jamais sous 25 % ; seuil du sens seul à 0,5 ; profil hors rappel (déjà dans le prompt), sauf les faits que le budget du profil a laissés de côté ; modèle d'embedding gardé chargé sur le processeur ; ancien réglage (nomic-embed-text ou vide) migré une fois vers qwen3-embedding:0.6b ; pas de tantivy.
 ## Fichiers et ressources
 - Conception : `docs/SYNTHESE.md`, `docs/CAHIER_DES_CHARGES.md`.
 - Code : ce dossier (`src/` interface React, `src-tauri/src/` cœur Rust). Dépôt : github.com/PBdan-dev/Orchestra. Détails de l'architecture dans `README.md`.
@@ -226,6 +237,7 @@ Plan du lot M2 (rappel par le sens), à soumettre à PB s'il contient des choix 
 - [x] Cahier des charges — Lot C : compaction (2026-10-31)
 - [x] Cahier des charges — Lot D : voix (2026-10-31)
 - [x] Cahier des charges — Lot S : sécurité (2026-11-01)
+- [x] Cahier des charges — Lot M2 : rappel par les mots et par le sens (2026-11-01 ; mesures du sens en attente du modèle d'embedding)
 - [ ] Cahier des charges — Lots A, B, T1 à T9, C, D, S, M2, M3, M1 (ordre de la section 11)
 - [x] Délégation sur le vrai Ollama vérifiée par l'évaluation (6 tâches déléguées au bon agent, 3/3)
 - [ ] PB teste une vraie délégation sur Ollama dans l'interface
@@ -245,6 +257,8 @@ Plan du lot M2 (rappel par le sens), à soumettre à PB s'il contient des choix 
 - Limite documentée (README) : sans bac à sable, un agent peut lire le coffre de Windows par son interface de programmation, écrire ailleurs sur le disque ou laisser tourner un programme après la mission.
 - Constaté pendant les tests de la voix, sans lien avec le lot S : pour « rédige une note de bienvenue et enregistre-la », le cerveau vocal (qwen3.5:9b) répond lui-même au lieu d'appeler `confier_a_orchestra` (1 fois sur 5 confié au lot D, 0 sur 3 cette nuit).
 - Proposé à PB le 31/10, hors lot S : donner aux outils de suivi la lecture (seule) de la pensée de mission et de la mémoire propre des agents, pour répondre aux « pourquoi a-t-on fait X ».
+- Lot M2, à faire par PB : `ollama pull qwen3-embedding:0.6b` (le rappel par le sens en dépend ; sans lui, les mots seuls).
+- Lot M1 : la compression demande la bibliothèque `zstd` (MIT), absente de l'ordinateur ; elle doit être téléchargée (`cargo fetch` après l'avoir ajoutée), ce que le garde-fou peut bloquer.
 
 ## Journal
 - 2026-10-25 — V1 construite, compilée et lancée sur le PC de PB ; données déplacées hors de Documents ; mode démo navigateur.
@@ -272,3 +286,4 @@ Plan du lot M2 (rappel par le sens), à soumettre à PB s'il contient des choix 
 - 2026-10-31 (nuit) — Lot C : compaction à l'inactivité en un résumé à 5 rubriques, modifiable, annulée quand PB parle ; outil retrouver ; 6/6 questions de contrôle après 40 échanges.
 - 2026-10-31 (nuit) — Lot D : la voix reçoit profil, résumé et conversation du cœur, demande ses souvenirs à chaque phrase (2 à 3 ms), garde seulement la partie dite quand on la coupe ; latence et mémoire graphique inchangées.
 - 2026-11-01 (nuit) — Lot S : textes extérieurs encadrés et désamorcés, consignes repérées et signalées, mémorisation des seuls propos de PB, lecture web confirmée par PB après un contenu extérieur, dossier d'Orchestra surveillé pendant chaque mission, clés API dans le coffre de Windows, signature Ed25519 des agents certifiés (clé du Market créée) ; banc de sécurité 10/10 scénarios aux 5 passages ; mémoire 19/20, aiguillage 16/18.
+- 2026-11-01 (nuit) — Lot M2 : index du rappel (BM25, sens par qwen3-embedding:0.6b sur le processeur, fusion par rang, fraîcheur, usage), branché en chat, en voix et dans `retrouver` ; mesure du rappel sans modèle de chat (11/11 questions « mots », 2,2 ms pour 2 053 faits) ; mémoire 19/20, aiguillage 16/18 ; JSON de mémorisation retiré des réponses. Mesures du sens en attente du modèle.
