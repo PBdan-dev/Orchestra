@@ -153,6 +153,8 @@ async fn main() -> anyhow::Result<()> {
     let modele = val("--modele").unwrap_or_else(|| "qwen3-embedding:0.6b".into());
     let ollama = val("--ollama").unwrap_or_else(|| "http://127.0.0.1:11434".into()).trim_end_matches('/').to_string();
     let grand: usize = val("--grand").and_then(|v| v.parse().ok()).unwrap_or(2000);
+    // --detail : souvenirs donnés pour chaque question ratée (mots + sens)
+    let detail = args.iter().any(|a| a == "--detail");
     let depot = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let qs = lire_questions(&depot.join("eval").join("rappel.jsonl"));
     anyhow::ensure!(!qs.is_empty(), "eval/rappel.jsonl introuvable ou vide");
@@ -185,7 +187,7 @@ async fn main() -> anyhow::Result<()> {
     if sens_present {
         index::configurer(&paths, sens.clone());
         // chargement du modèle sur le processeur (une fois), hors mesure
-        let _ = http.post(format!("{ollama}/api/embed")).json(&json!({ "model": modele, "input": ["échauffement"], "keep_alive": -1, "options": { "num_gpu": 0 } })).send().await;
+        let _ = http.post(format!("{ollama}/api/embed")).json(&json!({ "model": modele, "input": ["échauffement"], "keep_alive": -1, "options": index::options_sens() })).send().await;
         let t = Instant::now();
         let n = index::vectoriser(&paths).await;
         vectorisation_essai = Some((n, t.elapsed()));
@@ -196,6 +198,25 @@ async fn main() -> anyhow::Result<()> {
             let r = index::rappeler(&paths, &q.question, MAX, &profil, Duration::from_secs(3)).await;
             temps_rappel_sens.push(ms(t.elapsed()));
             rangs.push(rang(&r.iter().map(|x| x.text.clone()).collect::<Vec<_>>(), &q.fait));
+            if detail && q.sorte == "sens" {
+                let s = index::sens_de(&paths, &q.question, Duration::from_secs(3)).await;
+                let pos = s.iter().position(|(t, _)| t.contains(&q.fait));
+                println!(
+                    "{} sens du fait attendu : {} (rang {}), meilleur {:.3}, 6e {:.3}, 20e {:.3}",
+                    q.id,
+                    pos.map(|i| format!("{:.3}", s[i].1)).unwrap_or("?".into()),
+                    pos.map(|i| (i + 1).to_string()).unwrap_or("?".into()),
+                    s.first().map(|x| x.1).unwrap_or(0.0),
+                    s.get(5).map(|x| x.1).unwrap_or(0.0),
+                    s.get(19).map(|x| x.1).unwrap_or(0.0)
+                );
+            }
+            if detail && rang(&r.iter().map(|x| x.text.clone()).collect::<Vec<_>>(), &q.fait).is_none() {
+                println!("\n{} « {} » (attendu : {})", q.id, q.question, q.fait);
+                for x in &r {
+                    println!("   {:.4} [{}] {}", x.score, x.reason, x.text.chars().take(90).collect::<String>());
+                }
+            }
             // voix : le sens arrive-t-il dans les 35 ms ? (seulement si le sens a servi avec 3 s)
             if r.iter().any(|x| x.reason.contains("sens")) {
                 voix_a_temps.1 += 1;
@@ -212,7 +233,7 @@ async fn main() -> anyhow::Result<()> {
                 let t = Instant::now();
                 let _ = http
                     .post(format!("{ollama}/api/embed"))
-                    .json(&json!({ "model": modele, "input": [format!("{CONSIGNE_QUESTION}{}", q.question)], "keep_alive": -1, "options": { "num_gpu": 0 } }))
+                    .json(&json!({ "model": modele, "input": [format!("{CONSIGNE_QUESTION}{}", q.question)], "keep_alive": -1, "options": index::options_sens() }))
                     .send()
                     .await
                     .and_then(|r| r.error_for_status());
@@ -282,6 +303,17 @@ async fn main() -> anyhow::Result<()> {
             let r = index::rappeler(&paths, &q.question, MAX, &profil, Duration::from_secs(3)).await;
             t_sens_grand.push(ms(t.elapsed()));
             rangs.push(rang(&r.iter().map(|x| x.text.clone()).collect::<Vec<_>>(), &q.fait));
+            if detail && q.sorte == "sens" {
+                let s = index::sens_de(&paths, &q.question, Duration::from_secs(3)).await;
+                let pos = s.iter().position(|(t, _)| t.contains(&q.fait));
+                println!("[grande mémoire] {} sens du fait attendu : {} (rang {})", q.id, pos.map(|i| format!("{:.3}", s[i].1)).unwrap_or("?".into()), pos.map(|i| (i + 1).to_string()).unwrap_or("?".into()));
+            }
+            if detail && q.sorte == "sens" && rang(&r.iter().map(|x| x.text.clone()).collect::<Vec<_>>(), &q.fait).is_none() {
+                println!("\n[grande mémoire] {} « {} » (attendu : {})", q.id, q.question, q.fait);
+                for x in &r {
+                    println!("   {:.4} [{}] {}", x.score, x.reason, x.text.chars().take(90).collect::<String>());
+                }
+            }
         }
         sens_grand = Some(Qualite { rangs });
     }

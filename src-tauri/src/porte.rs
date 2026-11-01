@@ -559,6 +559,9 @@ async fn par_brain(e: &Etat, corps: &Value) -> Result<Value, (u16, String)> {
 async fn embed(e: &Etat, mut corps: Value) -> Result<Value, (u16, String)> {
     if corps["model"].as_str().is_none_or(|m| m == "inherit") {
         corps["model"] = json!(e.c.cfg.embedding_model);
+        // même instance que le rappel d'Orchestra (processeur, même contexte, gardée chargée) : D10
+        corps["options"] = crate::index::options_sens();
+        corps["keep_alive"] = json!(-1);
     }
     let base = e.c.cfg.ollama_url.trim_end_matches('/');
     let r = e.c.http.post(format!("{base}/api/embed")).timeout(Duration::from_secs(60)).json(&corps).send().await.map_err(|x| (503, x.to_string()))?;
@@ -678,6 +681,33 @@ mod tests {
         let l = Limites::depuis(&m, Some("brouillon-mail"));
         assert_eq!((l.pas_max, l.tokens_max, l.duree_max_s), (Some(6), Some(3000), Some(60)));
         assert_eq!(Limites::depuis(&m, None).pas_max, None);
+    }
+
+    #[tokio::test]
+    async fn embedding_herite_reste_sur_le_processeur() {
+        // un agent qui demande le modèle d'embedding d'Orchestra reçoit la même instance (processeur,
+        // même contexte) : sinon Ollama la rechargerait, sur la carte graphique (D10)
+        let dir = std::env::temp_dir().join(format!("orchestra-test-porte-embed-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let (url, vues) = crate::essais::faux_chat(vec![r#"{"embeddings":[[0.1,0.2]]}"#.into()]).await;
+        let (porte, _notes) = Porte::ouvrir(Config_ {
+            cfg: Config { ollama_url: url, ..Config::default() },
+            http: reqwest::Client::new(),
+            agent: agent(),
+            modele: "grand".into(),
+            dossier: dir.clone(),
+            limites: Limites { pas_max: None, tokens_max: None, duree_max_s: None, sans_progres: Duration::from_secs(600), plafond: Duration::from_secs(3600) },
+            reponse_fixe: None,
+        })
+        .await
+        .unwrap();
+        let c = reqwest::Client::new();
+        let _ = c.post(format!("{}/api/embed", porte.url)).bearer_auth(&porte.jeton).json(&json!({ "model": "inherit", "input": ["un texte"], "options": { "num_gpu": 99 } })).send().await.unwrap();
+        let corps = vues.lock().unwrap()[0].clone();
+        assert_eq!(corps["model"], json!(Config::default().embedding_model));
+        assert_eq!(corps["options"], crate::index::options_sens(), "{corps}");
+        assert_eq!(corps["keep_alive"], json!(-1));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]

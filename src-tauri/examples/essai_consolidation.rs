@@ -67,6 +67,10 @@ async fn main() -> anyhow::Result<()> {
             index::vectoriser(&paths).await;
             let voisins = index::voisins(&paths, c.fait, 5, Duration::from_secs(3)).await;
             let proche = voisins.iter().any(consolidation::tres_proche);
+            // réglage du seuil du sens : les voisins et leur proximité
+            for v in voisins.iter().take(3) {
+                println!("      voisin : mots {:.2} ({}), sens {} · {}", v.mots, v.communs, v.sens.map(|s| format!("{s:.3}")).unwrap_or("-".into()), v.texte.chars().take(70).collect::<String>());
+            }
             let t = Instant::now();
             let issue = consolidation::ecrire(Some(&brain), &paths, c.section, c.fait, Duration::from_secs(3)).await?;
             let duree = t.elapsed();

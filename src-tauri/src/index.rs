@@ -167,6 +167,44 @@ pub fn bm25<D: AsRef<[String]>>(documents: &[D], requete: &[String]) -> Vec<f32>
         .collect()
 }
 
+/// Part minimale de la question qu'un fait doit couvrir (pondérée par la rareté des mots) pour
+/// compter parmi les souvenirs trouvés par les mots.
+pub const COUVERTURE_MIN: f32 = 0.25;
+
+/// Part de la question couverte par chaque document, pondérée par la rareté des mots : un mot
+/// présent partout (« jour ») pèse peu, un mot rare ou absent de la mémoire pèse beaucoup. Rareté
+/// lissée (ln(1 + (N + 1) / (df + 0,5))) pour rester juste sur une toute petite mémoire.
+pub fn couverture<D: AsRef<[String]>>(documents: &[D], requete: &[String]) -> Vec<f32> {
+    let documents: Vec<&[String]> = documents.iter().map(|d| d.as_ref()).collect();
+    let n = documents.len() as f32;
+    let mut termes: Vec<&String> = requete.iter().collect();
+    termes.sort();
+    termes.dedup();
+    let idf: Vec<f32> = termes
+        .iter()
+        .map(|t| {
+            let df = documents.iter().filter(|d| d.contains(t)).count() as f32;
+            (1.0 + (n + 1.0) / (df + 0.5)).ln()
+        })
+        .collect();
+    let total: f32 = idf.iter().sum();
+    if total <= 0.0 {
+        return vec![0.0; documents.len()];
+    }
+    documents.iter().map(|d| termes.iter().zip(&idf).filter(|(t, _)| d.contains(t)).map(|(_, i)| *i).sum::<f32>() / total).collect()
+}
+
+/// Faits retenus par les mots : ceux qui couvrent une part suffisante de la question, ou qui
+/// partagent avec elle un mot rare dans la mémoire (2 % des faits au plus, 2 faits au moins). Un
+/// mot banal seul (« jour », « projet ») ne suffit pas ; un mot rare et juste (« licence »), si.
+pub fn retenus_par_les_mots<D: AsRef<[String]>>(documents: &[D], requete: &[String]) -> Vec<bool> {
+    let documents: Vec<&[String]> = documents.iter().map(|d| d.as_ref()).collect();
+    let seuil_rare = (documents.len() as f32 * 0.02).max(2.0);
+    let rares: Vec<&String> = requete.iter().filter(|t| (documents.iter().filter(|d| d.contains(t)).count() as f32) <= seuil_rare).collect();
+    let couverts = couverture(&documents, requete);
+    documents.iter().zip(couverts).map(|(d, c)| c >= COUVERTURE_MIN || rares.iter().any(|t| d.contains(t))).collect()
+}
+
 /// Poids de fraîcheur : demi-vie de 90 jours pour Projets et Connaissances, plancher à 0,25.
 pub fn fraicheur(section: &str, date: Option<chrono::NaiveDate>, aujourd_hui: chrono::NaiveDate) -> f32 {
     match (section, date) {
@@ -260,12 +298,19 @@ pub fn faits(paths: &Paths) -> Vec<Fait> {
     e.faits.clone()
 }
 
+/// Options d'Ollama pour le modèle d'embedding : sur le processeur (D10), contexte de 2 048 tokens
+/// (les faits sont courts ; le contexte par défaut gardait 2,7 Gio de mémoire vive, contre 0,8).
+/// Toujours les mêmes, sinon Ollama recharge le modèle (1 à 1,3 s).
+pub fn options_sens() -> serde_json::Value {
+    serde_json::json!({ "num_gpu": 0, "num_ctx": 2048 })
+}
+
 /// Vecteurs de textes par Ollama (sur le processeur, D10), réduits et rangés.
 async fn plonger(sens: &Sens, textes: &[String], delai: Duration) -> Result<Vec<Option<Vecteur>>, String> {
     // client gardé ouvert : la voix n'a que 35 ms pour le vecteur de sa phrase
     static HTTP: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     let http = HTTP.get_or_init(reqwest::Client::new);
-    let corps = serde_json::json!({ "model": sens.modele, "input": textes, "keep_alive": -1, "options": { "num_gpu": 0 } });
+    let corps = serde_json::json!({ "model": sens.modele, "input": textes, "keep_alive": -1, "options": options_sens() });
     let r = http.post(format!("{}/api/embed", sens.url.trim_end_matches('/'))).timeout(delai).json(&corps).send().await.map_err(|e| format!("modèle d'embedding injoignable : {e}"))?;
     let statut = r.status();
     let v: serde_json::Value = r.json().await.map_err(|e| format!("réponse illisible : {e}"))?;
@@ -321,8 +366,11 @@ pub async fn rappeler(paths: &Paths, requete: &str, max: usize, exclure: &str, d
     }
     let candidats: Vec<&Fait> = e.faits.iter().filter(|x| !exclure.contains(x.texte.as_str())).collect();
     let q = mots(requete);
-    let scores_mots = bm25(&candidats.iter().map(|x| x.mots.as_slice()).collect::<Vec<_>>(), &q);
-    let mut rang_mots: Vec<(usize, f32)> = scores_mots.iter().copied().enumerate().filter(|(_, s)| *s > 0.0).collect();
+    let documents: Vec<&[String]> = candidats.iter().map(|x| x.mots.as_slice()).collect();
+    let scores_mots = bm25(&documents, &q);
+    // un mot banal seul (« jour », « projet ») ne suffit pas : part de la question couverte, ou mot rare
+    let retenus = retenus_par_les_mots(&documents, &q);
+    let mut rang_mots: Vec<(usize, f32)> = scores_mots.iter().copied().enumerate().filter(|(i, s)| *s > 0.0 && retenus[*i]).collect();
     rang_mots.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     let mut rang_sens: Vec<(usize, f32)> = match &question {
         Some(vq) => candidats.iter().enumerate().filter_map(|(i, x)| e.vecteurs.get(&x.cle).map(|v| (i, similarite(vq, v)))).filter(|(_, s)| *s >= SEUIL_SENS).collect(),
@@ -369,6 +417,27 @@ pub async fn rappeler(paths: &Paths, requete: &str, max: usize, exclure: &str, d
         e.usage.entry(cle(&r.text)).or_default().0 += 1;
     }
     resultats
+}
+
+/// Similarité de sens de chaque fait avec une question, de la plus forte à la plus faible
+/// (mesure et réglage du rappel ; vide si le sens est indisponible).
+pub async fn sens_de(paths: &Paths, requete: &str, delai: Duration) -> Vec<(String, f32)> {
+    let sens = {
+        let mut g = INDEX.lock().unwrap_or_else(|e| e.into_inner());
+        let e = g.entry(paths.root.clone()).or_default();
+        rafraichir(paths, e);
+        e.sens.clone()
+    };
+    if !sens.actif {
+        return vec![];
+    }
+    let Ok(Ok(mut v)) = tokio::time::timeout(delai, plonger(&sens, &[format!("{CONSIGNE_QUESTION}{requete}")], delai)).await else { return vec![] };
+    let Some(vq) = v.pop().flatten() else { return vec![] };
+    let g = INDEX.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(e) = g.get(&paths.root) else { return vec![] };
+    let mut out: Vec<(String, f32)> = e.faits.iter().filter_map(|f| e.vecteurs.get(&f.cle).map(|vf| (f.texte.clone(), similarite(&vq, vf)))).collect();
+    out.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    out
 }
 
 /// Fait voisin d'un nouveau fait (consolidation, lot M3).
@@ -790,6 +859,40 @@ mod tests {
         let r = rappeler(&p, "Sur quel port écoute le serveur voix ?", 6, "", Duration::from_millis(500)).await;
         assert!(r.first().is_some_and(|x| x.text.contains("8765")), "{r:?}");
         assert!(r.iter().all(|x| !x.reason.contains("sens")));
+        let _ = std::fs::remove_dir_all(racine);
+    }
+
+    #[tokio::test]
+    async fn modele_d_embedding_sur_le_processeur_avec_un_petit_contexte() {
+        // mesuré le 01/11 : contexte par défaut = 2,7 Gio de mémoire vive gardés ; 2 048 tokens = 0,8 Gio, même vecteur
+        let (url, vues) = crate::essais::faux_chat(vec!["x".into()]).await;
+        let _ = plonger(&Sens { actif: true, url, modele: "m".into() }, &["un fait".into()], Duration::from_secs(2)).await;
+        let corps = vues.lock().unwrap()[0].clone();
+        assert_eq!(corps["options"], serde_json::json!({ "num_gpu": 0, "num_ctx": 2048 }), "{corps}");
+        assert_eq!(corps["keep_alive"], serde_json::json!(-1));
+    }
+
+    #[tokio::test]
+    async fn un_mot_banal_seul_ne_fait_pas_un_souvenir() {
+        let (p, racine) = dossier();
+        ecrire_memoire(&p);
+        let noms = ["Albane", "Bastien", "Camille", "Damien", "Elodie", "Fabien", "Gaelle", "Hugues", "Ines", "Jules", "Karima", "Lucien", "Maelle", "Nadir", "Oriane", "Pascal", "Quentin", "Rosalie", "Simon", "Thibault"];
+        let lignes: String = noms.iter().enumerate().map(|(i, n)| format!("- (2026-10-{:02}) Mission : devis de {n} → termine — chiffres mis à jour\n", 1 + i)).collect();
+        std::fs::write(p.memoire_agents.join("agent-devis.md"), format!("# Mémoire de Devis\n\n## Missions\n{lignes}")).unwrap();
+        configurer(&p, Sens::default());
+        // « jour » est partout, « copie », « sécurité », « hebdomadaire » nulle part : aucun de ces faits ne répond
+        let r = rappeler(&p, "Quel jour a lieu la copie de sécurité hebdomadaire ?", 6, "", Duration::ZERO).await;
+        assert!(r.iter().all(|x| !x.text.contains("mis à jour")), "{r:?}");
+        // une question qui couvre bien un fait le retrouve toujours
+        let r = rappeler(&p, "Le devis de Camille a-t-il été mis à jour ?", 6, "", Duration::ZERO).await;
+        assert!(r.first().is_some_and(|x| x.text.contains("devis de Camille")), "{r:?}");
+        // question longue, la plupart de ses mots absents de la mémoire, mais un mot rare et juste :
+        // le fait est retrouvé (vu sur le jeu de rappel : « Quelle licence empêche de vendre… »)
+        let mut m = std::fs::read_to_string(p.main_memory()).unwrap();
+        m.push_str("\n## Connaissances\n- (2026-10-27) Voxtral TTS est sous licence CC BY-NC.\n");
+        std::fs::write(p.main_memory(), m).unwrap();
+        let r = rappeler(&p, "Quelle licence empêche de vendre un produit avec la voix de Mistral ?", 6, "", Duration::ZERO).await;
+        assert!(r.first().is_some_and(|x| x.text.contains("CC BY-NC")), "{r:?}");
         let _ = std::fs::remove_dir_all(racine);
     }
 
