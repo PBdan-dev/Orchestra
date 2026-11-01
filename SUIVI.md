@@ -193,10 +193,11 @@ Validé le 2026-10-28 : les 11 critères de `docs/CAHIER_DES_CHARGES.md` §13 (b
 - Lecture transparente : vues Mémoire et Journal, `retrouver`, résumés du jour, vérification des chaînes (T6, preuves comprises). Corriger une archive compressée depuis la vue Mémoire la réécrit en clair.
 - Journal par référence : la réponse d'un tour n'y est plus recopiée (aperçu de 160 caractères et chemin de l'archive).
 - Mesure sur une copie des données réelles (`compression-2026-11-01_1143`) : 10 fichiers dus, 82,6 Ko → 12,1 Ko (÷ 6,8) en 0,2 s ; relecture identique 10/10 ; chaînes vérifiées identiques avant et après (5 intactes, 4 antérieures au chaînage, 1 cassée volontairement par l'essai T6). Pas de dictionnaire zstd : fichiers trop peu nombreux pour en mesurer le gain.
-- README : ouvrir un `.zst` hors d'Orchestra (PeaZip, 7-Zip ZS, `zstd -d`). 128 tests unitaires.
+- README : ouvrir un `.zst` hors d'Orchestra (PeaZip, 7-Zip ZS, `zstd -d`). 128 tests unitaires, intégration continue verte.
+- Évaluation finale avec le sens (qwen3.6:27b, 0,6, 1 passage, après la partie de PB) : mémoire 19/20 (`rapport-2026-11-01_1538` ; h16 « solution de secours pour la voix » toujours manquée : son fait n'a que 0,46 de sens avec la question), aiguillage 16/18 (`_1541`, t07 et t08 comme avant), tour médian 6,6 s (mémoire) et 10,2 s (aiguillage), contre 7,4 et 11,8 s à la fin du lot S. Modèle de chat déchargé après l'évaluation ; application recompilée.
 
 ## Prochaine action
-Après la partie de PB (carte graphique occupée) : évaluation mémoire et aiguillage avec le sens, puis application recompilée ; ensuite, réponse de PB sur le sens en voix (garder les mots seuls, ou budget de 150 ms).
+Tous les lots du cahier (section 11) sont faits. Prochaine étape à proposer à PB : le bilan des 11 critères de fin (section 13), dont l'aiguillage à 89 % pour 90 % visé (t07 et t08) et les 5 jours d'usage réel. En attente aussi : réponse de PB sur le sens en voix (mots seuls recommandé, ou budget de 150 ms).
 
 ## Décisions
 - 2026-10-25 — Application de bureau Windows en Tauri 2 (Rust + React/TypeScript), installateur léger.
