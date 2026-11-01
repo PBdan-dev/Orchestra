@@ -323,8 +323,9 @@ pub struct MemoryFile {
 
 pub fn tree(paths: &Paths) -> Vec<MemoryFile> {
     let mut out = vec![];
+    // `p` : nom en clair ; le fichier peut être compressé à J+1 (lot M1), la lecture est transparente
     let mut push = |p: &std::path::Path, kind: &str| {
-        if let Ok(md) = p.metadata() {
+        if let Ok(md) = crate::compression::chemin_reel(p).metadata() {
             let modified = md
                 .modified()
                 .ok()
@@ -346,8 +347,16 @@ pub fn tree(paths: &Paths) -> Vec<MemoryFile> {
     let (resumes, sessions) = (paths.memoire.join("resumes"), paths.memoire.join("sessions"));
     for (dir, kind) in [(&paths.memoire_agents, "agent"), (&resumes, "resume"), (&sessions, "resume"), (&paths.archives, "archive")] {
         if let Ok(rd) = std::fs::read_dir(dir) {
-            let mut entries: Vec<_> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().map(|e| e == "md").unwrap_or(false)).collect();
+            let mut entries: Vec<_> = rd
+                .flatten()
+                .filter_map(|e| {
+                    let nom = e.file_name().to_string_lossy().to_string();
+                    let clair = nom.strip_suffix(".zst").unwrap_or(&nom).to_string();
+                    clair.ends_with(".md").then(|| dir.join(clair))
+                })
+                .collect();
             entries.sort();
+            entries.dedup();
             if kind == "archive" || kind == "resume" {
                 entries.reverse();
             }
@@ -552,6 +561,21 @@ mod tests {
         assert!(h.lines().any(|l| l.contains("Annulé") && l.contains("Annecy")), "{h}");
         // la nouvelle ligne a été modifiée à la main depuis : on ne devine pas
         assert!(annuler_remplacement(&p, "- (2026-10-26) PB habite à Annecy.", &nouvelle).is_err());
+        let _ = std::fs::remove_dir_all(racine);
+    }
+
+    #[test]
+    fn archive_compressee_listee_sous_son_nom() {
+        let (p, racine) = dossier();
+        std::fs::write(p.archives.join("2026-10-29.md"), "# Conversations du 2026-10-29\n").unwrap();
+        std::fs::write(p.archives.join("2026-10-30.md"), "# Conversations du 2026-10-30\n").unwrap();
+        crate::compression::compresser(&p, &p.archives.join("2026-10-29.md")).unwrap();
+        let archives: Vec<(String, String)> = tree(&p).into_iter().filter(|f| f.kind == "archive").map(|f| (f.name, f.rel)).collect();
+        // l'interface lit et écrit par le nom en clair ; la lecture est transparente (lot M1)
+        assert_eq!(
+            archives,
+            vec![("2026-10-30.md".to_string(), "memoire/archives/2026-10-30.md".to_string()), ("2026-10-29.md".to_string(), "memoire/archives/2026-10-29.md".to_string())]
+        );
         let _ = std::fs::remove_dir_all(racine);
     }
 

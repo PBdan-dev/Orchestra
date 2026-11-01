@@ -41,28 +41,33 @@ pub(crate) fn pour_le_journal(ev: &Event, jour: &str) -> serde_json::Value {
 }
 
 pub fn read_day(state: &AppState, day: &str) -> Vec<serde_json::Value> {
-    let path = state.paths.journal.join(format!("{}.jsonl", crate::paths::safe_name(day)));
-    std::fs::read_to_string(path)
-        .map(|s| {
-            s.lines()
-                .filter_map(|l| serde_json::from_str(l).ok())
-                .collect()
-        })
+    lire_jour(&state.paths.journal, day)
+}
+
+/// Journal d'un jour, en clair ou compressé à J+1 (lot M1).
+fn lire_jour(dossier: &std::path::Path, day: &str) -> Vec<serde_json::Value> {
+    crate::compression::lire_texte(&dossier.join(format!("{}.jsonl", crate::paths::safe_name(day))))
+        .map(|s| s.lines().filter_map(|l| serde_json::from_str(l).ok()).collect())
         .unwrap_or_default()
 }
 
 pub fn list_days(state: &AppState) -> Vec<String> {
-    let mut days: Vec<String> = std::fs::read_dir(&state.paths.journal)
-        .map(|rd| {
-            rd.filter_map(|e| e.ok())
-                .filter_map(|e| {
-                    let n = e.file_name().to_string_lossy().to_string();
-                    n.strip_suffix(".jsonl").map(|s| s.to_string())
-                })
-                .collect()
+    jours(&state.paths.journal)
+}
+
+/// Jours du journal, du plus récent au plus ancien (fichiers en clair ou compressés).
+fn jours(dossier: &std::path::Path) -> Vec<String> {
+    let mut days: Vec<String> = std::fs::read_dir(dossier)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let n = e.file_name().to_string_lossy().to_string();
+            n.strip_suffix(".jsonl").or_else(|| n.strip_suffix(".jsonl.zst")).map(String::from)
         })
-        .unwrap_or_default();
+        .collect();
     days.sort();
+    days.dedup();
     days.reverse();
     days
 }
@@ -85,5 +90,17 @@ mod tests {
         assert_eq!(c["apercu"], "Bonjour PB.");
         let n = Event::NothingToMemorize { run_id: "r".into() };
         assert_eq!(pour_le_journal(&n, "2026-11-01"), serde_json::to_value(&n).unwrap());
+    }
+
+    #[test]
+    fn journal_compresse_lu_comme_avant() {
+        let racine = std::env::temp_dir().join(format!("orchestra-m1j-{}", &uuid::Uuid::new_v4().to_string()[..8]));
+        let p = crate::paths::Paths::at(racine.clone()).unwrap();
+        std::fs::write(p.journal.join("2026-10-30.jsonl"), "{\"at\":\"a\",\"event\":{\"type\":\"phase\"}}\n{\"at\":\"b\",\"event\":{\"type\":\"done\"}}\n").unwrap();
+        std::fs::write(p.journal.join("2026-10-31.jsonl"), "{\"at\":\"c\",\"event\":{\"type\":\"phase\"}}\n").unwrap();
+        crate::compression::compresser(&p, &p.journal.join("2026-10-30.jsonl")).unwrap();
+        assert_eq!(lire_jour(&p.journal, "2026-10-30").len(), 2);
+        assert_eq!(jours(&p.journal), vec!["2026-10-31".to_string(), "2026-10-30".to_string()]);
+        let _ = std::fs::remove_dir_all(racine);
     }
 }

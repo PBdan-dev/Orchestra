@@ -906,6 +906,8 @@ pub(crate) async fn executer_mission(
     let mut donnees_modifiees = crate::surveillance::comparer(paths, &releve_avant, &releve_apres, &zones, &mission_json, &ecritures_de_pb);
     let duree_releve_apres = debut_releve.elapsed();
     crate::surveillance::mettre_a_l_abri(paths, &mission_id, &mut donnees_modifiees);
+    // lot M1 : la pensée brute de l'agent est compressée dès la fin de mission (lecture transparente)
+    let _ = crate::compression::fin_de_mission(paths, &dossier_mission);
     thought(
         out,
         run_id,

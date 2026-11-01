@@ -3,6 +3,7 @@ pub mod banc;
 pub mod brain;
 pub mod coffre;
 pub mod compaction;
+pub mod compression;
 pub mod config;
 pub mod consolidation;
 pub mod contrat;
@@ -359,6 +360,21 @@ fn memoire_graphique() -> CmdResult<MemoireGraphique> {
     Ok(MemoireGraphique { totale: p[1].parse().unwrap_or(0), utilisee: p[2].parse().unwrap_or(0), detail: p[0].to_string() })
 }
 
+/// Lot M1 : compresse ce qui est dû à J+1 et le dit dans Conscience (seulement s'il y avait à faire).
+fn compresser_le_froid(app: &AppHandle, paths: &Paths) {
+    let b = compression::compresser_dus(paths, chrono::Local::now().date_naive(), None);
+    if b.fichiers > 0 || !b.erreurs.is_empty() {
+        let detail = format!(
+            "Compression des fichiers d'hier et d'avant : {} fichier(s), {:.0} Ko → {:.0} Ko{}",
+            b.fichiers,
+            b.avant as f64 / 1024.0,
+            b.apres as f64 / 1024.0,
+            if b.erreurs.is_empty() { String::new() } else { format!(" ; laissés en clair : {}", b.erreurs.join(" · ")) }
+        );
+        events::emit(app, events::Event::Compaction { etat: if b.erreurs.is_empty() { "fin".into() } else { "erreur".into() }, detail });
+    }
+}
+
 /// Compaction de la conversation à l'inactivité (lot C) : l'interface l'appelle après 2 min sans
 /// saisie, sans parole et sans mission. Sans effet si Orchestra travaille ou s'il n'y a rien à résumer.
 /// Suivie de l'entretien de la mémoire (lot M3) : résumés des jours passés, missions condensées.
@@ -376,6 +392,11 @@ fn compacter(app: AppHandle, state: State<AppState>, history: Vec<Msg>) -> bool 
     *c = Some(tauri::async_runtime::spawn(async move {
         if let Err(e) = orchestrator::compacter_session(&a, &cfg, &http, &paths, &session, &history).await {
             events::emit(&a, events::Event::Compaction { etat: "erreur".into(), detail: format!("Résumé de la conversation impossible : {e}") });
+        }
+        // lot M1 : compression à J+1 (Orchestra resté ouvert après minuit), sans modèle
+        {
+            let (p, a2) = (paths.clone(), a.clone());
+            let _ = tauri::async_runtime::spawn_blocking(move || compresser_le_froid(&a2, &p)).await;
         }
         // lot M3 : entretien de la mémoire dans le même créneau, seulement si le cerveau est déjà en
         // mémoire (jamais de chargement de modèle pour l'entretien)
@@ -512,14 +533,15 @@ fn safe_path(state: &AppState, rel: &str) -> CmdResult<std::path::PathBuf> {
 #[tauri::command]
 fn read_text_file(state: State<AppState>, rel: String) -> CmdResult<String> {
     let p = safe_path(&state, &rel)?;
-    std::fs::read_to_string(p).map_err(err)
+    // en clair, ou compressé à J+1 (lot M1)
+    compression::lire_texte(&p).map_err(err)
 }
 
 #[tauri::command]
 fn write_text_file(state: State<AppState>, rel: String, content: String) -> CmdResult<()> {
     let p = safe_path(&state, &rel)?;
-    noter(&state, &[p.clone()]);
-    std::fs::write(p, content).map_err(err)
+    noter(&state, &[p.clone(), compression::chemin_zst(&p)]);
+    compression::ecrire_texte(&state.paths, &p, &content).map_err(err)
 }
 
 /// Bouton Annuler d'un fait remplacé par la consolidation (lot M3, D21).
@@ -756,6 +778,11 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     index::vectoriser(&p).await;
                 });
+            }
+            // lot M1 : compression à J+1 de ce qui est dû (archives, journal, traces des missions passées)
+            {
+                let (p, a) = (state.paths.clone(), app.handle().clone());
+                tauri::async_runtime::spawn_blocking(move || compresser_le_froid(&a, &p));
             }
             // souvenirs pour le mode voix (lot D) : ouvert avant le serveur voix, qui en reçoit l'adresse
             if let Err(e) = tauri::async_runtime::block_on(rappel::ouvrir(state.paths.clone())) {

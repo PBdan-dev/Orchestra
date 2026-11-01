@@ -32,6 +32,7 @@ sha2 = "0.10"
 pdf-extract = "0.9"
 # signature des entrées du Market (lot S, A1) ; déjà livrée avec reqwest pour le HTTPS (Apache-2.0 + ISC)
 ring = "0.17"
+zstd = "0.13"
 
 [profile.release]
 opt-level = 2

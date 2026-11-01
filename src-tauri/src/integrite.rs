@@ -43,7 +43,8 @@ fn chemin_fin(f: &Path) -> PathBuf {
 }
 
 fn lire_fin(f: &Path) -> Option<Fin> {
-    std::fs::read_to_string(chemin_fin(f)).ok().and_then(|t| serde_json::from_str(&t).ok())
+    // en clair, ou compressée à J+1 (lot M1)
+    crate::compression::lire_texte(&chemin_fin(f)).ok().and_then(|t| serde_json::from_str(&t).ok())
 }
 
 /// Ajoute une ligne chaînée à un fichier JSONL (l'objet reçoit `prev`).
@@ -92,7 +93,7 @@ pub fn verifier(f: &Path) -> Etat {
     // lu sous le même verrou que l'écriture : jamais une ligne écrite sans sa fin de chaîne (lot S-b)
     let (texte, fin) = {
         let _verrou = ECRITURE.lock().unwrap_or_else(|e| e.into_inner());
-        (std::fs::read_to_string(f).unwrap_or_default(), lire_fin(f))
+        (crate::compression::lire_texte(f).unwrap_or_default(), lire_fin(f))
     };
     let lignes: Vec<&str> = texte.lines().filter(|l| !l.trim().is_empty()).collect();
     let mut chainee = false;
@@ -157,8 +158,10 @@ fn fichiers(paths: &Paths, mission: Option<&str>) -> Vec<PathBuf> {
         Some(id) => vec![paths.missions.join(crate::paths::safe_name(id))],
         None => {
             for e in std::fs::read_dir(&paths.journal).into_iter().flatten().flatten() {
-                if e.path().extension().is_some_and(|x| x == "jsonl") {
-                    out.push(e.path());
+                // journal en clair, ou compressé à J+1 (lot M1) : vérifié sous son nom en clair
+                let nom = e.file_name().to_string_lossy().to_string();
+                if let Some(clair) = nom.strip_suffix(".zst").or(Some(nom.as_str())).filter(|n| n.ends_with(".jsonl")) {
+                    out.push(paths.journal.join(clair));
                 }
             }
             std::fs::read_dir(&paths.missions).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect()
@@ -166,12 +169,13 @@ fn fichiers(paths: &Paths, mission: Option<&str>) -> Vec<PathBuf> {
     };
     for d in missions {
         for n in ["echanges.jsonl", "actions.jsonl"] {
-            if d.join(n).exists() {
+            if crate::compression::existe(&d.join(n)) {
                 out.push(d.join(n));
             }
         }
     }
     out.sort();
+    out.dedup();
     out
 }
 
@@ -205,8 +209,12 @@ pub fn verifier_tout(paths: &Paths, mission: Option<&str>) -> Bilan {
                 }
                 let preuve = paths.root.join("integrite").join("preuves").join(format!("{}_{}", chrono::Local::now().format("%Y-%m-%d_%H%M%S"), rel.replace('/', "_")));
                 let _ = std::fs::create_dir_all(preuve.parent().unwrap_or(&paths.root));
-                let _ = std::fs::copy(&f, &preuve);
-                let _ = std::fs::copy(chemin_fin(&f), { let mut s = preuve.as_os_str().to_os_string(); s.push(".chaine"); PathBuf::from(s) });
+                // la preuve garde le fichier tel qu'il est sur le disque (compressé ou non)
+                let reel = crate::compression::chemin_reel(&f);
+                let suffixe = if reel == f { "" } else { ".zst" };
+                let _ = std::fs::copy(&reel, { let mut s = preuve.as_os_str().to_os_string(); s.push(suffixe); PathBuf::from(s) });
+                let fin_reelle = crate::compression::chemin_reel(&chemin_fin(&f));
+                let _ = std::fs::copy(&fin_reelle, { let mut s = preuve.as_os_str().to_os_string(); s.push(".chaine"); if fin_reelle != chemin_fin(&f) { s.push(".zst"); } PathBuf::from(s) });
                 if let (Some(a), Some(m)) = (&agent_id, &mission_id) {
                     let v = crate::verification::Verification { ecarts: vec![format!("trace {rel} cassée à la ligne {ligne} : {motif}")], controles: vec![] };
                     if crate::verification::enregistrer(paths, a, m, &v).is_ok_and(|e| e.statut != crate::verification::Statut::Normal) {
@@ -291,6 +299,24 @@ mod tests {
         reecrire(&f, &l);
         assert!(matches!(verifier(&f), Etat::Cassee { ligne: 5, .. }));
         let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn trace_compressee_toujours_verifiee() {
+        // lot M1 : à J+1, le journal et sa chaîne sont compressés ; la vérification les lit quand même
+        let racine = std::env::temp_dir().join(format!("orchestra-t6-zst-{}", &uuid::Uuid::new_v4().to_string()[..8]));
+        let p = Paths::at(racine.clone()).unwrap();
+        let f = p.journal.join("2026-10-30.jsonl");
+        for i in 0..3 {
+            ajouter(&f, json!({ "n": i })).unwrap();
+        }
+        crate::compression::compresser(&p, &f).unwrap();
+        crate::compression::compresser(&p, &chemin_fin(&f)).unwrap();
+        assert!(!f.exists());
+        assert_eq!(verifier(&f), Etat::Intacte { lignes: 3 });
+        assert!(fichiers(&p, None).contains(&f), "{:?}", fichiers(&p, None));
+        assert_eq!(verifier_tout(&p, None).intactes, 1);
+        let _ = std::fs::remove_dir_all(racine);
     }
 
     #[test]

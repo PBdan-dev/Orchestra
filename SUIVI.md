@@ -176,7 +176,9 @@ Validé le 2026-10-28 : les 11 critères de `docs/CAHIER_DES_CHARGES.md` §13 (b
 - Mesure sans modèle de chat (`examples/mesure_rappel.rs`, nouveau jeu `eval/rappel.jsonl` de 20 questions : 11 « mots », 9 « sens ») : questions « mots » 11/11 avant comme après, 11 dans les 3 premiers souvenirs (9 avant) ; questions « sens » 0/9 sans le modèle d'embedding, comme attendu ; rappel 0,2 ms sur la mémoire d'essai, 2,2 ms sur 2 053 faits (5,1 ms avant M2). Rapport `rappel-2026-11-01_0238`.
 - Non-régression (qwen3.6:27b, 0,6, 1 passage, modèle d'embedding absent) : mémoire 19/20 → 19/20 (échec h16 « solution de secours pour la voix », une question de sens) ; aiguillage 16/18 → 16/18 ; tour médian 7,4 → 7,0 s (mémoire) et 11,8 → 11,2 s (aiguillage) ; prompt de réponse 2 932 → 2 886 tokens (le profil n'est plus répété dans les souvenirs). Rapports `rapport-2026-11-01_0239` et `_0243`. 105 tests unitaires (94 à la fin du lot S), exemples et interface compilés.
 - Défaut corrigé au passage : le modèle écrivait parfois d'avance le JSON de la mémorisation (`{"faits": []}`) à la fin de sa réponse (2 fois sur 20 au lot S, 1 fois ici). Il est retiré, et l'interface affiche la réponse finale nettoyée (ce JSON restait affiché et pouvait être lu à voix haute).
-- En attente de `ollama pull qwen3-embedding:0.6b` (PB) : mesures du sens (`mesure_rappel`, évaluation mémoire, sens à temps dans les 35 ms de la voix, mémoire vive prise, cohabitation avec le modèle de chat).
+- Mesures du sens (01/11, modèle installé par PB, `rappel-2026-11-01_1129`) : questions trouvées 17/20 (11/20 avant M2), dont 6/9 questions « sens » ; avec 2 000 faits de plus, 15/20. Vecteur d'une question sur le processeur : 75 à 100 ms ; rappel complet du chat ≈ 0,1 s. Vecteurs : 82 à 100 ms par fait (53 faits en 4 s). Le modèle reste sur le processeur, à côté du modèle de chat sur la carte graphique.
+- Réglages tirés de la mesure : contexte du modèle d'embedding fixé à 2 048 tokens (2,7 → 0,8 Go de mémoire vive, même vecteur), aussi pour les agents qui l'empruntent par la porte ; un fait n'est retenu par les mots que s'il couvre une part de la question ou partage un mot rare (avec 2 000 faits de plus, 13/20 → 15/20).
+- Voix : le vecteur de la phrase n'arrive jamais dans les 35 ms (choix A1) ; la voix se sert donc des mots seuls. Le plancher d'Ollama est d'environ 33 ms, même pour un mot.
 
 ## État actuel — Lot M3 (2026-11-01)
 - Choix pris par délégation de PB (voir Décisions), sans plan soumis : PB a demandé d'enchaîner.
@@ -186,8 +188,15 @@ Validé le 2026-10-28 : les 11 critères de `docs/CAHIER_DES_CHARGES.md` §13 (b
 - Essai avec qwen3.6:27b (`examples/essai_consolidation.rs`, 8 cas, 2 passages) : 14/16 décisions attendues (`consolidation-2026-11-01_0314`). Au premier essai, 4/8 : le modèle omettait le numéro de ligne et REMPLACER retombait en AJOUTER ; corrigé (numéro obligatoire, raison d'abord). Les 2 ratés, « PB habite maintenant à Lyon » contre « PB habite à Annecy », n'ont qu'un mot commun : ils attendent le rappel par le sens. Décision en 1,0 à 1,8 s, seulement quand un voisin est très proche.
 - Non-régression (qwen3.6:27b, 0,6) : mémoire 19/20 (`rapport-2026-11-01_0314`, échec h16, question de sens), tour médian 6,7 s ; aiguillage 15/18 au premier passage (`_0318`), puis t13 « Fais-moi un résumé » à 2/3 sur 3 passages (`_0323`), soit 16/18 à la majorité comme avant ; t07 et t08 en échec comme avant. 119 tests unitaires (105 à la fin de M2) ; interface et exemples compilés ; carte « Fait mis à jour » et Annuler vérifiés dans la démo navigateur (taper « sobre »).
 
+## État actuel — Lot M1 (2026-11-01)
+- `compression.rs` (crate `zstd` 0.13, MIT ; bibliothèque C zstd sous BSD ; téléchargée par PB) : niveau 19, à J+1, au lancement et pendant les pauses (créneau de la compaction, sans modèle) : archives de conversation, missions condensées des agents, journal et sa chaîne, traces des missions (`.jsonl`, `.chaine`, `.md` sauf `verification.md`, `.log`, `.txt`) sauf la mission en cours. Pensée brute compressée dès la fin de la mission. Restent en clair : fichiers du jour, faits, fiches, résumés, petits JSON des missions. Chaque fichier est relu et comparé avant que l'original soit retiré ; écritures notées pour la surveillance du dossier (S-b).
+- Lecture transparente : vues Mémoire et Journal, `retrouver`, résumés du jour, vérification des chaînes (T6, preuves comprises). Corriger une archive compressée depuis la vue Mémoire la réécrit en clair.
+- Journal par référence : la réponse d'un tour n'y est plus recopiée (aperçu de 160 caractères et chemin de l'archive).
+- Mesure sur une copie des données réelles (`compression-2026-11-01_1143`) : 10 fichiers dus, 82,6 Ko → 12,1 Ko (÷ 6,8) en 0,2 s ; relecture identique 10/10 ; chaînes vérifiées identiques avant et après (5 intactes, 4 antérieures au chaînage, 1 cassée volontairement par l'essai T6). Pas de dictionnaire zstd : fichiers trop peu nombreux pour en mesurer le gain.
+- README : ouvrir un `.zst` hors d'Orchestra (PeaZip, 7-Zip ZS, `zstd -d`). 128 tests unitaires.
+
 ## Prochaine action
-Lot M1 (disque) : PB télécharge la bibliothèque de compression `zstd` (commande dans Blocages) ; ensuite compression à J+1 et lecture transparente. Dès que PB a installé `qwen3-embedding:0.6b` : mesures du sens (M2) et seuil du sens de la consolidation (M3).
+Après la partie de PB (carte graphique occupée) : évaluation mémoire et aiguillage avec le sens, puis application recompilée ; ensuite, réponse de PB sur le sens en voix (garder les mots seuls, ou budget de 150 ms).
 
 ## Décisions
 - 2026-10-25 — Application de bureau Windows en Tauri 2 (Rust + React/TypeScript), installateur léger.
@@ -214,6 +223,8 @@ Lot M1 (disque) : PB télécharge la bibliothèque de compression `zstd` (comman
 - 2026-10-31 — Lot S : A1, signature réelle (Ed25519) des agents certifiés par une clé du Market que PB garde ; B1, après un contenu extérieur, la lecture web n'accepte que les adresses écrites par PB, ou celles qu'il confirme ; C1, Orchestra ne mémorise que ce que PB dit lui-même.
 - 2026-11-01 — PB délègue ses choix pour M2, M3 et M1 (« prends les choix que tu me recommanderais et continue ») ; chaque décision lui est listée en fin de lot.
 - 2026-11-01 — Lot M2, par délégation de PB : A1, la voix garde son budget de 50 ms, le sens n'y est ajouté que si le vecteur de la phrase arrive en 35 ms ; B1, une ligne modifiée à la main reçoit son vecteur en tâche de fond. Choix techniques : un fait compte comme « utilisé » si la réponse reprend au moins 2 de ses mots utiles (bonus de 10 % par usage, 50 % au plus) ; fraîcheur jamais sous 25 % ; seuil du sens seul à 0,5 ; profil hors rappel (déjà dans le prompt), sauf les faits que le budget du profil a laissés de côté ; modèle d'embedding gardé chargé sur le processeur ; ancien réglage (nomic-embed-text ou vide) migré une fois vers qwen3-embedding:0.6b ; pas de tantivy.
+- 2026-11-01 — Lot M1, par délégation de PB : crate `zstd` (fixée par le cahier, téléchargée par PB) plutôt que brotli déjà présent ; compression au lancement et pendant les pauses, jamais pendant une mission ; petits JSON des missions et `verification.md` laissés en clair (lus par la liste des missions) ; chaînes `.chaine` compressées avec leur fichier ; archive corrigée depuis l'interface réécrite en clair ; pas de dictionnaire zstd.
+- 2026-11-01 — Lot M2, réglages après mesure, par délégation de PB : contexte du modèle d'embedding à 2 048 tokens ; filtre des mots banals ; seuil du sens de la consolidation gardé à 0,75 (8/8 décisions justes) ; voix laissée aux mots seuls (question posée à PB).
 - 2026-11-01 — Lot M3, par délégation de PB : « très proche » = la moitié des mots utiles du nouveau fait et 2 mots au moins, ou sens ≥ 75 % (à recalibrer avec le modèle d'embedding) ; décision du cerveau sans réflexion, raison d'abord ; ligne remplacée à sa place, avec la nouvelle date ; Annuler refusé si la nouvelle ligne a été modifiée à la main depuis (l'ancienne reste dans historique.md) ; résumés du jour à l'inactivité, seulement si le cerveau est déjà chargé, 7 jours en arrière, 2 par créneau, archive bornée à son début (8 000 caractères) et sa fin (16 000) ; pas de fichier de résumé par mission (la ligne de mission de la fiche de l'agent et le résumé du jour en tiennent lieu, pour éviter les doublons au rappel) ; au-delà de 50 missions, les 25 plus anciennes condensées d'un coup (un appel toutes les 25 missions), lignes complètes dans un fichier froid daté.
 ## Fichiers et ressources
 - Conception : `docs/SYNTHESE.md`, `docs/CAHIER_DES_CHARGES.md`.
@@ -246,16 +257,16 @@ Lot M1 (disque) : PB télécharge la bibliothèque de compression `zstd` (comman
 - [x] Cahier des charges — Lot C : compaction (2026-10-31)
 - [x] Cahier des charges — Lot D : voix (2026-10-31)
 - [x] Cahier des charges — Lot S : sécurité (2026-11-01)
-- [x] Cahier des charges — Lot M2 : rappel par les mots et par le sens (2026-11-01 ; mesures du sens en attente du modèle d'embedding)
+- [x] Cahier des charges — Lot M2 : rappel par les mots et par le sens (2026-11-01 ; sens mesuré le matin même)
 - [x] Cahier des charges — Lot M3 : consolidation, historique, résumés du jour, missions condensées (2026-11-01)
-- [ ] Cahier des charges — Lot M1 : compression à J+1 (journal par référence fait ; zstd en attente du téléchargement par PB)
+- [x] Cahier des charges — Lot M1 : compression à J+1, lecture transparente, journal par référence (2026-11-01)
 - [ ] Cahier des charges — Lots A, B, T1 à T9, C, D, S, M2, M3, M1 (ordre de la section 11)
 - [x] Délégation sur le vrai Ollama vérifiée par l'évaluation (6 tâches déléguées au bon agent, 3/3)
 - [ ] PB teste une vraie délégation sur Ollama dans l'interface
 - [x] Brancher l'Agent Market réel (`https://pbdan-dev.github.io/Agent_Market/`, lot T4)
 - [ ] Brancher Mail Adagio comme agent
 - [ ] Ajout autonome de fonctionnalités (Orchestra crée ou installe ses propres agents)
-- [ ] Mémoire optimisée (index par embeddings, résumés, oubli)
+- [x] Mémoire optimisée (index par embeddings, résumés, oubli) : lots M2, M3 et M1 (2026-11-01)
 
 ## Blocages et questions ouvertes
 - Piste pour plus tard (proposée par PB le 29/10) : garder sur disque le calcul du début fixe du prompt entre deux chargements. Impossible avec Ollama ; possible avec llama-server (llama.cpp, MIT), qui sauvegarde et restaure ce calcul. Gain estimé faible (1 à 2 s de recalcul, contre 18 s de chargement du modèle) : non prioritaire.
@@ -268,8 +279,7 @@ Lot M1 (disque) : PB télécharge la bibliothèque de compression `zstd` (comman
 - Limite documentée (README) : sans bac à sable, un agent peut lire le coffre de Windows par son interface de programmation, écrire ailleurs sur le disque ou laisser tourner un programme après la mission.
 - Constaté pendant les tests de la voix, sans lien avec le lot S : pour « rédige une note de bienvenue et enregistre-la », le cerveau vocal (qwen3.5:9b) répond lui-même au lieu d'appeler `confier_a_orchestra` (1 fois sur 5 confié au lot D, 0 sur 3 cette nuit).
 - Proposé à PB le 31/10, hors lot S : donner aux outils de suivi la lecture (seule) de la pensée de mission et de la mémoire propre des agents, pour répondre aux « pourquoi a-t-on fait X ».
-- Lot M2, à faire par PB : `ollama pull qwen3-embedding:0.6b` (le rappel par le sens en dépend ; sans lui, les mots seuls).
-- Lot M1, à faire par PB : télécharger la bibliothèque de compression (crate `zstd` 0.13, MIT ; la bibliothèque C zstd qu'elle compile est sous BSD). Dans PowerShell : `cd C:\Users\pbdan\Claude_Files\Claude_Projects\2026-10_Orchestra\src-tauri`, puis `cargo add zstd@0.13`, puis `cargo fetch`.
+- Question à PB (lot M2, voix) : le vecteur d'une phrase prend 75 à 100 ms sur le processeur, plus que les 35 ms du choix A1 ; la voix se sert donc des mots seuls. Options : garder ainsi (recommandé, latence inchangée), passer le budget à 150 ms (≈ +0,1 s par phrase), ou mettre le modèle d'embedding sur la carte graphique (contraire à D10, ≈ 1 Go de mémoire graphique).
 
 ## Journal
 - 2026-10-25 — V1 construite, compilée et lancée sur le PC de PB ; données déplacées hors de Documents ; mode démo navigateur.
@@ -299,3 +309,4 @@ Lot M1 (disque) : PB télécharge la bibliothèque de compression `zstd` (comman
 - 2026-11-01 (nuit) — Lot S : textes extérieurs encadrés et désamorcés, consignes repérées et signalées, mémorisation des seuls propos de PB, lecture web confirmée par PB après un contenu extérieur, dossier d'Orchestra surveillé pendant chaque mission, clés API dans le coffre de Windows, signature Ed25519 des agents certifiés (clé du Market créée) ; banc de sécurité 10/10 scénarios aux 5 passages ; mémoire 19/20, aiguillage 16/18.
 - 2026-11-01 (nuit) — Lot M2 : index du rappel (BM25, sens par qwen3-embedding:0.6b sur le processeur, fusion par rang, fraîcheur, usage), branché en chat, en voix et dans `retrouver` ; mesure du rappel sans modèle de chat (11/11 questions « mots », 2,2 ms pour 2 053 faits) ; mémoire 19/20, aiguillage 16/18 ; JSON de mémorisation retiré des réponses. Mesures du sens en attente du modèle.
 - 2026-11-01 (nuit) — Lot M3 : consolidation à l'écriture avec Annuler et historique.md (14/16 décisions attendues avec qwen3.6:27b), résumés du jour et missions condensées à l'inactivité ; mémoire 19/20, aiguillage 16/18 à la majorité. Lot M1 commencé : journal par référence à l'archive.
+- 2026-11-01 (matin) — PB installe zstd et qwen3-embedding:0.6b. Sens mesuré : 17/20 questions trouvées (11/20 avant M2) ; modèle d'embedding ramené à 0,8 Go de mémoire vive ; mots banals écartés ; consolidation avec le sens 8/8. Lot M1 : compression à J+1 (÷ 6,8), lecture transparente, chaînes T6 vérifiées sur les fichiers compressés. Modèle de chat déchargé pendant la partie de PB (SWORN).

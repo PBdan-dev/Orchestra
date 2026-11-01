@@ -249,9 +249,20 @@ pub fn retrouver(paths: &Paths, requete: &str) -> String {
     if cles.is_empty() {
         return "Précise quelques mots à chercher.".into();
     }
+    // fichiers .md, en clair ou compressés à J+1 (lot M1), sous leur nom en clair
     let lister = |d: &Path| -> Vec<PathBuf> {
-        let mut f: Vec<PathBuf> = std::fs::read_dir(d).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "md")).collect();
+        let mut f: Vec<PathBuf> = std::fs::read_dir(d)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| {
+                let nom = e.file_name().to_string_lossy().to_string();
+                let clair = nom.strip_suffix(".zst").unwrap_or(&nom).to_string();
+                clair.ends_with(".md").then(|| d.join(clair))
+            })
+            .collect();
         f.sort();
+        f.dedup();
         f.reverse();
         f
     };
@@ -259,7 +270,7 @@ pub fn retrouver(paths: &Paths, requete: &str) -> String {
     let chercher = |fichiers: &[PathBuf]| -> Vec<(usize, String, String)> {
         let mut trouves = vec![];
         for f in fichiers {
-            let texte = std::fs::read_to_string(f).unwrap_or_default();
+            let texte = crate::compression::lire_texte(f).unwrap_or_default();
             let nom = f.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
             for bloc in texte.split("
 ## ").skip(1) {
@@ -383,6 +394,10 @@ mod tests {
         let s = retrouver(&p, "stand du salon");
         assert!(s.contains("B12") && !s.contains("beau"), "{s}");
         assert!(retrouver(&p, "licorne").contains("Rien trouvé"));
+        // lot M1 : archive compressée à J+1, toujours retrouvée
+        crate::compression::compresser(&p, &p.archives.join("2026-10-29.md")).unwrap();
+        let s = retrouver(&p, "stand du salon");
+        assert!(s.contains("B12") && s.contains("[2026-10-29]"), "{s}");
         let _ = std::fs::remove_dir_all(r);
     }
 }

@@ -38,13 +38,15 @@ pub fn jours_a_resumer(paths: &Paths, aujourd_hui: NaiveDate) -> Vec<NaiveDate> 
         .flatten()
         .flatten()
         .filter_map(|e| {
+            // archive en clair, ou compressée à J+1 (lot M1)
             let nom = e.file_name().to_string_lossy().to_string();
-            NaiveDate::parse_from_str(nom.strip_suffix(".md")?, "%Y-%m-%d").ok()
+            NaiveDate::parse_from_str(nom.strip_suffix(".md").or_else(|| nom.strip_suffix(".md.zst"))?, "%Y-%m-%d").ok()
         })
         .filter(|j| *j < aujourd_hui && (aujourd_hui - *j).num_days() <= JOURS_EN_ARRIERE)
         .filter(|j| !dossier_resumes(paths).join(format!("{}.md", j.format("%Y-%m-%d"))).exists())
         .collect();
     jours.sort();
+    jours.dedup();
     jours
 }
 
@@ -63,7 +65,7 @@ fn borner(texte: &str) -> String {
 /// longue) et les missions du jour, encadrées comme donnée.
 pub fn matiere_du_jour(paths: &Paths, jour: NaiveDate) -> String {
     let date = jour.format("%Y-%m-%d").to_string();
-    let archive = std::fs::read_to_string(paths.archives.join(format!("{date}.md"))).unwrap_or_default();
+    let archive = crate::compression::lire_texte(&paths.archives.join(format!("{date}.md"))).unwrap_or_default();
     let prefixe = format!("- ({date})");
     let mut missions = vec![];
     for e in std::fs::read_dir(&paths.memoire_agents).into_iter().flatten().flatten() {
@@ -214,6 +216,10 @@ mod tests {
         std::fs::write(dossier_resumes(&p).join("2026-10-30.md"), "# Résumé\n").unwrap();
         // aujourd'hui exclu, plus de 7 jours exclu, déjà résumé exclu ; le plus ancien d'abord
         assert_eq!(jours_a_resumer(&p, jour("2026-11-01")), vec![jour("2026-10-29"), jour("2026-10-31")]);
+        // lot M1 : une archive déjà compressée compte aussi, et se lit
+        crate::compression::compresser(&p, &p.archives.join("2026-10-29.md")).unwrap();
+        assert_eq!(jours_a_resumer(&p, jour("2026-11-01")), vec![jour("2026-10-29"), jour("2026-10-31")]);
+        assert!(matiere_du_jour(&p, jour("2026-10-29")).contains("bonjour"));
         let _ = std::fs::remove_dir_all(racine);
     }
 
