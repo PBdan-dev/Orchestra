@@ -341,11 +341,14 @@ pub fn tree(paths: &Paths) -> Vec<MemoryFile> {
         }
     };
     push(&paths.main_memory(), "principal");
-    for (dir, kind) in [(&paths.memoire_agents, "agent"), (&paths.archives, "archive")] {
+    // lot M3 : faits remplacés, puis résumés (du jour, de conversation), les plus récents d'abord
+    push(&historique(paths), "historique");
+    let (resumes, sessions) = (paths.memoire.join("resumes"), paths.memoire.join("sessions"));
+    for (dir, kind) in [(&paths.memoire_agents, "agent"), (&resumes, "resume"), (&sessions, "resume"), (&paths.archives, "archive")] {
         if let Ok(rd) = std::fs::read_dir(dir) {
             let mut entries: Vec<_> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().map(|e| e == "md").unwrap_or(false)).collect();
             entries.sort();
-            if kind == "archive" {
+            if kind == "archive" || kind == "resume" {
                 entries.reverse();
             }
             for p in entries {
@@ -379,4 +382,199 @@ pub fn retirer_confiance(paths: &Paths, agent_id: &str) -> anyhow::Result<Vec<St
         std::fs::write(paths.main_memory(), s)?;
     }
     Ok(retirees)
+}
+
+// ---------- lot M3 : propreté ----------
+
+/// `memoire/historique.md` : faits remplacés par la consolidation, avec leur date.
+pub fn historique(paths: &Paths) -> std::path::PathBuf {
+    paths.memoire.join("historique.md")
+}
+
+fn noter_historique(paths: &Paths, ligne: &str) -> anyhow::Result<()> {
+    let p = historique(paths);
+    let mut t = std::fs::read_to_string(&p).unwrap_or_else(|_| {
+        "# Historique de la mémoire\n\n> Faits remplacés par la consolidation (lot M3), avec la date du remplacement. Rien n'est\n> effacé : un remplacement se défait depuis Conscience (Annuler) ou à la main dans orchestra.md.\n\n".to_string()
+    });
+    if !t.ends_with('\n') {
+        t.push('\n');
+    }
+    t.push_str(ligne.trim_end());
+    t.push('\n');
+    std::fs::write(p, t)?;
+    Ok(())
+}
+
+/// Remplace la première ligne égale à `ancienne` (espaces de bord ignorés) ; `None` si absente.
+fn remplacer_ligne(texte: &str, ancienne: &str, nouvelle: &str) -> Option<String> {
+    let mut trouve = false;
+    let lignes: Vec<String> = texte
+        .lines()
+        .map(|l| {
+            if !trouve && l.trim() == ancienne.trim() {
+                trouve = true;
+                nouvelle.to_string()
+            } else {
+                l.to_string()
+            }
+        })
+        .collect();
+    trouve.then(|| {
+        let mut s = lignes.join("\n");
+        s.push('\n');
+        s
+    })
+}
+
+/// Remplace une ligne de `orchestra.md` par un fait plus récent (consolidation, lot M3) ; l'ancienne
+/// ligne part dans `historique.md`. Renvoie la nouvelle ligne.
+pub fn remplacer_fait(paths: &Paths, ancienne: &str, fait: &str) -> anyhow::Result<String> {
+    let nouvelle = format!("- ({}) {}", today(), fait.trim());
+    let texte = remplacer_ligne(&read_main(paths), ancienne, &nouvelle).ok_or_else(|| anyhow::anyhow!("ligne introuvable dans orchestra.md : {}", ancienne.trim()))?;
+    std::fs::write(paths.main_memory(), texte)?;
+    noter_historique(paths, &format!("- ({}) Remplacé : « {} » par « {} »", today(), ancienne.trim().trim_start_matches("- "), fait.trim()))?;
+    Ok(nouvelle)
+}
+
+/// Bouton Annuler de Conscience : l'ancienne ligne reprend la place de la nouvelle, et l'annulation
+/// est notée dans `historique.md`.
+pub fn annuler_remplacement(paths: &Paths, ancienne: &str, nouvelle: &str) -> anyhow::Result<()> {
+    let texte = remplacer_ligne(&read_main(paths), nouvelle, ancienne)
+        .ok_or_else(|| anyhow::anyhow!("la ligne « {} » a changé depuis : rétablis l'ancienne à la main (elle est dans historique.md)", nouvelle.trim().trim_start_matches("- ")))?;
+    std::fs::write(paths.main_memory(), texte)?;
+    noter_historique(paths, &format!("- ({}) Annulé par PB : « {} » rétabli à la place de « {} »", today(), ancienne.trim().trim_start_matches("- "), nouvelle.trim().trim_start_matches("- ")))?;
+    Ok(())
+}
+
+/// Plafond des missions gardées dans la fiche d'un agent, et nombre condensé d'un coup (lot M3).
+pub const MISSIONS_MAX: usize = 50;
+const MISSIONS_A_CONDENSER: usize = 25;
+
+fn lignes_de_section(texte: &str, section: &str) -> Vec<String> {
+    let mut dedans = false;
+    let mut out = vec![];
+    for l in texte.lines() {
+        if let Some(h) = l.trim().strip_prefix("## ") {
+            dedans = h.trim() == section;
+        } else if dedans && l.trim().starts_with("- ") {
+            out.push(l.trim().to_string());
+        }
+    }
+    out
+}
+
+/// Missions d'un agent au-delà de 50 lignes : les 25 plus anciennes, à condenser (lot M3).
+pub fn missions_a_condenser(paths: &Paths, agent_id: &str) -> Option<Vec<String>> {
+    let missions = lignes_de_section(&agent_memory_text(paths, agent_id), "Missions");
+    (missions.len() > MISSIONS_MAX).then(|| missions.into_iter().take(MISSIONS_A_CONDENSER).collect())
+}
+
+/// Retire les missions condensées de la fiche de l'agent, les range au niveau froid
+/// (`memoire/archives/agents/<id>_<date>.md`) et ajoute les apprentissages tirés d'elles.
+/// Renvoie le fichier froid.
+pub fn condenser_missions(paths: &Paths, agent_id: &str, retirees: &[String], apprentissages: &[String]) -> anyhow::Result<std::path::PathBuf> {
+    let dossier = paths.archives.join("agents");
+    std::fs::create_dir_all(&dossier)?;
+    let froid = dossier.join(format!("{}_{}.md", crate::paths::safe_name(agent_id), today()));
+    let mut f = std::fs::read_to_string(&froid).unwrap_or_else(|_| format!("# Missions condensées de {agent_id}\n\n> Lignes complètes retirées de memoire/agents/{agent_id}.md (plus de {MISSIONS_MAX} missions), lot M3.\n\n"));
+    for l in retirees {
+        f.push_str(l.trim());
+        f.push('\n');
+    }
+    std::fs::write(&froid, f)?;
+    // fiche : lignes retirées (une fois chacune), puis les apprentissages
+    let fiche = paths.agent_memory(agent_id);
+    let contenu = std::fs::read_to_string(&fiche)?;
+    let mut restantes: Vec<&str> = retirees.iter().map(|r| r.trim()).collect();
+    let garde: Vec<&str> = contenu
+        .lines()
+        .filter(|l| match restantes.iter().position(|r| *r == l.trim()) {
+            Some(i) => {
+                restantes.remove(i);
+                false
+            }
+            None => true,
+        })
+        .collect();
+    let mut texte = garde.join("\n");
+    texte.push('\n');
+    let date = |l: &String| l.trim_start_matches("- (").get(..10).unwrap_or("").to_string();
+    let periode = match (retirees.first(), retirees.last()) {
+        (Some(a), Some(b)) => format!("du {} au {}", date(a), date(b)),
+        _ => String::new(),
+    };
+    for a in apprentissages.iter().filter(|a| !a.trim().is_empty()) {
+        texte = insert_in_section(&texte, "Apprentissages", &format!("- ({}) {} [tiré de {} missions condensées, {periode}]", today(), a.trim(), retirees.len()));
+    }
+    std::fs::write(&fiche, texte)?;
+    Ok(froid)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dossier() -> (Paths, std::path::PathBuf) {
+        let racine = std::env::temp_dir().join(format!("orchestra-m3-{}", &uuid::Uuid::new_v4().to_string()[..8]));
+        let p = Paths::at(racine.clone()).unwrap();
+        std::fs::write(
+            p.main_memory(),
+            "# Mémoire\n\n## Utilisateur\n- (2026-10-26) PB habite à Annecy.\n- (2026-10-27) PB est allergique aux arachides.\n\n## Connaissances\n- (2026-10-25) Ollama tourne sur le port 11434.\n",
+        )
+        .unwrap();
+        (p, racine)
+    }
+
+    #[test]
+    fn fait_remplace_garde_sa_place_et_part_dans_l_historique() {
+        let (p, racine) = dossier();
+        let nouvelle = remplacer_fait(&p, "- (2026-10-26) PB habite à Annecy.", "PB habite maintenant à Lyon.").unwrap();
+        assert_eq!(nouvelle, format!("- ({}) PB habite maintenant à Lyon.", today()));
+        let m = read_main(&p);
+        assert!(!m.contains("Annecy"), "{m}");
+        // même place : avant l'allergie, dans la section Utilisateur
+        assert!(m.find("Lyon").unwrap() < m.find("arachides").unwrap(), "{m}");
+        let h = std::fs::read_to_string(historique(&p)).unwrap();
+        assert!(h.contains("(2026-10-26) PB habite à Annecy.") && h.contains("PB habite maintenant à Lyon.") && h.contains(&today()), "{h}");
+        // ligne absente : rien n'est touché
+        assert!(remplacer_fait(&p, "- (2026-01-01) Inconnue.", "x").is_err());
+        let _ = std::fs::remove_dir_all(racine);
+    }
+
+    #[test]
+    fn annuler_un_remplacement() {
+        let (p, racine) = dossier();
+        let nouvelle = remplacer_fait(&p, "- (2026-10-26) PB habite à Annecy.", "PB habite maintenant à Lyon.").unwrap();
+        annuler_remplacement(&p, "- (2026-10-26) PB habite à Annecy.", &nouvelle).unwrap();
+        let m = read_main(&p);
+        assert!(m.contains("- (2026-10-26) PB habite à Annecy.") && !m.contains("Lyon"), "{m}");
+        let h = std::fs::read_to_string(historique(&p)).unwrap();
+        assert!(h.lines().any(|l| l.contains("Annulé") && l.contains("Annecy")), "{h}");
+        // la nouvelle ligne a été modifiée à la main depuis : on ne devine pas
+        assert!(annuler_remplacement(&p, "- (2026-10-26) PB habite à Annecy.", &nouvelle).is_err());
+        let _ = std::fs::remove_dir_all(racine);
+    }
+
+    #[test]
+    fn missions_au_dela_de_50_condensees() {
+        let (p, racine) = dossier();
+        let m = Manifest { id: "agent-x".into(), name: "X".into(), ..Default::default() };
+        ensure_agent_memory(&p, &m).unwrap();
+        for i in 0..50 {
+            append_agent_mission(&p, &m, &format!("mission {i}"), "termine", &[]).unwrap();
+        }
+        assert!(missions_a_condenser(&p, "agent-x").is_none(), "50 lignes : sous le plafond");
+        append_agent_mission(&p, &m, "mission 50", "termine", &[]).unwrap();
+        let vieilles = missions_a_condenser(&p, "agent-x").expect("51 lignes : au-delà du plafond");
+        assert_eq!(vieilles.len(), 25);
+        assert!(vieilles[0].contains("mission 0 ") && vieilles[24].contains("mission 24 "), "{vieilles:?}");
+        let froid = condenser_missions(&p, "agent-x", &vieilles, &["Les missions de tri réussissent quand la boîte est indiquée.".into()]).unwrap();
+        let fiche = agent_memory_text(&p, "agent-x");
+        assert!(!fiche.contains("mission 0 ") && fiche.contains("mission 25 ") && fiche.contains("mission 50 "), "{fiche}");
+        assert!(fiche.contains("Les missions de tri réussissent") && fiche.contains("25 missions"), "{fiche}");
+        let f = std::fs::read_to_string(&froid).unwrap();
+        assert!(froid.starts_with(p.archives.join("agents")) && f.contains("mission 0 ") && f.contains("mission 24 "), "{f}");
+        assert!(missions_a_condenser(&p, "agent-x").is_none());
+        let _ = std::fs::remove_dir_all(racine);
+    }
 }

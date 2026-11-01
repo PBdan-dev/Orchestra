@@ -29,7 +29,10 @@ Orchestra/
     orchestra.md              mémoire principale (faits datés, par section)
     agents/<id>.md            une mémoire par agent (missions, apprentissages)
     archives/AAAA-MM-JJ.md    conversations brutes
+    archives/agents/          missions condensées des agents (lignes complètes, lot M3)
     sessions/                 résumés de conversation (lot C), modifiables
+    resumes/AAAA-MM-JJ.md     résumé de chaque journée (lot M3), modifiable
+    historique.md             faits remplacés par la consolidation, avec leur date (lot M3)
     .index.bin                index du rappel : vecteurs et usage (supprimable, il se reconstruit)
   agents/
     registre-local.json       catalogue local (même format que l'Agent Market)
@@ -77,6 +80,12 @@ L'Agent Market doit exposer `GET <url>/agents.json` (ou l'URL directe d'un `.jso
 - **Outil `retrouver`** : résumés de conversation d'abord, puis les archives des seuls jours visés.
 - **Mesure** : `cargo run --release --example mesure_rappel` (jeu `eval/rappel.jsonl`, rapport dans `Orchestra/eval/rappel-<date>.md`).
 
+## Mémoire : la propreté (lot M3)
+
+- **Consolidation à l'écriture** (`consolidation.rs`) : avant d'écrire un fait, ses 5 voisins dans `orchestra.md` (par les mots et par le sens). Si l'un est très proche (la moitié de ses mots et 2 au moins, ou un sens à 75 %), le cerveau décide en sortie contrainte : ajouter, remplacer la ligne N ou ignorer. Au moindre doute, ajouter. Une ligne remplacée part dans `memoire/historique.md` ; Conscience affiche « Fait mis à jour » avec un bouton Annuler.
+- **Entretien à l'inactivité** (`entretien.rs`), dans le créneau de la compaction (2 min sans rien dire), abandonné dès qu'on reparle, et seulement si le cerveau est déjà chargé : résumé de chaque journée passée dans `memoire/resumes/AAAA-MM-JJ.md` (7 jours en arrière, 2 par créneau) ; au-delà de 50 missions dans la fiche d'un agent, les 25 plus anciennes condensées en 1 à 3 apprentissages, les lignes complètes rangées dans `memoire/archives/agents/`.
+- **Essai** : `cargo run --release --example essai_consolidation` (8 cas avec le vrai modèle, rapport dans `Orchestra/eval/consolidation-<date>.md`).
+
 ## Sécurité (lot S)
 
 Principe : un modèle peut toujours se faire piéger ; le code d'Orchestra doit tenir quand même.
@@ -110,6 +119,8 @@ src-tauri/src/       cœur Rust
   brain.rs           fournisseurs de modèles (streaming)
   memory.rs          fichiers .md, profil, mémorisation
   index.rs           index du rappel (mots, sens, fraîcheur, usage)
+  consolidation.rs   ajouter, remplacer ou ignorer un nouveau fait
+  entretien.rs       résumés du jour et missions condensées, à l'inactivité
   agents.rs          manifestes, registre, installation
   market.rs          Agent Market (abstrait) + repli local
   tools.rs           outils des agents (cantonnés à l'espace de travail)

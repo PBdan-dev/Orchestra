@@ -115,6 +115,21 @@ async function scenarioSecurite(run_id: string) {
   emit({ type: "lecture_a_confirmer", run_id, cle: `${run_id}#lecture-1`, url: "https://exemple.org/suite?ref=page", raison: "Adresse que tu n'as pas écrite, proposée après la lecture d'un contenu extérieur (page, compte rendu d'agent ou fichier). Une adresse peut emporter des données : ne l'autorise que si tu la reconnais." });
 }
 
+/** Démo navigateur du lot M3 : un fait plus récent remplace une ligne de la mémoire (bouton Annuler). */
+async function scenarioRemplacement(run_id: string) {
+  const ancien = "- (2026-10-25) PB aime les interfaces épurées et animées.";
+  const nouveau = "- (2026-11-01) PB préfère maintenant les interfaces sobres, sans animation.";
+  emit({ type: "phase", run_id, phase: "speaking", label: "Je réponds" });
+  await stream(run_id, "C'est noté : des interfaces sobres, sans animation.", "token", 28);
+  emit({ type: "phase", run_id, phase: "memorizing", label: "Je retiens l'essentiel" });
+  await sleep(500);
+  memory = memory.replace(ancien, nouveau);
+  emit({ type: "thought", run_id, text: `🧹 Fait mis à jour : « ${nouveau.slice(2)} » remplace « ${ancien.slice(2)} » — même sujet, préférence changée (l'ancien est gardé dans historique.md).\n` });
+  emit({ type: "fait_remplace", run_id, section: "Préférences", ancien, nouveau, raison: "même sujet, préférence changée" });
+  emit({ type: "done", run_id, answer: "C'est noté : des interfaces sobres, sans animation.", intent: "discussion" });
+  emit({ type: "phase", run_id, phase: "idle", label: "" });
+}
+
 async function finMissionDemo(cle: string, accepte: boolean, portee: string) {
   const run_id = missionDemo?.run_id ?? "demo";
   const mission_id = cle.split("#")[0];
@@ -154,6 +169,10 @@ export const mockApi = {
     emit({ type: "token", run_id, text: "L'agent a rendu son travail. J'ai relevé une tentative de consigne dans son compte rendu et des fichiers d'Orchestra modifiés : tout est signalé dans Conscience." });
     emit({ type: "done", run_id, answer: "", intent: "travail" });
     emit({ type: "phase", run_id, phase: "idle", label: "" });
+  },
+  annulerRemplacement: async (ancien: string, nouveau: string) => {
+    if (!memory.includes(nouveau)) throw new Error("la ligne a changé depuis : rétablis l'ancienne à la main (elle est dans historique.md)");
+    memory = memory.replace(nouveau, ancien);
   },
   detectBrain: async (): Promise<BrainInfo> => ({ provider: "ollama", model: "qwen3.5:9b", online: true, models: ["qwen3.5:9b", "qwen3.6:27b"], detail: mockLoaded ? "modèle chargé, prêt" : "modèle non chargé", loaded: mockLoaded, state: mockLoaded ? "ready" : "not_loaded" }),
   loadModel: async (): Promise<BrainInfo> => { await sleep(2500); mockLoaded = true; return mockApi.detectBrain(); },
@@ -198,7 +217,7 @@ export const mockApi = {
   identifiantsAgent: async (id: string) => idsDemo[id] ?? [],
   enregistrerIdentifiant: async (id: string, nom: string) => { (idsDemo[id] ?? []).forEach((i) => { if (i.nom === nom) i.present = true; }); },
   uninstallAgent: async (id: string) => { mockInstalled = mockInstalled.filter((a) => a.id !== id); },
-  sendMessage: async (text: string) => { const id = Math.random().toString(36).slice(2, 8); setTimeout(() => (/supprime/i.test(text) ? scenarioMission(id) : /pi[eè]ge/i.test(text) ? scenarioSecurite(id) : scenario(id, text)), 300); return id; },
+  sendMessage: async (text: string) => { const id = Math.random().toString(36).slice(2, 8); setTimeout(() => (/supprime/i.test(text) ? scenarioMission(id) : /pi[eè]ge/i.test(text) ? scenarioSecurite(id) : /sobre/i.test(text) ? scenarioRemplacement(id) : scenario(id, text)), 300); return id; },
   listAgents: async () => ({ installed: mockInstalled.slice(), registry: [redacteur, fichiers] }),
   marketPreview: async () => { throw new Error("démo : pas de Market"); },
   memoryTree: async (): Promise<MemoryFile[]> => [{ name: "orchestra.md", rel: "memoire/orchestra.md", kind: "principal", size: memory.length, modified: "26/10/2026 00:12" }],

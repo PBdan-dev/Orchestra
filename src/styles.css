@@ -194,6 +194,12 @@ pre { margin: 0; font-family: var(--mono); font-size: 12px; white-space: pre-wra
 .card.memorized { border-color: rgba(74,222,128,0.35); background: linear-gradient(160deg, rgba(74,222,128,0.09), transparent); }
 .card.memorized .card-head { color: #86efac; }
 .mem-line { font-family: var(--mono); font-size: 11.5px; color: #d1fae5; }
+/* lot M3 : fait remplacé par la consolidation, avec Annuler */
+.card.remplace .mem-line.ancien { color: #94a3b8; text-decoration: line-through; }
+.card.remplace.annule .mem-line.ancien { text-decoration: none; color: #d1fae5; }
+.card.remplace.annule .mem-line:not(.ancien) { text-decoration: line-through; color: #94a3b8; }
+.remplace-pied { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+.avert-text { color: #fcd34d; margin-top: 4px; }
 .card.error { border-color: rgba(248,113,113,0.4); background: rgba(248,113,113,0.07); }
 .card.error .card-head { color: var(--err); }
 

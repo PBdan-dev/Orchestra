@@ -32,7 +32,7 @@ export function Conscience() {
 
   const counts = {
     recalled: entries.filter((e) => e.kind === "recall").reduce((n, e) => n + (e as any).items.length, 0),
-    memorized: entries.filter((e) => e.kind === "memorized").length,
+    memorized: entries.filter((e) => e.kind === "memorized" || e.kind === "remplace").length,
     tools: entries.filter((e) => e.kind === "tool").length,
   };
 
@@ -165,6 +165,8 @@ function EntryView({ e, streaming, agentName, agentIcon }: { e: Entry; streaming
           <div className="mem-line">{e.line}</div>
         </div>
       );
+    case "remplace":
+      return <RemplaceCard e={e} />;
     case "nothing":
       return <div className="entry muted"><span className="t">{time(e.at)}</span><I.save size={12} /> Rien de durable à retenir de cet échange.</div>;
     case "mission":
@@ -174,6 +176,31 @@ function EntryView({ e, streaming, agentName, agentIcon }: { e: Entry; streaming
     case "error":
       return <div className="card error"><div className="card-head"><I.alert size={13} /> Erreur</div><div className="small">{e.message}</div></div>;
   }
+}
+
+/** Lot M3 : un fait plus récent a remplacé une ligne de la mémoire ; PB peut annuler (D21). */
+function RemplaceCard({ e }: { e: Extract<Entry, { kind: "remplace" }> }) {
+  const annuler = useStore((s) => s.annulerRemplacement);
+  const [enCours, setEnCours] = useState(false);
+  return (
+    <div className={`card memorized remplace ${e.etat === "annule" ? "annule" : ""}`}>
+      <div className="card-head"><I.save size={13} /> Fait mis à jour dans <code>orchestra.md</code> › {e.section}</div>
+      <div className="mem-line ancien">{e.ancien}</div>
+      <div className="mem-line">{e.nouveau}</div>
+      {e.raison && <div className="small muted">{e.raison}</div>}
+      <div className="remplace-pied">
+        {e.etat === "annule" ? (
+          <span className="small">Annulé : l'ancienne ligne est revenue.</span>
+        ) : (
+          <>
+            <span className="small muted">L'ancienne ligne est gardée dans historique.md.</span>
+            <button className="glass-btn sm" disabled={enCours} onClick={async () => { setEnCours(true); await annuler(e.id); setEnCours(false); }}>Annuler</button>
+          </>
+        )}
+      </div>
+      {e.etat === "erreur" && <div className="small avert-text">{e.detail}</div>}
+    </div>
+  );
 }
 
 function ThoughtView({ text, streaming }: { text: string; streaming: boolean }) {

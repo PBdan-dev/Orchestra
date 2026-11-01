@@ -4,7 +4,11 @@ pub mod brain;
 pub mod coffre;
 pub mod compaction;
 pub mod config;
+pub mod consolidation;
 pub mod contrat;
+pub mod entretien;
+#[cfg(test)]
+mod essais;
 pub mod evaluation;
 pub mod integrite;
 pub mod installation;
@@ -357,6 +361,7 @@ fn memoire_graphique() -> CmdResult<MemoireGraphique> {
 
 /// Compaction de la conversation à l'inactivité (lot C) : l'interface l'appelle après 2 min sans
 /// saisie, sans parole et sans mission. Sans effet si Orchestra travaille ou s'il n'y a rien à résumer.
+/// Suivie de l'entretien de la mémoire (lot M3) : résumés des jours passés, missions condensées.
 #[tauri::command]
 fn compacter(app: AppHandle, state: State<AppState>, history: Vec<Msg>) -> bool {
     if state.busy.load(std::sync::atomic::Ordering::SeqCst) || state.pilote.mission_en_cours().is_some() {
@@ -371,6 +376,12 @@ fn compacter(app: AppHandle, state: State<AppState>, history: Vec<Msg>) -> bool 
     *c = Some(tauri::async_runtime::spawn(async move {
         if let Err(e) = orchestrator::compacter_session(&a, &cfg, &http, &paths, &session, &history).await {
             events::emit(&a, events::Event::Compaction { etat: "erreur".into(), detail: format!("Résumé de la conversation impossible : {e}") });
+        }
+        // lot M3 : entretien de la mémoire dans le même créneau, seulement si le cerveau est déjà en
+        // mémoire (jamais de chargement de modèle pour l'entretien)
+        let mut brain = Brain::new(cfg.clone(), http.clone());
+        if brain.detect().await.loaded {
+            entretien::entretenir(&a, &brain, &paths, chrono::Local::now().date_naive()).await;
         }
         if let Some(st) = a.try_state::<AppState>() {
             st.compaction.lock().unwrap().take();
@@ -509,6 +520,15 @@ fn write_text_file(state: State<AppState>, rel: String, content: String) -> CmdR
     let p = safe_path(&state, &rel)?;
     noter(&state, &[p.clone()]);
     std::fs::write(p, content).map_err(err)
+}
+
+/// Bouton Annuler d'un fait remplacé par la consolidation (lot M3, D21).
+#[tauri::command]
+fn annuler_remplacement(state: State<AppState>, ancien: String, nouveau: String) -> CmdResult<()> {
+    noter(&state, &[state.paths.main_memory(), memory::historique(&state.paths)]);
+    memory::annuler_remplacement(&state.paths, &ancien, &nouveau).map_err(err)?;
+    index::vectoriser_en_fond(&state.paths);
+    Ok(())
 }
 
 #[tauri::command]
@@ -785,6 +805,7 @@ pub fn run() {
             memory_tree,
             read_text_file,
             write_text_file,
+            annuler_remplacement,
             list_journal_days,
             read_journal,
             get_paths,

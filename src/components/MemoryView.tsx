@@ -38,6 +38,8 @@ export function MemoryView() {
   const groups: [string, MemoryFile[]][] = [
     ["Mémoire principale", files.filter((f) => f.kind === "principal")],
     ["Agents", files.filter((f) => f.kind === "agent")],
+    ["Résumés", files.filter((f) => f.kind === "resume")],
+    ["Historique des faits remplacés", files.filter((f) => f.kind === "historique")],
     ["Archives de conversations", files.filter((f) => f.kind === "archive")],
   ];
   const dirty = text !== orig;

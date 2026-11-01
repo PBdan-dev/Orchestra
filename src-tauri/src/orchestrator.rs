@@ -1252,9 +1252,21 @@ async fn memorize(out: &dyn Sortie, run_id: &str, brain: &Brain, paths: &crate::
         if fact.len() < 4 { continue; }
         // évite les doublons exacts
         if memory::read_main(paths).contains(fact) { continue; }
-        if let Ok(line) = memory::append_fact(paths, section, fact) {
-            count += 1;
-            emit(out, Event::Memorized { run_id: run_id.into(), file: "orchestra.md".into(), section: section.into(), line });
+        // lot M3 : consolidation avec les 5 faits les plus proches (ajouter, remplacer, ignorer)
+        match crate::consolidation::ecrire(Some(brain), paths, section, fact, std::time::Duration::from_secs(3)).await {
+            Ok(crate::consolidation::Issue::Ajoute { ligne }) => {
+                count += 1;
+                emit(out, Event::Memorized { run_id: run_id.into(), file: "orchestra.md".into(), section: section.into(), line: ligne });
+            }
+            Ok(crate::consolidation::Issue::Remplace { ancien, nouveau, raison }) => {
+                count += 1;
+                thought(out, run_id, format!("🧹 Fait mis à jour : « {} » remplace « {} »{} (l'ancien est gardé dans historique.md).\n", nouveau.trim_start_matches("- "), ancien.trim_start_matches("- "), if raison.is_empty() { String::new() } else { format!(" — {raison}") }));
+                emit(out, Event::FaitRemplace { run_id: run_id.into(), section: section.into(), ancien, nouveau, raison });
+            }
+            Ok(crate::consolidation::Issue::Ignore { deja }) => {
+                thought(out, run_id, format!("🧹 Déjà en mémoire : « {deja} ». Rien ajouté.\n"));
+            }
+            Err(e) => thought(out, run_id, format!("⚠ Fait non écrit : {e}\n")),
         }
     }
     if let Some(m) = agent {

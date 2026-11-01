@@ -30,6 +30,9 @@ pub enum Event {
     Memorized { run_id: String, file: String, section: String, line: String },
     /// Rien à retenir de durable
     NothingToMemorize { run_id: String },
+    /// Consolidation (lot M3) : une ligne de `orchestra.md` remplacée par un fait plus récent ;
+    /// l'ancienne est dans `historique.md`, Conscience propose Annuler.
+    FaitRemplace { run_id: String, section: String, ancien: String, nouveau: String, raison: String },
     /// Fin de traitement
     Done { run_id: String, answer: String, intent: String, message_historique: String },
     /// Coupe de texte (historique trop long, profil trop long) : jamais silencieuse

@@ -15,6 +15,7 @@ const real = {
   supprimerCle: (fournisseur: string) => invoke<void>("supprimer_cle", { fournisseur }),
   /** Choix B1 (lot S-a) : PB autorise ou non la lecture d'une adresse qu'il n'a pas écrite. */
   confirmerLecture: (cle: string, accepte: boolean) => invoke<void>("confirmer_lecture", { cle, accepte }),
+  annulerRemplacement: (ancien: string, nouveau: string) => invoke<void>("annuler_remplacement", { ancien, nouveau }),
   detectBrain: () => invoke<BrainInfo>("detect_brain"),
   loadModel: () => invoke<BrainInfo>("load_model"),
   installAgent: (id: string) => invoke<Installation>("install_agent", { id }),

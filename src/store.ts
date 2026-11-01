@@ -116,6 +116,8 @@ interface State {
   /** Lectures web à confirmer par PB (choix B1) : le tour attend sa réponse. */
   lecturesAConfirmer: LectureAConfirmer[];
   confirmerLecture: (cle: string, accepte: boolean) => Promise<void>;
+  /** Lot M3 : défait le remplacement d'un fait par la consolidation (bouton Annuler de Conscience). */
+  annulerRemplacement: (id: string) => Promise<void>;
   /** Demandes tapées pendant qu'Orchestra travaille : envoyées une à une ensuite (mode série, lot T7). */
   fileAttente: string[];
   /** Mission en cours (lot T7) : pilotable depuis sa carte. */
@@ -242,6 +244,18 @@ export const useStore = create<State>((set, get) => ({
     await api.confirmerLecture(cle, accepte);
     set((s) => ({ lecturesAConfirmer: s.lecturesAConfirmer.filter((l) => l.cle !== cle) }));
   },
+  annulerRemplacement: async (id) => {
+    const e = get().entries.find((x) => x.id === id);
+    if (!e || e.kind !== "remplace" || e.etat === "annule") return;
+    const maj = (etat: "annule" | "erreur", detail?: string) =>
+      set((s) => ({ entries: s.entries.map((x) => (x.id === id && x.kind === "remplace" ? { ...x, etat, detail } : x)) }));
+    try {
+      await api.annulerRemplacement(e.ancien, e.nouveau);
+      maj("annule");
+    } catch (err) {
+      maj("erreur", String(err));
+    }
+  },
   fileAttente: [],
   missionEnCours: null,
   retirerDeLaFile: (i) => set((s) => ({ fileAttente: s.fileAttente.filter((_, k) => k !== i) })),
@@ -318,8 +332,8 @@ export const useStore = create<State>((set, get) => ({
           const st = get();
           const parle = st.voiceUser || st.phase === "speaking";
           if (compactionDemandee || st.busy || st.missionEnCours || parle || Date.now() - derniereActivite < INACTIVITE_MS) return;
+          // le cœur décide : résumé de la conversation s'il y a de quoi, puis entretien de la mémoire (lot M3)
           const h = historyOf(st.messages);
-          if (h.length < 4) return;
           compactionDemandee = true;
           api.compacter(h).catch(() => {});
         }, 15_000);
@@ -868,6 +882,10 @@ export const useStore = create<State>((set, get) => ({
         break;
       case "nothing_to_memorize":
         push({ kind: "nothing", id: uid(), runId: e.run_id, at: now });
+        break;
+      case "fait_remplace":
+        push({ kind: "remplace", id: uid(), runId: e.run_id, at: now, section: e.section, ancien: e.ancien, nouveau: e.nouveau, raison: e.raison });
+        live.pulse(0.4);
         break;
       case "done": {
         const agent = Object.values(get().agents).find((a) => a.runId === e.run_id && !a.parent && (a.status === "done" || a.status === "error"));

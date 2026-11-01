@@ -371,6 +371,60 @@ pub async fn rappeler(paths: &Paths, requete: &str, max: usize, exclure: &str, d
     resultats
 }
 
+/// Fait voisin d'un nouveau fait (consolidation, lot M3).
+#[derive(Clone, Debug)]
+pub struct Voisin {
+    pub section: String,
+    /// Texte de la ligne sans le tiret (« (date) fait »).
+    pub texte: String,
+    /// Part des mots utiles du nouveau fait retrouvés dans celui-ci (radicaux de 5 lettres compris).
+    pub mots: f32,
+    pub communs: usize,
+    /// Similarité de sens, si les deux vecteurs existent.
+    pub sens: Option<f32>,
+}
+
+/// Les `n` faits de `orchestra.md` les plus proches d'un texte, par les mots et par le sens.
+pub async fn voisins(paths: &Paths, texte: &str, n: usize, delai_sens: Duration) -> Vec<Voisin> {
+    let sens = {
+        let mut g = INDEX.lock().unwrap_or_else(|e| e.into_inner());
+        let e = g.entry(paths.root.clone()).or_default();
+        rafraichir(paths, e);
+        e.sens.clone()
+    };
+    // vecteur du nouveau fait, calculé comme ceux des faits (sans consigne de question)
+    let vecteur = if sens.actif && !texte.trim().is_empty() && !delai_sens.is_zero() {
+        tokio::time::timeout(delai_sens, plonger(&sens, &[texte.to_string()], delai_sens + Duration::from_millis(50)))
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .and_then(|mut v| v.pop().flatten())
+    } else {
+        None
+    };
+    let mots_du_fait = crate::memory::keywords(texte);
+    let radical = |m: &str| m.chars().take(5).collect::<String>();
+    let g = INDEX.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(e) = g.get(&paths.root) else { return vec![] };
+    let mut out: Vec<Voisin> = e
+        .faits
+        .iter()
+        .filter(|f| f.fichier == "orchestra.md")
+        .map(|f| {
+            let siens = crate::memory::keywords(&f.texte);
+            let communs = mots_du_fait.iter().filter(|m| siens.iter().any(|s| s == *m || (m.chars().count() >= 5 && s.starts_with(&radical(m))))).count();
+            let mots = if mots_du_fait.is_empty() { 0.0 } else { communs as f32 / mots_du_fait.len() as f32 };
+            let sens = vecteur.as_ref().and_then(|vq| e.vecteurs.get(&f.cle).map(|vf| similarite(vq, vf)));
+            Voisin { section: f.section.clone(), texte: f.texte.clone(), mots, communs, sens }
+        })
+        .filter(|v| v.communs > 0 || v.sens.is_some_and(|s| s >= SEUIL_SENS))
+        .collect();
+    let note = |v: &Voisin| v.mots.max(v.sens.unwrap_or(0.0));
+    out.sort_by(|a, b| note(b).partial_cmp(&note(a)).unwrap_or(std::cmp::Ordering::Equal));
+    out.truncate(n);
+    out
+}
+
 /// Après la réponse : un fait rappelé dont la réponse reprend au moins deux mots est « utilisé ».
 pub fn noter_utilisation(paths: &Paths, rappeles: &[Recalled], reponse: &str) {
     let r: std::collections::HashSet<String> = crate::memory::keywords(reponse).into_iter().collect();
@@ -736,6 +790,28 @@ mod tests {
         let r = rappeler(&p, "Sur quel port écoute le serveur voix ?", 6, "", Duration::from_millis(500)).await;
         assert!(r.first().is_some_and(|x| x.text.contains("8765")), "{r:?}");
         assert!(r.iter().all(|x| !x.reason.contains("sens")));
+        let _ = std::fs::remove_dir_all(racine);
+    }
+
+    #[tokio::test]
+    async fn voisins_d_un_nouveau_fait() {
+        let (p, racine) = dossier();
+        ecrire_memoire(&p);
+        // par les mots seuls
+        configurer(&p, Sens::default());
+        let v = voisins(&p, "Le serveur voix écoute maintenant sur le port 8800.", 5, Duration::ZERO).await;
+        let premier = v.first().unwrap_or_else(|| panic!("{v:?}"));
+        assert!(premier.texte.contains("8765") && premier.communs >= 3 && premier.mots >= 0.5 && premier.sens.is_none(), "{v:?}");
+        assert!(v.iter().all(|x| !x.texte.contains("Rédige") && !x.texte.contains("agent-brouillons")), "seulement orchestra.md, hors sections internes : {v:?}");
+        assert!(v.len() <= 5);
+        // par le sens : aucun mot commun avec le fait de l'allergie
+        let appels = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let url = faux_ollama(appels).await;
+        configurer(&p, Sens { actif: true, url, modele: "faux".into() });
+        vectoriser(&p).await;
+        let v = voisins(&p, "Interdit de manger des cacahuètes.", 5, Duration::from_secs(5)).await;
+        let a = v.iter().find(|x| x.texte.contains("arachides")).unwrap_or_else(|| panic!("{v:?}"));
+        assert!(a.sens.is_some_and(|s| s > 0.9), "{a:?}");
         let _ = std::fs::remove_dir_all(racine);
     }
 

@@ -55,6 +55,7 @@ export type OrchestraEvent =
   | { type: "token"; run_id: string; text: string }
   | { type: "memorized"; run_id: string; file: string; section: string; line: string }
   | { type: "nothing_to_memorize"; run_id: string }
+  | { type: "fait_remplace"; run_id: string; section: string; ancien: string; nouveau: string; raison: string }
   | { type: "done"; run_id: string; answer: string; intent: string; message_historique?: string }
   | { type: "coupe"; run_id: string; quoi: string; detail: string }
   | { type: "avertissement"; run_id: string; message: string }
@@ -225,6 +226,7 @@ export type Entry =
   | { kind: "tool"; id: string; runId: string; at: number; agentId: string; tool: string; input: unknown; output: string }
   | { kind: "memorized"; id: string; runId: string; at: number; file: string; section: string; line: string }
   | { kind: "nothing"; id: string; runId: string; at: number }
+  | { kind: "remplace"; id: string; runId: string; at: number; section: string; ancien: string; nouveau: string; raison: string; etat?: "annule" | "erreur"; detail?: string }
   | { kind: "error"; id: string; runId: string; at: number; message: string }
   | { kind: "avertissement"; id: string; runId: string; at: number; message: string }
   | { kind: "user"; id: string; runId: string; at: number; text: string }
@@ -233,7 +235,7 @@ export type Entry =
 export interface MemoryFile {
   name: string;
   rel: string;
-  kind: "principal" | "agent" | "archive";
+  kind: "principal" | "agent" | "archive" | "resume" | "historique";
   size: number;
   modified: string;
 }
