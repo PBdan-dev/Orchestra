@@ -49,7 +49,8 @@ function summary(ev: any): string {
     case "tool_call": return `${ev.agent_id} · ${ev.tool}(${JSON.stringify(ev.input)}) → ${String(ev.output).slice(0, 160)}`;
     case "memorized": return `${ev.file} › ${ev.section} : ${ev.line}`;
     case "nothing_to_memorize": return "rien à retenir";
-    case "done": return `[${ev.intent}] ${String(ev.answer).slice(0, 200)}`;
+    // lot M1 : la réponse entière est dans l'archive de la conversation, le journal n'en garde qu'un aperçu
+    case "done": return `[${ev.intent}] ${ev.apercu ?? String(ev.answer ?? "").slice(0, 200)}${ev.archive ? ` (en entier : ${ev.archive})` : ""}`;
     case "error": return ev.message;
     default: return JSON.stringify(ev).slice(0, 200);
   }
