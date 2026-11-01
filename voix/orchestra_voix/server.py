@@ -207,13 +207,17 @@ async def modele_vocal(s: C.VoiceSettings, base: str) -> str:
         return base
 
 
-RAPPEL_DELAI_S = 0.05  # D2 : au-delà de 50 ms, réponse sans souvenirs
+# D2, puis choix de PB du 01/11 (lot M2) : le rappel par le sens est attendu en voix (le vecteur de
+# la question prend 75 à 100 ms sur le processeur, le cœur s'arrête à 150 ms) ; au-delà de 200 ms,
+# réponse sans souvenirs. ORCHESTRA_RAPPEL_DELAI_S permet de mesurer un autre budget.
+RAPPEL_DELAI_S = float(os.environ.get("ORCHESTRA_RAPPEL_DELAI_S", "0.2"))
 _client_rappel = None  # un seul client, créé une fois (créer un client httpx coûte ≈ 200 ms)
 
 
 async def souvenirs(texte: str) -> str:
-    """Souvenirs utiles pour la phrase, demandés au cœur d'Orchestra (même rappel qu'en chat).
-    50 ms au plus en tout ; au-delà ou en cas d'erreur, réponse sans souvenirs, noté au journal."""
+    """Souvenirs utiles pour la question, demandés au cœur d'Orchestra (même rappel qu'en chat), une
+    fois par question. 200 ms au plus en tout ; au-delà ou en cas d'erreur, réponse sans souvenirs,
+    noté au journal."""
     global _client_rappel
     url, jeton = os.environ.get("ORCHESTRA_RAPPEL_URL"), os.environ.get("ORCHESTRA_RAPPEL_JETON")
     if not url or not jeton:

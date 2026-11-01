@@ -45,6 +45,42 @@ pub async fn faux_chat(reponses: Vec<String>) -> (String, Arc<Mutex<Vec<Value>>>
     (url, vues)
 }
 
+/// Faux `/api/embed` qui met `delai` à répondre, avec le même vecteur pour tous les textes
+/// (tout est « proche par le sens ») : pour vérifier qu'un budget de temps laisse passer le sens.
+pub async fn faux_embed_lent(delai: std::time::Duration) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let ecoute = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", ecoute.local_addr().unwrap());
+    tokio::spawn(async move {
+        while let Ok((mut flux, _)) = ecoute.accept().await {
+            tokio::spawn(async move {
+                let mut buf = vec![0u8; 1 << 20];
+                let mut lu = 0;
+                let corps = loop {
+                    let n = flux.read(&mut buf[lu..]).await.unwrap_or(0);
+                    if n == 0 {
+                        break String::new();
+                    }
+                    lu += n;
+                    let t = String::from_utf8_lossy(&buf[..lu]).to_string();
+                    if let Some((tete, reste)) = t.split_once("\r\n\r\n") {
+                        let taille: usize = tete.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|x| x.trim().parse().unwrap_or(0))).unwrap_or(0);
+                        if reste.len() >= taille {
+                            break reste.to_string();
+                        }
+                    }
+                };
+                let v: Value = serde_json::from_str(&corps).unwrap_or_default();
+                let n = v["input"].as_array().map(|a| a.len()).unwrap_or(1);
+                tokio::time::sleep(delai).await;
+                let rep = json!({ "embeddings": vec![vec![0.5f32; 1024]; n] }).to_string();
+                let _ = flux.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{rep}", rep.len()).as_bytes()).await;
+            });
+        }
+    });
+    url
+}
+
 /// Cerveau Ollama branché sur une adresse de test.
 pub fn cerveau(url: &str) -> crate::brain::Brain {
     let cfg = crate::config::Config { provider: "ollama".into(), ollama_url: url.into(), model: "faux".into(), ..crate::config::Config::default() };

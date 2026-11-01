@@ -1,7 +1,7 @@
-//! Souvenirs pour le mode voix (lot D, D2) : point d'accès local que le serveur voix interroge à
-//! chaque phrase de PB, pour recevoir les mêmes souvenirs qu'en chat. Réponse en quelques
-//! millisecondes (rappel par mots, sans appel au modèle) ; le serveur voix n'attend pas plus de
-//! 50 ms et répond sans souvenirs au-delà.
+//! Souvenirs pour le mode voix (lot D, D2) : point d'accès local que le serveur voix interroge une
+//! fois par question de PB (pas à chaque phrase de la réponse), pour recevoir les mêmes souvenirs
+//! qu'en chat : par les mots (quelques millisecondes) et par le sens (lot M2, 75 à 100 ms pour le
+//! vecteur de la question). Le serveur voix n'attend pas plus de 200 ms et répond sans souvenirs au-delà.
 //!
 //! `POST /rappel` sur 127.0.0.1 (port libre), jeton dans `Authorization: Bearer`, corps
 //! `{"texte": "…"}` → `{"souvenirs": "- [fichier › section] fait\n…"}`. L'adresse et le jeton sont
@@ -21,11 +21,14 @@ pub fn adresse() -> Option<(String, String)> {
     ADRESSE.get().cloned()
 }
 
+/// Temps laissé au vecteur de la phrase. Lot M2 : 35 ms au départ (choix A1), mais le vecteur en
+/// prend 75 à 100 sur le processeur ; PB a choisi le 01/11 d'attendre le sens en voix (≈ 0,1 s
+/// de plus, une fois par question). Au-delà, les mots seuls ; le serveur voix attend 200 ms au plus.
+pub const DELAI_SENS_VOIX: std::time::Duration = std::time::Duration::from_millis(150);
+
 /// Souvenirs d'une phrase, au format du bloc 5 du chat (extraits des fiches des agents encadrés, lot S-a).
-/// Lot M2, choix A1 : le sens n'est ajouté que si le vecteur de la phrase arrive en 35 ms (le
-/// serveur voix n'attend pas plus de 50 ms en tout) ; sinon, les mots seuls.
 pub async fn souvenirs(paths: &Paths, texte: &str) -> String {
-    crate::securite::bloc_souvenirs(&memory::recall(paths, texte, 6, std::time::Duration::from_millis(35)).await)
+    crate::securite::bloc_souvenirs(&memory::recall(paths, texte, 6, DELAI_SENS_VOIX).await)
 }
 
 /// Ouvre le point d'accès (une seule fois par lancement d'Orchestra).
@@ -111,6 +114,25 @@ mod tests {
         assert!(duree.as_millis() < 50, "{duree:?}");
         let refus = http.post(format!("{url}/rappel")).bearer_auth("faux").json(&json!({ "texte": "x" })).send().await.unwrap();
         assert_eq!(refus.status(), 401);
+        let _ = std::fs::remove_dir_all(r);
+    }
+
+    #[tokio::test]
+    async fn la_voix_attend_le_sens() {
+        // choix de PB du 01/11 : le vecteur de la phrase met 75 à 100 ms sur le processeur ; la voix
+        // l'attend (≈ 0,1 s de plus par question) plutôt que de se contenter des mots
+        let r = std::env::temp_dir().join(format!("orchestra-d-sens-{}", &uuid::Uuid::new_v4().to_string()[..8]));
+        let paths = Paths::at(r.clone()).unwrap();
+        memory::seed_main(&paths, "PB").unwrap();
+        let mut m = std::fs::read_to_string(paths.main_memory()).unwrap();
+        m.push_str("\n## Connaissances\n- (2026-10-30) Le concert de samedi commence à 20 h au Brise Glace.\n");
+        std::fs::write(paths.main_memory(), m).unwrap();
+        let url = crate::essais::faux_embed_lent(std::time::Duration::from_millis(90)).await;
+        crate::index::configurer(&paths, crate::index::Sens { actif: true, url, modele: "lent".into() });
+        crate::index::vectoriser(&paths).await;
+        // aucun mot en commun avec le fait : il ne peut venir que du sens
+        let s = souvenirs(&paths, "Ça démarre quand, ce soir-là ?").await;
+        assert!(s.contains("Brise Glace"), "{s}");
         let _ = std::fs::remove_dir_all(r);
     }
 }
