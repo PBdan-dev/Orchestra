@@ -10,8 +10,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const config: Config = {
   provider: "ollama", model: "", ollama_url: "http://127.0.0.1:11434", lmstudio_url: "http://127.0.0.1:1234",
-  market_url: "", mode_developpement: false, embeddings_enabled: false,
-  embedding_model: "nomic-embed-text", user_name: "PB", max_agent_steps: 6,
+  market_url: "", mode_developpement: false, embeddings_enabled: true,
+  embedding_model: "qwen3-embedding:0.6b", user_name: "PB", max_agent_steps: 6,
   voice_enabled: false, voice_autostart: true, voice_mode: "mains-libres", voice_ptt_key: "F2", voice_read_chat: false,
   voice_barge_in: true, voice_llm: "qwen3.5:9b", voice_speaker: "Ryan", voice_reference: "", voice_port: 8765,
   voice_stt_model: "Voxtral-Mini-4B-Realtime-2602-Q8_0.gguf", voice_tts_model: "Qwen3-TTS-12Hz-1.7B-CustomVoice",
@@ -71,12 +71,13 @@ async function scenario(run_id: string, text: string) {
   emit({ type: "memorized", run_id, file: "agents/agent-redacteur.md", section: "Missions", line: "- (2026-10-26) Mission : Rédiger une note de bienvenue → Note rédigée et enregistrée dans bienvenue.md · outils : now, write_file" });
   emit({ type: "memorized", run_id, file: "orchestra.md", section: "Agents de confiance", line: "- (2026-10-26) « rédiger une note » → agent-redacteur (Agent Rédacteur) · réussi 1×" });
   emit({ type: "phase", run_id, phase: "speaking", label: "Je restitue le résultat" });
-  await stream(run_id, "L'**Agent Rédacteur** a rédigé la note de bienvenue et l'a enregistrée dans `espace-de-travail/bienvenue.md`.\n\nElle présente Orchestra en trois points : ce qu'il fait, comment il délègue, et où se trouve sa mémoire. Tu peux l'ouvrir depuis le dossier de travail.", "token", 28);
+  const reponse = "L'**Agent Rédacteur** a rédigé la note de bienvenue et l'a enregistrée dans `espace-de-travail/bienvenue.md`.\n\nElle présente Orchestra en trois points : ce qu'il fait, comment il délègue, et où se trouve sa mémoire. Tu peux l'ouvrir depuis le dossier de travail.";
+  await stream(run_id, reponse, "token", 28);
   emit({ type: "phase", run_id, phase: "memorizing", label: "Je retiens l'essentiel" });
   await sleep(900);
   emit({ type: "memorized", run_id, file: "orchestra.md", section: "Projets", line: "- (2026-10-26) PB construit Orchestra, un orchestrateur d'agents local et transparent." });
   memory += "- (2026-10-26) PB construit Orchestra, un orchestrateur d'agents local et transparent.\n";
-  emit({ type: "done", run_id, answer: "…", intent: "travail" });
+  emit({ type: "done", run_id, answer: reponse, intent: "travail" });
   emit({ type: "phase", run_id, phase: "idle", label: "" });
 }
 

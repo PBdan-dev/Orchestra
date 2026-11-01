@@ -875,7 +875,8 @@ export const useStore = create<State>((set, get) => ({
           busy: false,
           runId: null,
           messages: s.messages.map((m, i, all) => {
-            if (m.streaming && !m.voice) return { ...m, streaming: false, content: m.content || e.answer, intent: e.intent, agent: agent?.manifest.name };
+            // la réponse finale du cœur est nettoyée (consigne ou JSON de mémorisation recopiés) : elle remplace le texte reçu en direct
+            if (m.streaming && !m.voice) return { ...m, streaming: false, content: e.answer || m.content, intent: e.intent, agent: agent?.manifest.name };
             // le message de l'utilisateur juste avant la réponse : on garde la version envoyée au cerveau
             const next = all[i + 1];
             if (m.role === "user" && next?.streaming && !next.voice && e.message_historique) return { ...m, contexte: e.message_historique };

@@ -333,22 +333,6 @@ impl Brain {
         Ok(r.json::<Value>().await?)
     }
 
-    /// Embedding via Ollama (seul fournisseur local d'embeddings supporté en V1).
-    pub async fn embed(&self, text: &str) -> anyhow::Result<Option<Vec<f32>>> {
-        let base = self.cfg.ollama_url.trim_end_matches('/');
-        let r = self
-            .http
-            .post(format!("{base}/api/embed"))
-            .timeout(Duration::from_secs(30))
-            .json(&json!({ "model": self.cfg.embedding_model, "input": text }))
-            .send()
-            .await?;
-        if !r.status().is_success() {
-            return Ok(None);
-        }
-        let v: Value = r.json().await?;
-        Ok(v["embeddings"][0].as_array().map(|a| a.iter().filter_map(|x| x.as_f64().map(|f| f as f32)).collect()))
-    }
 
     /// Appel en streaming, texte seul. `role` (analyse, reponse, memorisation, agent…) sert aux
     /// mesures ; `on` reçoit chaque fragment ; renvoie le contenu complet.

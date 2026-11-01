@@ -29,7 +29,8 @@ Orchestra/
     orchestra.md              mémoire principale (faits datés, par section)
     agents/<id>.md            une mémoire par agent (missions, apprentissages)
     archives/AAAA-MM-JJ.md    conversations brutes
-    .index-vectoriel.json     cache d'embeddings (optionnel)
+    sessions/                 résumés de conversation (lot C), modifiables
+    .index.bin                index du rappel : vecteurs et usage (supprimable, il se reconstruit)
   agents/
     registre-local.json       catalogue local (même format que l'Agent Market)
     installes/<id>.json       manifestes des agents installés
@@ -39,7 +40,7 @@ Orchestra/
 
 ## Une demande, étape par étape
 
-1. **Rappel** : les faits de la mémoire qui partagent des mots avec la demande (et, si activé, les plus proches par embeddings).
+1. **Rappel** : les 6 faits les plus utiles, trouvés par leurs mots et par leur sens (voir « Mémoire » ci-dessous) ; le profil (Utilisateur, Préférences) est déjà dans le prompt.
 2. **Analyse** : le cerveau classe la demande (discussion · recherche · travail) et formule le besoin et la mission.
 3. **Recherche d'agent** (si travail) : mémoire « Agents de confiance » → agents installés → Agent Market → registre local.
 4. **Délégation** : l'agent reçoit sa mission et agit par outils (`now`, `list_dir`, `read_file`, `write_file`, `fetch_url`), un à la fois.
@@ -65,6 +66,16 @@ Orchestra/
 ```
 
 L'Agent Market doit exposer `GET <url>/agents.json` (ou l'URL directe d'un `.json`) renvoyant `[manifeste, …]` ou `{ "agents": [...] }`.
+
+## Mémoire : le rappel (lot M2)
+
+- **Où il cherche** (`index.rs`) : `orchestra.md` hors profil, les fiches des agents (`memoire/agents/`), les résumés de conversation (`memoire/sessions/`, `memoire/resumes/`). L'index vit en mémoire vive ; à chaque message, seuls les fichiers dont la date ou la taille a changé sont relus, modifications à la main comprises.
+- **Par les mots** : BM25 sur les mots utiles et leurs radicaux de 5 lettres, sans bibliothèque.
+- **Par le sens** : modèle d'embedding `qwen3-embedding:0.6b` sur le processeur via Ollama (`ollama pull qwen3-embedding:0.6b`, une fois). Le vecteur d'un fait est calculé quand il est écrit (ou en tâche de fond pour une ligne modifiée à la main), jamais au rappel ; seul celui de la question l'est. Vecteurs réduits à 256 dimensions et rangés sur un octet par valeur dans `memoire/.index.bin`. Sans le modèle, le rappel se fait par les mots seuls et Conscience le dit une fois.
+- **Classement** : fusion par rang (Σ 1/(60 + rang)), fraîcheur (demi-vie de 90 jours pour Projets et Connaissances, jamais sous 25 %), petit bonus aux faits déjà rappelés puis repris dans une réponse. La raison s'affiche dans Conscience (« mots : port, studio · sens 82 % »).
+- **Voix** : même rappel ; le sens n'est ajouté que si le vecteur de la phrase arrive en 35 ms, sinon les mots seuls.
+- **Outil `retrouver`** : résumés de conversation d'abord, puis les archives des seuls jours visés.
+- **Mesure** : `cargo run --release --example mesure_rappel` (jeu `eval/rappel.jsonl`, rapport dans `Orchestra/eval/rappel-<date>.md`).
 
 ## Sécurité (lot S)
 
@@ -97,7 +108,8 @@ src/                 interface React
 src-tauri/src/       cœur Rust
   orchestrator.rs    les étapes d'une demande
   brain.rs           fournisseurs de modèles (streaming)
-  memory.rs          fichiers .md, rappel, mémorisation
+  memory.rs          fichiers .md, profil, mémorisation
+  index.rs           index du rappel (mots, sens, fraîcheur, usage)
   agents.rs          manifestes, registre, installation
   market.rs          Agent Market (abstrait) + repli local
   tools.rs           outils des agents (cantonnés à l'espace de travail)

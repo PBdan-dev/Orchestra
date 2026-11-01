@@ -1,0 +1,23 @@
+// Jeu de rappel (lot M2, 01/11/2026) : le fait attendu figure-t-il dans les 6 souvenirs donnés au modèle ? Sans modèle de chat.
+// Mémoire : eval/donnees/orchestra.md. Faits hors profil (Projets, Connaissances), puisque le profil est déjà dans le prompt.
+// « mots » : la question partage des mots avec le fait. « sens » : reformulation sans mot utile en commun.
+{"id": "r01", "question": "Sur quel port écoute LM Studio ?", "fait": "LM Studio, quand il est lancé", "type": "mots"}
+{"id": "r02", "question": "Quelle taille fait le disque de sauvegarde ?", "fait": "Le disque externe de sauvegarde fait 4 To", "type": "mots"}
+{"id": "r03", "question": "Quand est-ce que je vois mon avocate ?", "fait": "maître Duval", "type": "mots"}
+{"id": "r04", "question": "Quel est le code du local à vélos ?", "fait": "local à vélos", "type": "mots"}
+{"id": "r05", "question": "Quand ai-je rendez-vous avec mon comptable ?", "fait": "son comptable", "type": "mots"}
+{"id": "r06", "question": "Pourquoi Kokoro a-t-il été écarté ?", "fait": "Kokoro a été écarté", "type": "mots"}
+{"id": "r07", "question": "Quelle est la taille du contexte en mode voix ?", "fait": "celui de la voix à 8 192", "type": "mots"}
+{"id": "r08", "question": "En décembre, quel jour aura lieu la réunion d'équipe ?", "fait": "la réunion d'équipe passe au jeudi", "type": "mots"}
+{"id": "r09", "question": "Quel projet ai-je laissé tomber au profit d'Orchestra ?", "fait": "multi-agent-framework", "type": "mots"}
+{"id": "r10", "question": "Quelle licence empêche de vendre un produit avec la voix de Mistral ?", "fait": "CC BY-NC", "type": "mots"}
+{"id": "r11", "question": "Quel modèle sert à comparer le sens des phrases ?", "fait": "Le modèle d'embedding retenu", "type": "mots"}
+{"id": "r12", "question": "Quelle est la solution de secours pour la voix ?", "fait": "Moshi est le plan B", "type": "sens"}
+{"id": "r13", "question": "Je roule avec quel véhicule ?", "fait": "Zoé électrique", "type": "sens"}
+{"id": "r14", "question": "Chez quel opérateur est ma connexion ?", "fait": "Le fournisseur internet de PB est Free", "type": "sens"}
+{"id": "r15", "question": "Quel jour a lieu la copie de sécurité hebdomadaire ?", "fait": "se fait chaque dimanche", "type": "sens"}
+{"id": "r16", "question": "Avec quoi comprends-tu ce que je dis à l'oral ?", "fait": "écoute avec Voxtral", "type": "sens"}
+{"id": "r17", "question": "En combien de temps me réponds-tu à l'oral ?", "fait": "1,8 seconde", "type": "sens"}
+{"id": "r18", "question": "Quel paquet Python ne faut-il surtout pas mettre à jour ?", "fait": "transformers est figée", "type": "sens"}
+{"id": "r19", "question": "Où sont rangés mes fichiers de configuration et de mémoire ?", "fait": "Les données d'Orchestra sont dans", "type": "sens"}
+{"id": "r20", "question": "Quel projet futur permettrait de louer ma machine à d'autres ?", "fait": "Cloud Power", "type": "sens"}

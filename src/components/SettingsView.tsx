@@ -175,12 +175,12 @@ export function SettingsView() {
           </div>
           <label className="toggle">
             <input type="checkbox" checked={form.embeddings_enabled} onChange={(e) => set("embeddings_enabled", e.target.checked)} />
-            <span>Index vectoriel local (embeddings Ollama)</span>
-            <span className="muted small">Améliore le rappel par le sens, en plus des mots communs. Nécessite un modèle d'embeddings dans Ollama.</span>
+            <span>Rappel par le sens (modèle d'embeddings local)</span>
+            <span className="muted small">Retrouve un souvenir formulé autrement, en plus des mots communs. Le modèle tourne sur le processeur, pas sur la carte graphique. À installer une fois : <code>ollama pull qwen3-embedding:0.6b</code>.</span>
           </label>
           {form.embeddings_enabled && (
             <div className="field-grid">
-              <label><span>Modèle d'embeddings</span><input value={form.embedding_model} onChange={(e) => set("embedding_model", e.target.value)} placeholder="nomic-embed-text" /></label>
+              <label><span>Modèle d'embeddings</span><input value={form.embedding_model} onChange={(e) => set("embedding_model", e.target.value)} placeholder="qwen3-embedding:0.6b" /></label>
             </div>
           )}
         </section>

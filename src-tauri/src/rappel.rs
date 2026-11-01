@@ -22,8 +22,10 @@ pub fn adresse() -> Option<(String, String)> {
 }
 
 /// Souvenirs d'une phrase, au format du bloc 5 du chat (extraits des fiches des agents encadrés, lot S-a).
+/// Lot M2, choix A1 : le sens n'est ajouté que si le vecteur de la phrase arrive en 35 ms (le
+/// serveur voix n'attend pas plus de 50 ms en tout) ; sinon, les mots seuls.
 pub async fn souvenirs(paths: &Paths, texte: &str) -> String {
-    crate::securite::bloc_souvenirs(&memory::recall(paths, None, texte, 6).await)
+    crate::securite::bloc_souvenirs(&memory::recall(paths, texte, 6, std::time::Duration::from_millis(35)).await)
 }
 
 /// Ouvre le point d'accès (une seule fois par lancement d'Orchestra).
@@ -95,13 +97,17 @@ mod tests {
         memory::seed_main(&paths, "PB").unwrap();
         let mut m = std::fs::read_to_string(paths.main_memory()).unwrap();
         m = m.replace("## Préférences\n", "## Préférences\n- (2026-10-30) PB écoute du jazz en travaillant, surtout Bill Evans.\n");
+        m.push_str("\n## Connaissances\n- (2026-10-30) Le concert de jazz de samedi commence à 20 h au Brise Glace.\n");
         std::fs::write(paths.main_memory(), m).unwrap();
         let (url, jeton) = ouvrir(paths).await.unwrap();
         let http = reqwest::Client::new();
         let t0 = std::time::Instant::now();
-        let v: Value = http.post(format!("{url}/rappel")).bearer_auth(&jeton).json(&json!({ "texte": "quel jazz j'écoute ?" })).send().await.unwrap().json().await.unwrap();
+        let v: Value = http.post(format!("{url}/rappel")).bearer_auth(&jeton).json(&json!({ "texte": "à quelle heure est le concert de jazz ?" })).send().await.unwrap().json().await.unwrap();
         let duree = t0.elapsed();
-        assert!(v["souvenirs"].as_str().unwrap().contains("Bill Evans"), "{v}");
+        let s = v["souvenirs"].as_str().unwrap();
+        assert!(s.contains("Brise Glace"), "{v}");
+        // le profil (Préférences) est déjà dans le prompt vocal : pas répété dans les souvenirs (lot M2)
+        assert!(!s.contains("Bill Evans"), "{v}");
         assert!(duree.as_millis() < 50, "{duree:?}");
         let refus = http.post(format!("{url}/rappel")).bearer_auth("faux").json(&json!({ "texte": "x" })).send().await.unwrap();
         assert_eq!(refus.status(), 401);

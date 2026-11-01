@@ -10,6 +10,7 @@ pub mod integrite;
 pub mod installation;
 pub mod events;
 pub mod heberge;
+pub mod index;
 mod journal;
 pub mod market;
 pub mod memory;
@@ -90,7 +91,10 @@ fn save_config(state: State<AppState>, config: Config) -> CmdResult<()> {
     config.garder_cles(&state.config.lock().unwrap());
     noter(&state, &[state.paths.config.clone()]);
     config.save(&state.paths).map_err(err)?;
+    index::configurer_depuis(&state.paths, &config);
     *state.config.lock().unwrap() = config;
+    // modèle d'embedding changé ou rappel par le sens activé : vecteurs manquants calculés en tâche de fond
+    index::vectoriser_en_fond(&state.paths);
     Ok(())
 }
 
@@ -725,6 +729,14 @@ pub fn run() {
             let http = reqwest::Client::builder().user_agent("Orchestra/0.1").connect_timeout(brain::DELAI_CONNEXION).build().map_err(|e| anyhow::anyhow!("http : {e}"))?;
             let paths_autorisations = paths.agents.join("autorisations.json");
             let state = AppState { config: Mutex::new(config), paths, http, busy: AtomicBool::new(false), voice: voice::VoiceProcess::default(), session: Default::default(), validations: std::sync::Arc::new(validations::Validations::new(paths_autorisations)), pilote: Default::default(), compaction: Mutex::new(None) };
+            // rappel par le sens (lot M2) : index configuré, vecteurs manquants calculés en tâche de fond
+            index::configurer_depuis(&state.paths, &state.config.lock().unwrap());
+            {
+                let p = state.paths.clone();
+                tauri::async_runtime::spawn(async move {
+                    index::vectoriser(&p).await;
+                });
+            }
             // souvenirs pour le mode voix (lot D) : ouvert avant le serveur voix, qui en reçoit l'adresse
             if let Err(e) = tauri::async_runtime::block_on(rappel::ouvrir(state.paths.clone())) {
                 eprintln!("rappel vocal indisponible : {e}");

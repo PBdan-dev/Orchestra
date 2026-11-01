@@ -3,15 +3,12 @@
 //! - memoire/orchestra.md : faits durables, par section (## Utilisateur, ## Préférences…)
 //! - memoire/agents/<id>.md : ce que chaque agent a fait et appris
 //! - memoire/archives/AAAA-MM-JJ.md : les conversations brutes
-//! - memoire/.index-vectoriel.json : cache d'embeddings (optionnel, recalculable)
+//! - memoire/.index.bin : index du rappel (vecteurs et usage), supprimable (lot M2, `index.rs`)
 //!
-//! Le rappel se fait d'abord par mots communs (explicable), et, si activé,
-//! par similarité vectorielle via les embeddings d'Ollama.
+//! Le rappel cherche par les mots (BM25, explicable) et par le sens (vecteurs du modèle
+//! d'embedding, D10), fusionnés par rang.
 
-use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
-
-use crate::{agents::Manifest, brain::Brain, events::Recalled, paths::Paths};
+use crate::{agents::Manifest, events::Recalled, paths::Paths};
 
 const STOP: &[&str] = &[
     "les", "des", "une", "est", "pas", "que", "qui", "quoi", "pour", "avec", "dans", "sur", "sous",
@@ -133,144 +130,12 @@ pub fn parse_facts(file: &str, text: &str) -> Vec<Fact> {
     out
 }
 
-pub fn all_facts(paths: &Paths) -> Vec<Fact> {
-    let mut facts = parse_facts("orchestra.md", &read_main(paths));
-    if let Ok(rd) = std::fs::read_dir(&paths.memoire_agents) {
-        for e in rd.flatten() {
-            let name = e.file_name().to_string_lossy().to_string();
-            if name.ends_with(".md") {
-                if let Ok(s) = std::fs::read_to_string(e.path()) {
-                    facts.extend(parse_facts(&format!("agents/{name}"), &s));
-                }
-            }
-        }
-    }
-    facts
-}
-
-fn keyword_score(fact_words: &[String], query_words: &[String]) -> (f32, Vec<String>) {
-    let mut common = vec![];
-    for q in query_words {
-        if fact_words.iter().any(|f| f == q) {
-            common.push(q.clone());
-        } else if q.len() >= 5 {
-            let stem = &q[..5];
-            if fact_words.iter().any(|f| f.starts_with(stem)) {
-                common.push(format!("{q}~"));
-            }
-        }
-    }
-    if common.is_empty() {
-        return (0.0, common);
-    }
-    let score = common.len() as f32 / (query_words.len().max(1) as f32).sqrt();
-    (score, common)
-}
-
-/// Rappel : mots communs, et similarité vectorielle si activée.
-pub async fn recall(paths: &Paths, brain: Option<&Brain>, query: &str, max: usize) -> Vec<Recalled> {
-    let facts = all_facts(paths);
-    let qw = keywords(query);
-    let mut scored: Vec<(f32, String, &Fact)> = vec![];
-
-    for f in &facts {
-        let fw = keywords(&f.text);
-        let (s, common) = keyword_score(&fw, &qw);
-        if s > 0.0 {
-            let reason = format!(
-                "mots communs : {}",
-                common.iter().map(|c| c.trim_end_matches('~').to_string()).collect::<Vec<_>>().join(", ")
-            );
-            scored.push((s, reason, f));
-        }
-    }
-
-    // Index vectoriel optionnel
-    if let Some(brain) = brain {
-        if brain.cfg.embeddings_enabled {
-            if let Ok(Some(qv)) = brain.embed(query).await {
-                let mut cache = EmbedCache::load(paths);
-                for f in &facts {
-                    let key = cache_key(&f.text);
-                    let fv = match cache.map.get(&key) {
-                        Some(v) => Some(v.clone()),
-                        None => match brain.embed(&f.text).await {
-                            Ok(Some(v)) => {
-                                cache.map.insert(key.clone(), v.clone());
-                                cache.dirty = true;
-                                Some(v)
-                            }
-                            _ => None,
-                        },
-                    };
-                    if let Some(fv) = fv {
-                        let sim = cosine(&qv, &fv);
-                        if sim > 0.55 {
-                            let bonus = (sim - 0.5) * 3.0;
-                            if let Some(e) = scored.iter_mut().find(|e| std::ptr::eq(e.2, f)) {
-                                e.0 += bonus;
-                                e.1 = format!("{} · similarité {:.0} %", e.1, sim * 100.0);
-                            } else {
-                                scored.push((bonus, format!("similarité sémantique {:.0} %", sim * 100.0), f));
-                            }
-                        }
-                    }
-                }
-                cache.save(paths);
-            }
-        }
-    }
-
-    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    scored
-        .into_iter()
-        .take(max)
-        .map(|(s, reason, f)| Recalled {
-            file: f.file.clone(),
-            section: f.section.clone(),
-            text: f.text.clone(),
-            score: s,
-            reason,
-        })
-        .collect()
-}
-
-fn cosine(a: &[f32], b: &[f32]) -> f32 {
-    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
-    let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if na == 0.0 || nb == 0.0 { 0.0 } else { dot / (na * nb) }
-}
-
-fn cache_key(text: &str) -> String {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    text.hash(&mut h);
-    format!("{:016x}", h.finish())
-}
-
-struct EmbedCache {
-    map: HashMap<String, Vec<f32>>,
-    dirty: bool,
-}
-
-impl EmbedCache {
-    fn path(paths: &Paths) -> std::path::PathBuf {
-        paths.memoire.join(".index-vectoriel.json")
-    }
-    fn load(paths: &Paths) -> Self {
-        let map = std::fs::read_to_string(Self::path(paths))
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
-        EmbedCache { map, dirty: false }
-    }
-    fn save(&self, paths: &Paths) {
-        if self.dirty {
-            if let Ok(s) = serde_json::to_string(&self.map) {
-                let _ = std::fs::write(Self::path(paths), s);
-            }
-        }
-    }
+/// Rappel (lot M2) : index des mots (BM25) et du sens (vecteurs), fusionnés par rang, hors des
+/// faits déjà dans le profil du prompt. `delai_sens` borne le calcul du vecteur de la question
+/// (chat : quelques secondes ; voix : quelques dizaines de millisecondes, choix A1).
+pub async fn recall(paths: &Paths, query: &str, max: usize, delai_sens: std::time::Duration) -> Vec<Recalled> {
+    let (profil, _) = profil(paths, crate::orchestrator::PROFIL_MAX_CAR);
+    crate::index::rappeler(paths, query, max, &profil, delai_sens).await
 }
 
 /// Ajoute une ligne « - (date) fait » sous une section du fichier principal.

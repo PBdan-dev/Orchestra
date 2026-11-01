@@ -26,7 +26,7 @@ pub struct Config {
     pub market_url: String,
     /// Mode développement (lot T4) : accepte les agents non certifiés, avec le badge « Non certifié ».
     pub mode_developpement: bool,
-    /// Index vectoriel local via les embeddings d'Ollama (optionnel).
+    /// Rappel par le sens (lot M2) : vecteurs du modèle d'embedding d'Ollama, sur le processeur (D10).
     pub embeddings_enabled: bool,
     pub embedding_model: String,
     pub user_name: String,
@@ -84,8 +84,9 @@ impl Default for Config {
             cles_en_clair: vec![],
             market_url: String::new(),
             mode_developpement: false,
-            embeddings_enabled: false,
-            embedding_model: "nomic-embed-text".into(),
+            // lot M2 : rappel par le sens, modèle choisi en D10
+            embeddings_enabled: true,
+            embedding_model: MODELE_SENS.into(),
             user_name: String::new(),
             max_agent_steps: 6,
             voice_enabled: false,
@@ -110,6 +111,9 @@ impl Default for Config {
         }
     }
 }
+
+/// Modèle d'embedding du rappel par le sens (D10).
+pub const MODELE_SENS: &str = "qwen3-embedding:0.6b";
 
 impl Config {
     pub fn load(paths: &Paths) -> Config {
@@ -145,9 +149,18 @@ impl Config {
                 }
             }
         }
-        if migrees > 0 {
+        // lot M2 : l'ancien réglage par défaut (index vectoriel désactivé, nomic-embed-text, jamais
+        // installé) passe au rappel par le sens avec le modèle de D10, une seule fois
+        let mut a_ecrire = migrees > 0;
+        if cfg.embedding_model.trim().is_empty() || cfg.embedding_model == "nomic-embed-text" {
+            cfg.embedding_model = MODELE_SENS.into();
+            cfg.embeddings_enabled = true;
+            a_ecrire = true;
+            notes.push(format!("Rappel par le sens activé avec {MODELE_SENS} (lot M2, D10)."));
+        }
+        if a_ecrire {
             if let Err(e) = cfg.save(paths) {
-                notes.push(format!("config.json non réécrit après la migration des clés : {e}"));
+                notes.push(format!("config.json non réécrit après la mise à jour des réglages : {e}"));
             }
         }
         (cfg, notes)
@@ -245,6 +258,24 @@ mod tests {
         cfg.user_name = "PB".into();
         cfg.save(&paths).unwrap();
         assert!(std::fs::read_to_string(&paths.config).unwrap().contains("AIza-456"));
+        let _ = std::fs::remove_dir_all(racine);
+    }
+
+    #[test]
+    fn rappel_par_le_sens_active_avec_le_modele_d10() {
+        let (paths, racine) = dossier();
+        // configuration d'avant le lot M2 : ancien modèle par défaut, index vectoriel désactivé
+        std::fs::write(&paths.config, r#"{"embeddings_enabled":false,"embedding_model":"nomic-embed-text","user_name":"PB"}"#).unwrap();
+        let (cfg, notes) = Config::charger(&paths, &CoffreMemoire::default());
+        assert!(cfg.embeddings_enabled && cfg.embedding_model == "qwen3-embedding:0.6b", "{cfg:?}");
+        assert!(notes.iter().any(|n| n.contains("qwen3-embedding")), "{notes:?}");
+        // enregistré : la migration n'a lieu qu'une fois, et un choix de PB est respecté ensuite
+        let (cfg2, notes2) = Config::charger(&paths, &CoffreMemoire::default());
+        assert!(cfg2.embeddings_enabled && notes2.is_empty(), "{notes2:?}");
+        std::fs::write(&paths.config, r#"{"embeddings_enabled":false,"embedding_model":"qwen3-embedding:0.6b"}"#).unwrap();
+        assert!(!Config::charger(&paths, &CoffreMemoire::default()).0.embeddings_enabled, "désactivé par PB : gardé");
+        let defaut = Config::default();
+        assert!(defaut.embeddings_enabled && defaut.embedding_model == "qwen3-embedding:0.6b");
         let _ = std::fs::remove_dir_all(racine);
     }
 

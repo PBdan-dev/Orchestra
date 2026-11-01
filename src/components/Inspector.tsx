@@ -124,7 +124,7 @@ function CoreDetail() {
 
       <Section title="Mémoire">
         <p className="small">{facts === null ? "…" : `${facts} fait(s) retenu(s)`} dans <code>orchestra.md</code></p>
-        {config?.embeddings_enabled ? <p className="small muted">Index vectoriel actif ({config.embedding_model})</p> : <p className="small muted">Rappel par mots communs (index vectoriel désactivé)</p>}
+        {config?.embeddings_enabled ? <p className="small muted">Rappel par le sens actif ({config.embedding_model})</p> : <p className="small muted">Rappel par les mots seulement (rappel par le sens désactivé)</p>}
       </Section>
 
       <Section title="Agents">

@@ -248,8 +248,12 @@ pub async fn tour(out: &dyn Sortie, ctx: &Contexte, run_id: &str, text: &str, hi
 
     // 1. Rappel de mémoire
     phase(out, run_id, "recalling", "Je consulte ma mémoire");
-    let recalled = memory::recall(&paths, Some(&brain), text, 6).await;
+    // lot M2 : mots et sens ; le vecteur de la question a quelques secondes (le modèle d'embedding peut se charger)
+    let recalled = memory::recall(&paths, text, 6, std::time::Duration::from_secs(3)).await;
     emit(out, Event::Recall { run_id: run_id.into(), items: recalled.clone() });
+    if let Some(motif) = crate::index::a_signaler(&paths) {
+        avertir(out, run_id, format!("Rappel par le sens indisponible ({motif}) : je cherche dans ma mémoire par les mots seulement. Pour l'activer : ollama pull {}.", cfg.embedding_model));
+    }
     // les extraits des fiches des agents arrivent encadrés comme de la donnée (lot S-a)
     let memory_block = crate::securite::bloc_souvenirs(&recalled);
     // projet actif (D36, lot T9) : celui où travaillent les agents, et celui dont on parle si aucun n'est nommé
@@ -426,9 +430,14 @@ pub async fn tour(out: &dyn Sortie, ctx: &Contexte, run_id: &str, text: &str, hi
     bilan.intention = intention.clone();
     thought(out, run_id, format!("\n→ {}\n", match intention.as_str() { "travail" => "Travail délégué", "recherche" => "Réponse après lecture web", _ => "Réponse directe" }));
 
+    // lot M2 : les souvenirs repris dans la réponse comptent comme « utilisés » (petit bonus au rappel)
+    crate::index::noter_utilisation(&paths, &recalled, &answer);
+
     // 6. Mémorisation : même pile que la réponse, plus la réponse et la consigne
     phase(out, run_id, "memorizing", "Je retiens l'essentiel");
     memorize(out, run_id, &brain, &paths, &pile, &message_reponse, &answer, used_agent.as_ref()).await;
+    // lot M2 : vecteurs des faits écrits pendant ce tour, calculés à l'écriture (en tâche de fond)
+    crate::index::vectoriser_en_fond(&paths);
     memory::archive(&paths, text, &answer, &intention, used_agent.as_ref().map(|m| m.name.as_str()));
 
     bilan.reponse = answer.clone();
@@ -451,13 +460,22 @@ const MAX_ETAPES_REPONSE: usize = 12;
 
 /// Retire les lignes de consigne interne (« [Tâche : …] ») recopiées par le modèle.
 pub fn retirer_consignes(texte: &str) -> String {
-    texte
+    let t = texte
         .lines()
         .filter(|l| !l.trim_start().starts_with("[Tâche :"))
         .collect::<Vec<_>>()
         .join("\n")
         .trim()
-        .to_string()
+        .to_string();
+    // JSON de la mémorisation écrit d'avance en fin de réponse (le modèle devance la consigne)
+    static JSON_FAITS: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let motif = JSON_FAITS.get_or_init(|| regex::Regex::new(r#"\{\s*"faits"\s*:"#).expect("motif valide"));
+    if let Some(m) = motif.find_iter(&t).last() {
+        if serde_json::from_str::<Value>(&t[m.start()..]).is_ok_and(|v| v.get("faits").is_some()) {
+            return t[..m.start()].trim_end().to_string();
+        }
+    }
+    t
 }
 
 /// Avertissement visible dans Conscience et noté au journal.
@@ -1309,6 +1327,12 @@ mod tests {
     fn consigne_recopiee_retiree() {
         assert_eq!(retirer_consignes("Salut PB !\n\n[Tâche : MÉMORISER]"), "Salut PB !");
         assert_eq!(retirer_consignes("Texte normal [Tâche] gardé"), "Texte normal [Tâche] gardé");
+        // le modèle devance parfois la mémorisation et écrit son JSON en fin de réponse (vu au lot M2)
+        assert_eq!(retirer_consignes("Tu vis à Annecy.  {\"faits\": []}"), "Tu vis à Annecy.");
+        assert_eq!(retirer_consignes("Noté : ton chat s'appelle Moka.\n\n{\"faits\": [{\"section\": \"Utilisateur\", \"fait\": \"Le chat de PB s'appelle Moka.\"}]}"), "Noté : ton chat s'appelle Moka.");
+        // un JSON demandé par PB reste
+        assert_eq!(retirer_consignes("Voici : {\"nom\": \"Moka\"}"), "Voici : {\"nom\": \"Moka\"}");
+        assert_eq!(retirer_consignes("Le champ {\"faits\": …} sert à la mémorisation, puis on continue."), "Le champ {\"faits\": …} sert à la mémorisation, puis on continue.");
     }
 
     #[test]

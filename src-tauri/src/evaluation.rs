@@ -233,7 +233,16 @@ async fn un_essai(opts: &Options, cfg: &Config, http: &reqwest::Client, memoire_
         Ok(p) => p,
         Err(e) => return (Tour::default(), vec![], Some(format!("préparation : {e}")), 0.0, vec![]),
     };
+    preparer_index(cfg, &paths).await;
     un_tour(cfg, http, paths, dossier_mesures, entree, vec![], Default::default()).await
+}
+
+/// Lot M2 : la mémoire de test vient d'être écrite ; ses vecteurs sont calculés comme à
+/// l'écriture d'un fait (gardés d'un essai à l'autre : ils ne dépendent que du texte).
+async fn preparer_index(cfg: &Config, paths: &Paths) {
+    crate::index::oublier(paths);
+    crate::index::configurer_depuis(paths, cfg);
+    crate::index::vectoriser(paths).await;
 }
 
 /// Un tour dans un dossier de test déjà prêt, avec l'historique donné.
@@ -310,6 +319,7 @@ pub async fn lancer(opts: Options, journal: impl Fn(&str)) -> anyhow::Result<Pat
         if !conversation.is_empty() {
             // une seule conversation : même dossier, l'historique s'allonge à chaque tour
             let paths = preparer(&dossier_eval.join("donnees-test"), &memoire_test)?;
+            preparer_index(&cfg, &paths).await;
             let mut historique: Vec<crate::brain::Msg> = vec![];
             let session: Arc<Mutex<Session>> = Default::default();
             for m in &conversation {

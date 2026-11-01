@@ -241,42 +241,67 @@ pub async fn compacter(brain: &Brain, fichier: &Path, entete: &str, echanges: &[
     Ok(md)
 }
 
-/// Outil `retrouver` (C8) : passages des conversations archivées (`memoire/archives/`) et des
-/// résumés de session qui contiennent les mots cherchés, du plus récent au plus ancien.
+/// Outil `retrouver` (C8, lot M2) : d'abord le niveau tiède (résumés de conversation et résumés
+/// du jour), puis, dans les archives brutes, les seuls jours que ces résumés désignent ; sans
+/// résumé trouvé, toutes les archives, du plus récent au plus ancien.
 pub fn retrouver(paths: &Paths, requete: &str) -> String {
     let cles = crate::memory::keywords(requete);
     if cles.is_empty() {
         return "Précise quelques mots à chercher.".into();
     }
-    let mut fichiers: Vec<PathBuf> = [paths.archives.clone(), dossier_sessions(paths)]
-        .iter()
-        .flat_map(|d| std::fs::read_dir(d).into_iter().flatten().flatten().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|x| x == "md"))
-        .collect();
-    fichiers.sort();
-    fichiers.reverse();
-    let mut trouves: Vec<(usize, String)> = vec![];
-    for f in fichiers {
-        let texte = std::fs::read_to_string(&f).unwrap_or_default();
-        let nom = f.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        // un échange (archives) ou une rubrique (résumés) à la fois
-        for bloc in texte.split("\n## ").skip(1) {
-            let plie = crate::memory::fold(bloc);
-            let score = cles.iter().filter(|c| plie.contains(c.as_str())).count();
-            if score > 0 {
-                let extrait: String = bloc.trim().chars().take(700).collect();
-                trouves.push((score, format!("[{nom}] {}", extrait.replace("\n\n", "\n"))));
+    let lister = |d: &Path| -> Vec<PathBuf> {
+        let mut f: Vec<PathBuf> = std::fs::read_dir(d).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "md")).collect();
+        f.sort();
+        f.reverse();
+        f
+    };
+    // un échange (archives) ou une rubrique (résumés) à la fois
+    let chercher = |fichiers: &[PathBuf]| -> Vec<(usize, String, String)> {
+        let mut trouves = vec![];
+        for f in fichiers {
+            let texte = std::fs::read_to_string(f).unwrap_or_default();
+            let nom = f.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            for bloc in texte.split("
+## ").skip(1) {
+                let plie = crate::memory::fold(bloc);
+                let score = cles.iter().filter(|c| plie.contains(c.as_str())).count();
+                if score > 0 {
+                    let extrait: String = bloc.trim().chars().take(700).collect();
+                    trouves.push((score, nom.clone(), format!("[{nom}] {}", extrait.replace("
+
+", "
+"))));
+                }
             }
         }
-    }
-    if trouves.is_empty() {
+        trouves
+    };
+    let meilleurs = |t: Vec<(usize, String, String)>| -> Vec<(String, String)> {
+        let m = t.iter().map(|x| x.0).max().unwrap_or(1);
+        t.into_iter().filter(|x| x.0 == m).take(6).map(|x| (x.1, x.2)).collect()
+    };
+    let mut tiedes = lister(&dossier_sessions(paths));
+    tiedes.extend(lister(&paths.memoire.join("resumes")));
+    let resumes = meilleurs(chercher(&tiedes));
+    let archives = lister(&paths.archives);
+    let passages: Vec<(String, String)> = if resumes.is_empty() {
+        meilleurs(chercher(&archives))
+    } else {
+        // jours désignés par les résumés trouvés (nom « AAAA-MM-JJ… »)
+        let jours: Vec<String> = resumes.iter().filter_map(|(nom, _)| nom.get(..10).map(String::from)).collect();
+        let vises: Vec<PathBuf> = archives.into_iter().filter(|a| a.file_stem().is_some_and(|n| jours.iter().any(|j| n.to_string_lossy().starts_with(j.as_str())))).collect();
+        resumes.into_iter().chain(meilleurs(chercher(&vises))).collect()
+    };
+    if passages.is_empty() {
         return format!("Rien trouvé sur « {requete} » dans les conversations passées.");
     }
-    let meilleur = trouves.iter().map(|t| t.0).max().unwrap_or(1);
-    let mut s = format!("Passages des conversations passées sur « {requete} » (du plus récent au plus ancien) :\n");
-    for (_, t) in trouves.into_iter().filter(|t| t.0 == meilleur).take(6) {
+    let mut s = format!("Passages des conversations passées sur « {requete} » (résumés d'abord, puis échanges des jours concernés) :
+");
+    for (_, t) in passages {
         s.push_str(&t);
-        s.push_str("\n---\n");
+        s.push_str("
+---
+");
     }
     s
 }
@@ -332,6 +357,22 @@ mod tests {
         assert_eq!(ratio_mesure(4000, 1000), Some(4.0));
         assert_eq!(ratio_mesure(100, 100), None); // trop peu de tokens : ignoré
         assert_eq!(ratio_mesure(50_000, 1000), Some(6.0)); // aberrant : borné
+    }
+
+    #[test]
+    fn retrouver_les_resumes_d_abord_puis_les_jours_vises() {
+        let r = std::env::temp_dir().join(format!("orchestra-m2r-{}", &uuid::Uuid::new_v4().to_string()[..8]));
+        let p = Paths::at(r.clone()).unwrap();
+        std::fs::create_dir_all(dossier_sessions(&p)).unwrap();
+        std::fs::write(dossier_sessions(&p).join("2026-10-29_1000.md"), "# Résumé\n\n## Décisions prises\n- Le stand B12 est retenu pour le salon.\n").unwrap();
+        std::fs::write(p.archives.join("2026-10-29.md"), "# Conversations du 2026-10-29\n\n## 10:05 · discussion\n\n**Utilisateur :** On garde le stand B12 pour le salon, budget 4 500 €.\n\n---\n").unwrap();
+        std::fs::write(p.archives.join("2026-10-20.md"), "# Conversations du 2026-10-20\n\n## 09:00 · discussion\n\n**Utilisateur :** Un autre stand au salon de l'auto ?\n\n---\n").unwrap();
+        let s = retrouver(&p, "stand du salon");
+        let resume = s.find("Le stand B12 est retenu").expect("résumé trouvé");
+        let jour = s.find("budget 4 500").expect("archive du jour visé");
+        assert!(resume < jour, "le résumé passe avant l'archive : {s}");
+        assert!(!s.contains("salon de l'auto"), "jour non visé par un résumé : laissé de côté : {s}");
+        let _ = std::fs::remove_dir_all(r);
     }
 
     #[test]
