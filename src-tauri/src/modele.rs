@@ -87,7 +87,11 @@ pub async fn preparer(cfg: &Config, http: &reqwest::Client, modele_agent: &str, 
     if let Some(stop) = arreter_voix {
         stop();
     }
-    charger(cfg, http, modele_agent).await?;
+    if let Err(e) = charger(cfg, http, modele_agent).await {
+        // modèle absent ou refusé (lot S, scénario S7) : celui d'Orchestra, déchargé juste avant, est rechargé
+        let _ = charger(cfg, http, modele_orchestra).await;
+        return Err(e);
+    }
     if let Some(p) = part_sur_gpu(cfg, http, modele_agent).await {
         if p < 0.98 {
             decharger(cfg, http, modele_agent).await;
@@ -115,6 +119,57 @@ mod tests {
 
     fn agent(demande: &str, minimum: &str, recommande: &str) -> Manifest {
         Manifest { brut: json!({ "modele": { "demande": demande, "minimum": minimum, "recommande": recommande } }), ..Default::default() }
+    }
+
+    /// Faux Ollama : note chaque requête `/api/generate` et refuse de charger `geant:405b`.
+    async fn faux_ollama() -> (String, std::sync::Arc<std::sync::Mutex<Vec<Value>>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let ecoute = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", ecoute.local_addr().unwrap());
+        let vues = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let v2 = vues.clone();
+        tokio::spawn(async move {
+            while let Ok((mut flux, _)) = ecoute.accept().await {
+                let mut buf = vec![0u8; 65536];
+                let mut lu = 0;
+                // en-têtes, puis le corps annoncé
+                let corps = loop {
+                    let n = flux.read(&mut buf[lu..]).await.unwrap_or(0);
+                    if n == 0 {
+                        break String::new();
+                    }
+                    lu += n;
+                    let t = String::from_utf8_lossy(&buf[..lu]).to_string();
+                    if let Some((tete, reste)) = t.split_once("\r\n\r\n") {
+                        let taille: usize = tete.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|x| x.trim().parse().unwrap_or(0))).unwrap_or(0);
+                        if reste.len() >= taille {
+                            break reste.to_string();
+                        }
+                    }
+                };
+                let v: Value = serde_json::from_str(&corps).unwrap_or(Value::Null);
+                let refuse = v["model"] == "geant:405b" && v.get("prompt").is_some();
+                v2.lock().unwrap().push(v);
+                let (statut, texte) = if refuse { ("404 Not Found", "{\"error\":\"model 'geant:405b' not found\"}") } else { ("200 OK", "{}") };
+                let _ = flux.write_all(format!("HTTP/1.1 {statut}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{texte}", texte.len()).as_bytes()).await;
+            }
+        });
+        (url, vues)
+    }
+
+    #[tokio::test]
+    async fn modele_refuse_au_chargement_celui_d_orchestra_est_recharge() {
+        let (url, vues) = faux_ollama().await;
+        let cfg = Config { ollama_url: url, ..Config::default() };
+        let e = preparer(&cfg, &reqwest::Client::new(), "geant:405b", "qwen3.6:27b", None).await.unwrap_err();
+        assert!(e.contains("geant:405b"), "{e}");
+        let vues = vues.lock().unwrap().clone();
+        let resume: Vec<(String, bool)> = vues.iter().map(|v| (v["model"].as_str().unwrap_or("").to_string(), v.get("prompt").is_some())).collect();
+        assert_eq!(
+            resume,
+            vec![("qwen3.6:27b".to_string(), false), ("geant:405b".to_string(), true), ("qwen3.6:27b".to_string(), true)],
+            "déchargé, refusé, puis le modèle d'Orchestra rechargé"
+        );
     }
 
     #[test]

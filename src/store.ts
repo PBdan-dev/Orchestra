@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { api, onEvent } from "./tauri";
 import { VoiceClient, type VoiceEvent } from "./voice";
 import type {
-  AgentNode, Autorisation, BrainInfo, ChatMessage, Config, Entry, Installation, Manifest, Rupture, MissionVue, OrchestraEvent, PathsInfo, Phase, Projets, VoiceLatency, VoiceModels, VoiceStatus,
+  AgentNode, AlerteDonnees, Autorisation, LectureAConfirmer, BrainInfo, ChatMessage, Config, Entry, Installation, Manifest, Rupture, MissionVue, OrchestraEvent, PathsInfo, Phase, Projets, VoiceLatency, VoiceModels, VoiceStatus,
 } from "./types";
 
 export type View = "stage" | "missions" | "memory" | "journal" | "settings";
@@ -111,6 +111,11 @@ interface State {
   autorisations: Autorisation[];
   /** Traces cassées (lot T6) : alerte affichée jusqu'à ce que PB l'ait vue. */
   alertesIntegrite: Rupture[];
+  /** Données d'Orchestra changées pendant une mission (lot S-b) : alerte affichée jusqu'à ce que PB l'ait vue. */
+  alertesDonnees: AlerteDonnees[];
+  /** Lectures web à confirmer par PB (choix B1) : le tour attend sa réponse. */
+  lecturesAConfirmer: LectureAConfirmer[];
+  confirmerLecture: (cle: string, accepte: boolean) => Promise<void>;
   /** Demandes tapées pendant qu'Orchestra travaille : envoyées une à une ensuite (mode série, lot T7). */
   fileAttente: string[];
   /** Mission en cours (lot T7) : pilotable depuis sa carte. */
@@ -119,6 +124,7 @@ interface State {
   reprendreMission: (missionId: string) => Promise<void>;
   retirerDeLaFile: (i: number) => void;
   vuIntegrite: () => void;
+  vuDonnees: () => void;
   bootDone: boolean;
   memoryFocus: string | null;
   /** Taille du cœur (0.6 à 1.6) */
@@ -230,6 +236,12 @@ export const useStore = create<State>((set, get) => ({
   projets: null,
   autorisations: [],
   alertesIntegrite: [],
+  alertesDonnees: [],
+  lecturesAConfirmer: [],
+  confirmerLecture: async (cle, accepte) => {
+    await api.confirmerLecture(cle, accepte);
+    set((s) => ({ lecturesAConfirmer: s.lecturesAConfirmer.filter((l) => l.cle !== cle) }));
+  },
   fileAttente: [],
   missionEnCours: null,
   retirerDeLaFile: (i) => set((s) => ({ fileAttente: s.fileAttente.filter((_, k) => k !== i) })),
@@ -253,6 +265,7 @@ export const useStore = create<State>((set, get) => ({
     }
   },
   vuIntegrite: () => set({ alertesIntegrite: [] }),
+  vuDonnees: () => set({ alertesDonnees: [] }),
   bootDone: false,
   memoryFocus: null,
   coreScale: pref.get("coreScale", 1),
@@ -949,6 +962,22 @@ export const useStore = create<State>((set, get) => ({
         if (n) set((s) => ({ alertesIntegrite: [...s.alertesIntegrite, ...e.ruptures] }));
         break;
       }
+      case "donnees_modifiees": {
+        const n = e.changements.length;
+        push({ kind: "phase", id: uid(), runId: e.run_id, at: now, phase: "error", label: `Dossier d'Orchestra : ${n} changement(s) pendant la mission de ${e.agent_id}, hors de ses zones` });
+        set((s) => ({ alertesDonnees: [...s.alertesDonnees, { mission_id: e.mission_id, agent_id: e.agent_id, changements: e.changements }] }));
+        break;
+      }
+      case "lecture_a_confirmer":
+        push({ kind: "phase", id: uid(), runId: e.run_id, at: now, phase: "thinking", label: `J'attends ta confirmation pour lire ${e.url}` });
+        set((s) => ({ lecturesAConfirmer: [...s.lecturesAConfirmer, { cle: e.cle, url: e.url, raison: e.raison }] }));
+        live.pulse(0.9);
+        if (get().voiceOn && voice?.connected) voice.say("J'ai besoin de ta confirmation à l'écran.");
+        break;
+      case "lecture_reglee":
+        push({ kind: "phase", id: uid(), runId: e.run_id, at: now, phase: e.accepte ? "recalling" : "idle", label: e.accepte ? `Lecture de ${e.url} autorisée` : `Lecture de ${e.url} refusée` });
+        set((s) => ({ lecturesAConfirmer: s.lecturesAConfirmer.filter((l) => l.cle !== e.cle) }));
+        break;
       case "agent_installe": {
         const quoi = e.ancienne_version ? `mis à jour (${e.ancienne_version} → ${e.version})` : `installé (version ${e.version})`;
         const badge = e.certification === "orchestra_certified" ? "Orchestra Certified" : "Non certifié";

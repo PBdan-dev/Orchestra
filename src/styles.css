@@ -457,6 +457,10 @@ pre { margin: 0; font-family: var(--mono); font-size: 12px; white-space: pre-wra
 .voice-log { max-height: 180px; overflow: auto; font-size: 11px; background: rgba(0,0,0,.3); padding: 8px; border-radius: 8px; white-space: pre-wrap; }
 .card-section select { width: 100%; }
 .field-grid select { color: inherit; font: inherit; } .field-grid select option { background: #0b1220; }
+/* Clé API (lot S-c) : rangée dans le coffre de Windows, jamais réaffichée */
+.cle-api { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; grid-column: 1 / -1; }
+.cle-api-ligne { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.cle-api-ligne input { flex: 1; min-width: 200px; }
 
 /* ---- switch Chat / Voix, dans le cœur ---- */
 .mode-switch { position: relative; z-index: 2; display: flex; align-items: center; gap: 0; padding: 2px; margin-top: calc(4px * var(--fs));
@@ -524,6 +528,10 @@ pre { margin: 0; font-family: var(--mono); font-size: 12px; white-space: pre-wra
 .validation.reglee { border: 1px solid var(--border); }
 .validation.reglee.refuse { color: #fca5a5; }
 .validation-boutons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+/* Choix B1 (lot S-a) : lecture web à confirmer, en haut de Conscience */
+.lecture-a-confirmer { margin: 8px 10px 0; display: flex; flex-direction: column; gap: 4px; }
+.lecture-a-confirmer code { word-break: break-all; }
+.alerte-ligne { margin: 3px 0 0 8px; }
 .validation-discrets { display: flex; gap: 12px; margin-top: 6px; opacity: .75; font-size: 11px; }
 .glass-btn.danger { border-color: rgba(248, 113, 113, .5); }
 .diff-plus { color: #86efac; font-family: monospace; white-space: pre-wrap; margin-left: 8px; }

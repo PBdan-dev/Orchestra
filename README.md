@@ -66,6 +66,18 @@ Orchestra/
 
 L'Agent Market doit exposer `GET <url>/agents.json` (ou l'URL directe d'un `.json`) renvoyant `[manifeste, …]` ou `{ "agents": [...] }`.
 
+## Sécurité (lot S)
+
+Principe : un modèle peut toujours se faire piéger ; le code d'Orchestra doit tenir quand même.
+
+- **Ce qui vient d'ailleurs reste de la donnée** (`securite.rs`) : comptes rendus d'agents, pages, fichiers et extraits des fiches d'agents arrivent entre `<donnees>` et `</donnees>`, une fausse balise ou une fausse consigne interne étant désamorcée. Un texte qui ressemble à une consigne adressée à Orchestra est signalé dans Conscience (repérage par mots, sans rien bloquer). La mémorisation ne retient que ce que dit l'utilisateur. Après un contenu extérieur, la lecture d'une adresse qu'il n'a pas écrite attend sa confirmation (carte Oui / Non).
+- **Dossier d'Orchestra surveillé pendant chaque mission** (`surveillance.rs`) : empreinte de chaque fichier avant le lancement de l'agent et après sa fin ; une modification hors de ses zones (projet de la mission, mémoire propre) est un écart, une alerte et une preuve gardée dans `integrite/preuves/`. Non surveillés : programmes et modèles de la voix, `eval/`.
+- **Clés API dans le Gestionnaire d'identification de Windows** (`coffre.rs`) : `orchestra/_cles_api/<fournisseur>`, migrées depuis `config.json` au lancement, jamais réaffichées. Les variables d'environnement qui ressemblent à des secrets ne sont pas transmises aux agents.
+- **Agents certifiés signés** (`signature.rs`) : le Market signe chaque entrée « Orchestra Certified » ou « livrable seul » (Ed25519, champ `certification.signature`) ; Orchestra vérifie avec la clé publique écrite dans son code. Outil : `cargo run --release --example cle_market -- creer | signer <agents.json> | verifier <agents.json>`.
+- **Banc de sécurité** : `cargo run --release --example securite` (10 scénarios piégés de `eval/securite/`, 5 passages chacun), rapport dans `Orchestra/eval/securite-<date>.md`.
+
+Limites (pas de bac à sable en V1) : un agent tourne sous le compte Windows de l'utilisateur. Il peut lire le coffre de Windows par son interface de programmation, écrire ailleurs sur le disque ou laisser tourner un programme après la mission ; la certification du Market couvre ce risque. Le repérage des consignes par mots peut rater une formulation habile ou signaler un texte innocent.
+
 ## Développer
 
 ```

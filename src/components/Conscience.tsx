@@ -13,6 +13,10 @@ export function Conscience() {
   const agents = useStore((s) => s.agents);
   const alertes = useStore((s) => s.alertesIntegrite);
   const vuIntegrite = useStore((s) => s.vuIntegrite);
+  const alertesDonnees = useStore((s) => s.alertesDonnees);
+  const vuDonnees = useStore((s) => s.vuDonnees);
+  const lectures = useStore((s) => s.lecturesAConfirmer);
+  const confirmerLecture = useStore((s) => s.confirmerLecture);
   const ref = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
@@ -55,6 +59,37 @@ export function Conscience() {
           ))}
           <div className="small muted">Rien n'a été réparé ni effacé. Cela peut venir d'un agent, mais aussi d'un plantage, du disque ou d'une modification à la main.</div>
           <button className="glass-btn sm" onClick={vuIntegrite}>J'ai vu</button>
+        </div>
+      )}
+      {lectures.map((l) => (
+        <div key={l.cle} className="validation attente lecture-a-confirmer">
+          <div className="card-head"><I.alert size={13} /> Orchestra veut lire une page</div>
+          <div><code>{l.url}</code></div>
+          <div className="small">{l.raison}</div>
+          <div className="validation-boutons">
+            <button className="glass-btn sm" onClick={() => confirmerLecture(l.cle, true).catch(() => {})}>Oui, lire cette page</button>
+            <button className="glass-btn sm danger active" onClick={() => confirmerLecture(l.cle, false).catch(() => {})}>Non</button>
+          </div>
+        </div>
+      ))}
+      {alertesDonnees.length > 0 && (
+        <div className="alerte-integrite">
+          <div className="card-head"><I.alert size={13} /> Dossier d'Orchestra modifié pendant une mission</div>
+          {alertesDonnees.map((a, i) => (
+            <div key={i} className="small">
+              Mission de <b>{a.agent_id}</b> (compté comme écart pour lui) :
+              {a.changements.map((c, j) => (
+                <div key={j} className="alerte-ligne">
+                  <code>{c.fichier}</code> {c.etat}{c.detail ? ` (${c.detail})` : ""}.
+                  {c.ajoutees.slice(0, 5).map((l, k) => <div key={`a${k}`} className="diff-plus">+ {l}</div>)}
+                  {c.retirees.slice(0, 5).map((l, k) => <div key={`r${k}`} className="diff-moins">− {l}</div>)}
+                  {c.preuve && <span className="muted"> Copie gardée : {c.preuve}</span>}
+                </div>
+              ))}
+            </div>
+          ))}
+          <div className="small muted">Rien n'a été restauré. Une modification que tu as faite toi-même hors d'Orchestra pendant la mission apparaîtrait aussi ici.</div>
+          <button className="glass-btn sm" onClick={vuDonnees}>J'ai vu</button>
         </div>
       )}
       <div className="panel-body feed" ref={ref} onScroll={onScroll}>

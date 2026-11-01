@@ -60,6 +60,9 @@ export type OrchestraEvent =
   | { type: "avertissement"; run_id: string; message: string }
   | { type: "mission_verification"; run_id: string; mission_id: string; agent_id: string; ecarts: string[]; controles: string[]; statut: string; total_ecarts: number; confiance_retiree: boolean }
   | { type: "integrite"; contexte: string; intactes: number; non_chainees: number; ruptures: Rupture[]; deja_signalees: number }
+  | { type: "donnees_modifiees"; run_id: string; mission_id: string; agent_id: string; changements: DonneeModifiee[] }
+  | { type: "lecture_a_confirmer"; run_id: string; cle: string; url: string; raison: string }
+  | { type: "lecture_reglee"; run_id: string; cle: string; url: string; accepte: boolean }
   | { type: "limite_atteinte"; run_id: string; mission_id: string; agent_id: string; texte: string }
   | { type: "mission_ordre"; mission_id: string; ordre: string }
   | { type: "compaction"; etat: "debut" | "fin" | "annulee" | "erreur"; detail: string }
@@ -79,9 +82,7 @@ export interface Config {
   model: string;
   ollama_url: string;
   lmstudio_url: string;
-  claude_api_key: string;
-  gemini_api_key: string;
-  openrouter_api_key: string;
+  /* clés API : jamais envoyées à l'interface (lot S-c), voir api.clesApi() */
   market_url: string;
   mode_developpement: boolean;
   /** projet où vont les missions et les livrables (D36) */
@@ -201,6 +202,12 @@ export interface MissionResume { id: string; date: string; projet: string; agent
 export interface MemoireGraphique { totale: number; utilisee: number; detail: string }
 export interface VerificationMission { ecarts: string[]; controles: string[]; statut: string; totalEcarts: number; confianceRetiree: boolean }
 /** Trace dont la chaîne d'empreintes est cassée (lot T6). */
+/** Donnée d'Orchestra changée pendant une mission, hors des zones de l'agent (lot S-b). */
+export interface DonneeModifiee { fichier: string; etat: string; detail: string; ajoutees: string[]; retirees: string[]; preuve: string | null }
+/** Choix B1 (lot S-a) : lecture web à confirmer par PB. */
+export interface LectureAConfirmer { cle: string; url: string; raison: string }
+/** Alerte du lot S-b : une mission et ce qu'elle a changé. */
+export interface AlerteDonnees { mission_id: string; agent_id: string; changements: DonneeModifiee[] }
 export interface Rupture { fichier: string; ligne: number; motif: string; agent_id: string | null; mission_id: string | null; preuve: string }
 export interface BilanIntegrite { intactes: number; non_chainees: number; ruptures: Rupture[]; deja_signalees: number }
 /** Confiance dans un agent (lot T5, agents/confiance.json). */

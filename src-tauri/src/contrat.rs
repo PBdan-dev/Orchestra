@@ -158,6 +158,12 @@ pub fn decouper_commande(c: &str) -> Vec<String> {
     out
 }
 
+/// Variable d'environnement qui ressemble à un secret (lot S-c) : elle n'est pas transmise à l'agent.
+pub fn variable_secrete(nom: &str) -> bool {
+    let n = nom.to_ascii_uppercase();
+    ["KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "PRIVATE"].iter().any(|m| n.contains(m))
+}
+
 /// Porte du modèle de la mission (lot T2) et ses notes, si l'agent utilise un modèle.
 pub struct AvecPorte<'a> {
     pub porte: &'a crate::porte::Porte,
@@ -199,10 +205,18 @@ where
     let venv = dossier_agent.join(".venv").join("Scripts").join("python.exe");
     let prog: String = if (prog == "python" || prog == "python3") && venv.exists() { venv.to_string_lossy().to_string() } else { prog.clone() };
     let mut commande = tokio::process::Command::new(&prog);
+    // lot S-c : les variables d'environnement qui ressemblent à des secrets ne vont pas à l'agent
+    for (k, _) in std::env::vars_os() {
+        if k.to_str().is_some_and(variable_secrete) {
+            commande.env_remove(&k);
+        }
+    }
     commande
         .args(args)
         .current_dir(&dossier_agent)
         .env("PYTHONIOENCODING", "utf-8")
+        // lot S-b : pas de fichiers __pycache__ dans le dossier de l'agent (surveillé pendant la mission)
+        .env("PYTHONDONTWRITEBYTECODE", "1")
         .envs(porte.as_ref().map(|p| p.porte.env()).unwrap_or_default())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -357,6 +371,16 @@ async fn envoyer(entree: &mut tokio::process::ChildStdin, journal: &mut std::fs:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn secrets_de_l_environnement_retires_pour_l_agent() {
+        for v in ["ANTHROPIC_API_KEY", "GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "DB_PASSWORD", "Gh_Token", "MY_PRIVATE_KEY_PATH", "GOOGLE_APPLICATION_CREDENTIALS"] {
+            assert!(variable_secrete(v), "{v} doit être retirée");
+        }
+        for v in ["PATH", "SYSTEMROOT", "TEMP", "USERPROFILE", "APPDATA", "ORCHESTRA_JETON", "ORCHESTRA_MODELE_URL", "PYTHONIOENCODING", "COMPUTERNAME"] {
+            assert!(!variable_secrete(v), "{v} doit rester");
+        }
+    }
 
     #[test]
     fn commande_decoupee() {

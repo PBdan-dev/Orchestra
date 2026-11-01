@@ -9,6 +9,12 @@ export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in
 const real = {
   getConfig: () => invoke<Config>("get_config"),
   saveConfig: (config: Config) => invoke<void>("save_config", { config }),
+  /** Clés API présentes dans le coffre de Windows (lot S-c) : jamais leur valeur. */
+  clesApi: () => invoke<Record<string, boolean>>("cles_api"),
+  enregistrerCle: (fournisseur: string, valeur: string) => invoke<void>("enregistrer_cle", { fournisseur, valeur }),
+  supprimerCle: (fournisseur: string) => invoke<void>("supprimer_cle", { fournisseur }),
+  /** Choix B1 (lot S-a) : PB autorise ou non la lecture d'une adresse qu'il n'a pas écrite. */
+  confirmerLecture: (cle: string, accepte: boolean) => invoke<void>("confirmer_lecture", { cle, accepte }),
   detectBrain: () => invoke<BrainInfo>("detect_brain"),
   loadModel: () => invoke<BrainInfo>("load_model"),
   installAgent: (id: string) => invoke<Installation>("install_agent", { id }),

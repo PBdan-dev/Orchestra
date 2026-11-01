@@ -11,9 +11,17 @@ pub struct Config {
     pub model: String,
     pub ollama_url: String,
     pub lmstudio_url: String,
+    /// Clés API (lot S-c) : lues dans le coffre de Windows, jamais écrites dans `config.json` ni
+    /// envoyées à l'interface. Une ancienne clé encore dans le fichier est lue pour être migrée.
+    #[serde(skip_serializing)]
     pub claude_api_key: String,
+    #[serde(skip_serializing)]
     pub gemini_api_key: String,
+    #[serde(skip_serializing)]
     pub openrouter_api_key: String,
+    /// Clés laissées dans `config.json` parce que le coffre les a refusées : gardées à l'enregistrement.
+    #[serde(skip)]
+    pub cles_en_clair: Vec<String>,
     /// URL de l'Agent Market, ou chemin d'un catalogue local (essais). Vide = Market officiel (D19).
     pub market_url: String,
     /// Mode développement (lot T4) : accepte les agents non certifiés, avec le badge « Non certifié ».
@@ -73,6 +81,7 @@ impl Default for Config {
             claude_api_key: String::new(),
             gemini_api_key: String::new(),
             openrouter_api_key: String::new(),
+            cles_en_clair: vec![],
             market_url: String::new(),
             mode_developpement: false,
             embeddings_enabled: false,
@@ -104,15 +113,148 @@ impl Default for Config {
 
 impl Config {
     pub fn load(paths: &Paths) -> Config {
-        std::fs::read_to_string(&paths.config)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+        Self::charger(paths, &crate::coffre::CoffreWindows).0
     }
 
+    /// Lit `config.json` et les clés API du coffre (lot S-c). Une clé encore écrite dans
+    /// `config.json` est rangée dans le coffre puis retirée du fichier ; si le coffre la refuse,
+    /// elle reste où elle est. Renvoie aussi ce qui a été fait, pour Conscience et le journal.
+    pub fn charger(paths: &Paths, coffre: &dyn crate::coffre::Coffre) -> (Config, Vec<String>) {
+        let mut cfg: Config = std::fs::read_to_string(&paths.config)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        let mut notes = vec![];
+        let mut migrees = 0;
+        for (fournisseur, _) in crate::coffre::FOURNISSEURS {
+            let cible = crate::coffre::cible_cle_api(paths, fournisseur);
+            let en_clair = cfg.cle(fournisseur).trim().to_string();
+            if en_clair.is_empty() {
+                *cfg.cle_mut(fournisseur) = coffre.lire(&cible).unwrap_or_default();
+                continue;
+            }
+            // clé encore dans le fichier : rangée dans le coffre, relue, puis retirée du fichier
+            match coffre.ecrire(&cible, &en_clair).and_then(|_| if coffre.lire(&cible).as_deref() == Some(en_clair.as_str()) { Ok(()) } else { Err("relecture différente".into()) }) {
+                Ok(()) => {
+                    migrees += 1;
+                    notes.push(format!("Clé API {fournisseur} déplacée de config.json vers le coffre de Windows."));
+                }
+                Err(e) => {
+                    cfg.cles_en_clair.push(fournisseur.to_string());
+                    notes.push(format!("Clé API {fournisseur} laissée dans config.json : {e}. Elle y reste lisible tant que le coffre de Windows la refuse."));
+                }
+            }
+        }
+        if migrees > 0 {
+            if let Err(e) = cfg.save(paths) {
+                notes.push(format!("config.json non réécrit après la migration des clés : {e}"));
+            }
+        }
+        (cfg, notes)
+    }
+
+    fn cle(&self, fournisseur: &str) -> &String {
+        match fournisseur {
+            "claude" => &self.claude_api_key,
+            "gemini" => &self.gemini_api_key,
+            _ => &self.openrouter_api_key,
+        }
+    }
+
+    pub fn cle_mut(&mut self, fournisseur: &str) -> &mut String {
+        match fournisseur {
+            "claude" => &mut self.claude_api_key,
+            "gemini" => &mut self.gemini_api_key,
+            _ => &mut self.openrouter_api_key,
+        }
+    }
+
+    /// Une clé API est-elle connue d'Orchestra (dans le coffre, ou laissée en clair) ?
+    pub fn cle_presente(&self, fournisseur: &str) -> bool {
+        !self.cle(fournisseur).trim().is_empty()
+    }
+
+    /// Écrit `config.json`, sans les clés API ; seules celles que le coffre a refusées y restent.
     pub fn save(&self, paths: &Paths) -> anyhow::Result<()> {
-        let s = serde_json::to_string_pretty(self)?;
-        std::fs::write(&paths.config, s)?;
+        let mut v = serde_json::to_value(self)?;
+        for (fournisseur, champ) in crate::coffre::FOURNISSEURS {
+            if self.cles_en_clair.iter().any(|c| c == fournisseur) {
+                v[champ] = serde_json::json!(self.cle(fournisseur));
+            }
+        }
+        std::fs::write(&paths.config, serde_json::to_string_pretty(&v)?)?;
         Ok(())
+    }
+
+    /// Réglages envoyés par l'interface, qui ne connaît pas les clés (lot S-c) : on garde celles
+    /// d'Orchestra.
+    pub fn garder_cles(&mut self, actuelle: &Config) {
+        self.claude_api_key = actuelle.claude_api_key.clone();
+        self.gemini_api_key = actuelle.gemini_api_key.clone();
+        self.openrouter_api_key = actuelle.openrouter_api_key.clone();
+        self.cles_en_clair = actuelle.cles_en_clair.clone();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::coffre::{cible_cle_api, Coffre, CoffreMemoire};
+
+    fn dossier() -> (Paths, std::path::PathBuf) {
+        let racine = std::env::temp_dir().join(format!("orchestra-sc-{}", &uuid::Uuid::new_v4().to_string()[..8]));
+        (Paths::at(racine.clone()).unwrap(), racine)
+    }
+
+    #[test]
+    fn aucune_cle_dans_le_fichier_ni_vers_l_interface() {
+        let c = Config { claude_api_key: "sk-ant-secret".into(), openrouter_api_key: "sk-or-secret".into(), ..Config::default() };
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(!json.contains("secret"), "{json}");
+    }
+
+    #[test]
+    fn cles_en_clair_migrees_dans_le_coffre() {
+        let (paths, racine) = dossier();
+        std::fs::write(&paths.config, r#"{"provider":"claude","claude_api_key":"sk-ant-123","gemini_api_key":""}"#).unwrap();
+        let coffre = CoffreMemoire::default();
+        let (cfg, notes) = Config::charger(&paths, &coffre);
+        assert_eq!(cfg.claude_api_key, "sk-ant-123");
+        assert_eq!(cfg.provider, "claude");
+        assert_eq!(coffre.lire(&cible_cle_api(&paths, "claude")).as_deref(), Some("sk-ant-123"));
+        assert_eq!(coffre.lire(&cible_cle_api(&paths, "gemini")), None, "clé vide : rien à ranger");
+        let fichier = std::fs::read_to_string(&paths.config).unwrap();
+        assert!(!fichier.contains("sk-ant-123") && fichier.contains("\"provider\": \"claude\""), "{fichier}");
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        // au lancement suivant, la clé vient du coffre
+        let (cfg2, notes2) = Config::charger(&paths, &coffre);
+        assert_eq!(cfg2.claude_api_key, "sk-ant-123");
+        assert!(notes2.is_empty(), "{notes2:?}");
+        let _ = std::fs::remove_dir_all(racine);
+    }
+
+    #[test]
+    fn coffre_inaccessible_la_cle_reste_en_place() {
+        let (paths, racine) = dossier();
+        std::fs::write(&paths.config, r#"{"gemini_api_key":"AIza-456"}"#).unwrap();
+        let coffre = CoffreMemoire { refuse: true, ..Default::default() };
+        let (mut cfg, notes) = Config::charger(&paths, &coffre);
+        assert_eq!(cfg.gemini_api_key, "AIza-456");
+        assert!(notes.iter().any(|n| n.contains("gemini")), "{notes:?}");
+        // un réglage enregistré plus tard ne la perd pas
+        cfg.user_name = "PB".into();
+        cfg.save(&paths).unwrap();
+        assert!(std::fs::read_to_string(&paths.config).unwrap().contains("AIza-456"));
+        let _ = std::fs::remove_dir_all(racine);
+    }
+
+    #[test]
+    fn reglages_de_l_interface_gardent_les_cles() {
+        let actuelle = Config { claude_api_key: "sk-ant-1".into(), ..Config::default() };
+        // l'interface renvoie ses réglages sans les clés
+        let mut recue: Config = serde_json::from_str(&serde_json::to_string(&actuelle).unwrap()).unwrap();
+        recue.user_name = "PB".into();
+        recue.garder_cles(&actuelle);
+        assert_eq!((recue.claude_api_key.as_str(), recue.user_name.as_str()), ("sk-ant-1", "PB"));
     }
 }

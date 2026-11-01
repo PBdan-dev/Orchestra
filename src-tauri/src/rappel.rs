@@ -21,14 +21,9 @@ pub fn adresse() -> Option<(String, String)> {
     ADRESSE.get().cloned()
 }
 
-/// Souvenirs d'une phrase, au format du bloc 5 du chat.
+/// Souvenirs d'une phrase, au format du bloc 5 du chat (extraits des fiches des agents encadrés, lot S-a).
 pub async fn souvenirs(paths: &Paths, texte: &str) -> String {
-    let r = memory::recall(paths, None, texte, 6).await;
-    if r.is_empty() {
-        "Aucun souvenir pertinent.".into()
-    } else {
-        r.iter().map(|x| format!("- [{} › {}] {}", x.file, x.section, x.text)).collect::<Vec<_>>().join("\n")
-    }
+    crate::securite::bloc_souvenirs(&memory::recall(paths, None, texte, 6).await)
 }
 
 /// Ouvre le point d'accès (une seule fois par lancement d'Orchestra).

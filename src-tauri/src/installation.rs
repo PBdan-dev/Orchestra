@@ -79,15 +79,18 @@ pub fn controle_format(v: &Value) -> Result<(), String> {
 }
 
 /// L'entrée du catalogue peut-elle être installée ? Renvoie la certification retenue (D25).
-pub fn autorisation(entree: &Value, mode_dev: bool) -> Result<String, String> {
+/// `cle_market` : clé publique du Market (lot S, A1) ; une certification sans signature valide ne compte pas.
+pub fn autorisation(entree: &Value, mode_dev: bool, cle_market: &str) -> Result<String, String> {
+    let signee = crate::signature::verifier(entree, cle_market);
     // agent hébergé (lot T8, D2, D25) : badge « livrable seul » au mieux, jamais « Orchestra Certified »
     if s(entree, "/execution/type") == "heberge" {
         if !s(entree, "/execution/endpoint").starts_with("https://") {
             return Err("agent hébergé sans adresse HTTPS : refusé".into());
         }
-        return match s(entree, "/certification/statut") {
-            "livrable_seul" | "orchestra_certified" => Ok("livrable_seul".into()),
+        return match (s(entree, "/certification/statut"), &signee) {
+            ("livrable_seul" | "orchestra_certified", Ok(())) => Ok("livrable_seul".into()),
             _ if mode_dev => Ok("non_certifie".into()),
+            ("livrable_seul" | "orchestra_certified", Err(e)) => Err(format!("{e} (mode développement désactivé)")),
             _ => Err("agent hébergé non vérifié par l'Agent Market (mode développement désactivé)".into()),
         };
     }
@@ -96,6 +99,12 @@ pub fn autorisation(entree: &Value, mode_dev: bool) -> Result<String, String> {
     let certifie = statut == "orchestra_certified";
     let version_certifiee = s(entree, "/certification/version_certifiee");
     if certifie && (version_certifiee.is_empty() || version_certifiee == version) {
+        if let Err(e) = signee {
+            if mode_dev {
+                return Ok("non_certifie".into());
+            }
+            return Err(format!("{e} : installation refusée (mode développement désactivé)"));
+        }
         return Ok("orchestra_certified".into());
     }
     if mode_dev {
@@ -316,9 +325,9 @@ pub fn installer_paquet(paths: &Paths, data: &[u8], entree: Option<&Value>, cert
 }
 
 /// Installation depuis le catalogue : certification, téléchargement vérifié, rangement.
-pub async fn installer_depuis_catalogue(http: &reqwest::Client, paths: &Paths, entree: &Value, mode_dev: bool, source: &str) -> Result<Installation, String> {
+pub async fn installer_depuis_catalogue(http: &reqwest::Client, paths: &Paths, entree: &Value, mode_dev: bool, source: &str, cle_market: &str) -> Result<Installation, String> {
     controle_format(entree)?;
-    let certification = autorisation(entree, mode_dev)?;
+    let certification = autorisation(entree, mode_dev, cle_market)?;
     if s(entree, "/execution/type") == "heberge" {
         return installer_heberge(paths, entree, &certification, source);
     }
@@ -376,13 +385,13 @@ pub fn installer_fichier(paths: &Paths, chemin: &Path, mode_dev: bool) -> Result
 }
 
 /// Entrées du catalogue avec, pour chacune, si elle peut être installée et pourquoi.
-pub fn lire_catalogue(entrees: Vec<Manifest>, paths: &Paths, mode_dev: bool) -> Vec<EntreeCatalogue> {
+pub fn lire_catalogue(entrees: Vec<Manifest>, paths: &Paths, mode_dev: bool, cle_market: &str) -> Vec<EntreeCatalogue> {
     let installes = agents::installed(paths);
     entrees
         .into_iter()
         .filter(|m| mode_dev || m.certification != "non_certifie")
         .map(|m| {
-            let (installable, motif) = match autorisation(&m.brut, mode_dev) {
+            let (installable, motif) = match autorisation(&m.brut, mode_dev, cle_market) {
                 Ok(c) if c == "non_certifie" => (true, "non certifié (mode développement)".to_string()),
                 Ok(_) => (true, String::new()),
                 Err(e) => (false, e),
@@ -480,25 +489,54 @@ mod tests {
 
     #[test]
     fn format_et_certification() {
+        let (privee, cle) = crate::signature::generer().unwrap();
+        let signee = |mut e: Value| {
+            crate::signature::signer(&mut e, &privee).unwrap();
+            e
+        };
         let mut m = manifeste("1.0.0");
         assert!(controle_format(&m).is_ok());
         m["format_manifeste"] = json!("3.0");
         assert!(controle_format(&m).unwrap_err().contains("incompatible"));
         let mut e = manifeste("1.0.0");
-        assert!(autorisation(&e, false).unwrap_err().contains("non certifié"));
-        assert_eq!(autorisation(&e, true).unwrap(), "non_certifie");
+        assert!(autorisation(&e, false, &cle).unwrap_err().contains("non certifié"));
+        assert_eq!(autorisation(&e, true, &cle).unwrap(), "non_certifie");
         e["certification"] = json!({ "statut": "orchestra_certified", "version_certifiee": "0.9.0" });
-        assert!(autorisation(&e, false).unwrap_err().contains("0.9.0"));
+        assert!(autorisation(&signee(e.clone()), false, &cle).unwrap_err().contains("0.9.0"));
         e["certification"]["version_certifiee"] = json!("1.0.0");
-        assert_eq!(autorisation(&e, false).unwrap(), "orchestra_certified");
+        assert_eq!(autorisation(&signee(e.clone()), false, &cle).unwrap(), "orchestra_certified");
         e["execution"] = json!({ "type": "heberge", "endpoint": "https://agent.exemple.fr/mission" });
-        assert_eq!(autorisation(&e, false).unwrap(), "livrable_seul", "hébergé certifié : au mieux « livrable seul »");
+        assert_eq!(autorisation(&signee(e.clone()), false, &cle).unwrap(), "livrable_seul", "hébergé certifié : au mieux « livrable seul »");
         e["certification"] = json!({ "statut": "non_certifie" });
-        assert!(autorisation(&e, false).unwrap_err().contains("hébergé"));
+        assert!(autorisation(&e, false, &cle).unwrap_err().contains("hébergé"));
         e["certification"] = json!({ "statut": "livrable_seul" });
-        assert_eq!(autorisation(&e, false).unwrap(), "livrable_seul");
+        assert_eq!(autorisation(&signee(e.clone()), false, &cle).unwrap(), "livrable_seul");
         e["execution"]["endpoint"] = json!("http://agent.exemple.fr");
-        assert!(autorisation(&e, true).unwrap_err().contains("HTTPS"));
+        assert!(autorisation(&e, true, &cle).unwrap_err().contains("HTTPS"));
+    }
+
+    #[test]
+    fn signature_du_market_exigee() {
+        let (privee, cle) = crate::signature::generer().unwrap();
+        let mut e = manifeste("1.0.0");
+        e["certification"] = json!({ "statut": "orchestra_certified", "version_certifiee": "1.0.0" });
+        e["paquet"] = json!({ "url": "https://exemple.fr/agent-essai-1.0.0.zip", "taille_octets": 10, "sha256": "ab".repeat(32) });
+        // sans signature : refusé ; en mode développement, accepté comme non certifié
+        let motif = autorisation(&e, false, &cle).unwrap_err();
+        assert!(motif.contains("signature"), "{motif}");
+        assert_eq!(autorisation(&e, true, &cle).unwrap(), "non_certifie");
+        // signée : acceptée ; retouchée après signature (autre paquet) : refusée
+        crate::signature::signer(&mut e, &privee).unwrap();
+        assert_eq!(autorisation(&e, false, &cle).unwrap(), "orchestra_certified");
+        let mut retouchee = e.clone();
+        retouchee["paquet"]["sha256"] = json!("cd".repeat(32));
+        assert!(autorisation(&retouchee, false, &cle).unwrap_err().contains("signature"));
+        // signée par une autre clé que celle du Market
+        let (autre, _) = crate::signature::generer().unwrap();
+        let mut pirate = manifeste("1.0.0");
+        pirate["certification"] = json!({ "statut": "orchestra_certified", "version_certifiee": "1.0.0" });
+        crate::signature::signer(&mut pirate, &autre).unwrap();
+        assert!(autorisation(&pirate, false, &cle).unwrap_err().contains("signature"));
     }
 
     /// Écrit, relit puis supprime un identifiant d'essai dans le vrai coffre de Windows.

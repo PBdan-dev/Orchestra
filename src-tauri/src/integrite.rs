@@ -89,9 +89,12 @@ pub enum Etat {
 
 /// Vérifie la chaîne d'un fichier.
 pub fn verifier(f: &Path) -> Etat {
-    let texte = std::fs::read_to_string(f).unwrap_or_default();
+    // lu sous le même verrou que l'écriture : jamais une ligne écrite sans sa fin de chaîne (lot S-b)
+    let (texte, fin) = {
+        let _verrou = ECRITURE.lock().unwrap_or_else(|e| e.into_inner());
+        (std::fs::read_to_string(f).unwrap_or_default(), lire_fin(f))
+    };
     let lignes: Vec<&str> = texte.lines().filter(|l| !l.trim().is_empty()).collect();
-    let fin = lire_fin(f);
     let mut chainee = false;
     for (i, l) in lignes.iter().enumerate() {
         let prev = serde_json::from_str::<Value>(l).ok().and_then(|v| v["prev"].as_str().map(String::from));

@@ -31,8 +31,15 @@ fn entree(data: &[u8], id: &str, v: &str, statut: &str) -> anyhow::Result<Value>
     let mut m: Value = serde_json::from_str(&texte)?;
     m["paquet"] = json!({ "url": url(id, v), "taille_octets": data.len(), "sha256": installation::sha256_hex(data) });
     m["certification"] = json!({ "statut": statut, "version_certifiee": v, "date": "2026-10-31", "signature": null });
+    // le Market signe ses entrées certifiées (lot S, A1) : ici, une clé d'essai
+    if statut == "orchestra_certified" {
+        orchestra_lib::signature::signer(&mut m, &CLE_ESSAI.0).map_err(|e| anyhow::anyhow!(e))?;
+    }
     Ok(m)
 }
+
+/// Clé d'essai du Market (privée, publique), propre à ce lancement.
+static CLE_ESSAI: std::sync::LazyLock<(Vec<u8>, String)> = std::sync::LazyLock::new(|| orchestra_lib::signature::generer().expect("clé d'essai"));
 
 fn ok(cond: bool, quoi: &str, bilan: &mut (u32, u32)) {
     println!("{} {quoi}", if cond { "OK " } else { "KO " });
@@ -71,42 +78,45 @@ async fn main() -> anyhow::Result<()> {
     let trouver = |id: &str, v: &str| lecture.agents.iter().find(|m| m.id == id && m.version == v).map(|m| m.brut.clone()).unwrap();
 
     // 2. Agent certifié : installation depuis GitHub
-    let r = installation::installer_depuis_catalogue(&http, &paths, &trouver("agent-date", "1.0.0"), false, &source).await;
+    let r = installation::installer_depuis_catalogue(&http, &paths, &trouver("agent-date", "1.0.0"), false, &source, &CLE_ESSAI.1).await;
     println!("  {:?}", r.as_ref().map(|i| (&i.manifest.id, &i.certification)).map_err(|e| e.clone()));
     ok(r.is_ok() && agents::get_installed(&paths, "agent-date").is_some_and(|m| m.certification == "orchestra_certified"), "agent-date certifié installé", &mut bilan);
 
     // 3. Non certifié refusé hors mode développement, accepté avec le badge en mode développement
-    let e = installation::installer_depuis_catalogue(&http, &paths, &trouver("agent-fichiers", "1.0.0"), false, &source).await;
+    let e = installation::installer_depuis_catalogue(&http, &paths, &trouver("agent-fichiers", "1.0.0"), false, &source, &CLE_ESSAI.1).await;
     println!("  {:?}", e.as_ref().err());
     ok(e.is_err() && agents::get_installed(&paths, "agent-fichiers").is_none(), "agent-fichiers non certifié refusé (mode développement désactivé)", &mut bilan);
-    let r = installation::installer_depuis_catalogue(&http, &paths, &trouver("agent-fichiers", "1.0.0"), true, &source).await;
+    let r = installation::installer_depuis_catalogue(&http, &paths, &trouver("agent-fichiers", "1.0.0"), true, &source, &CLE_ESSAI.1).await;
     ok(r.is_ok() && agents::get_installed(&paths, "agent-fichiers").is_some_and(|m| m.certification == "non_certifie"), "agent-fichiers installé en mode développement, badge « Non certifié »", &mut bilan);
 
     // 4. Empreinte ou taille fausses : refus avant toute ouverture
     let mut faux = trouver("agent-brouillons", "1.0.2");
     faux["paquet"]["sha256"] = json!("0".repeat(64));
-    let e = installation::installer_depuis_catalogue(&http, &paths, &faux, false, &source).await;
+    // entrée signée par le Market, mais le paquet servi ne correspond pas (paquet remplacé sur le serveur)
+    orchestra_lib::signature::signer(&mut faux, &CLE_ESSAI.0).map_err(|e| anyhow::anyhow!(e))?;
+    let e = installation::installer_depuis_catalogue(&http, &paths, &faux, false, &source, &CLE_ESSAI.1).await;
     println!("  {:?}", e.as_ref().err());
     ok(e.as_ref().is_err_and(|e| e.contains("SHA-256")), "empreinte fausse refusée", &mut bilan);
     let mut faux = trouver("agent-brouillons", "1.0.2");
     faux["paquet"]["taille_octets"] = json!(100);
-    let e = installation::installer_depuis_catalogue(&http, &paths, &faux, false, &source).await;
+    orchestra_lib::signature::signer(&mut faux, &CLE_ESSAI.0).map_err(|e| anyhow::anyhow!(e))?;
+    let e = installation::installer_depuis_catalogue(&http, &paths, &faux, false, &source, &CLE_ESSAI.1).await;
     println!("  {:?}", e.as_ref().err());
     ok(e.is_err() && agents::get_installed(&paths, "agent-brouillons").is_none(), "taille fausse refusée", &mut bilan);
 
     // 5. Format 3.x refusé avec motif
     let mut f3 = trouver("agent-brouillons", "1.0.2");
     f3["format_manifeste"] = json!("3.0");
-    let e = installation::installer_depuis_catalogue(&http, &paths, &f3, false, &source).await;
+    let e = installation::installer_depuis_catalogue(&http, &paths, &f3, false, &source, &CLE_ESSAI.1).await;
     println!("  {:?}", e.as_ref().err());
     ok(e.as_ref().is_err_and(|e| e.contains("incompatible")), "format 3.x refusé", &mut bilan);
 
     // 6. Mise à jour 1.0.2 → 1.0.3 : programme remplacé, mémoire gardée
-    installation::installer_depuis_catalogue(&http, &paths, &trouver("agent-brouillons", "1.0.2"), false, &source).await.map_err(|e| anyhow::anyhow!(e))?;
+    installation::installer_depuis_catalogue(&http, &paths, &trouver("agent-brouillons", "1.0.2"), false, &source, &CLE_ESSAI.1).await.map_err(|e| anyhow::anyhow!(e))?;
     let memoire = agents::dossier_installe(&paths, "agent-brouillons").join("memoire");
     std::fs::create_dir_all(&memoire)?;
     std::fs::write(memoire.join("ton.md"), "PB préfère un ton cordial.")?;
-    let i = installation::installer_depuis_catalogue(&http, &paths, &trouver("agent-brouillons", "1.0.3"), false, &source).await.map_err(|e| anyhow::anyhow!(e))?;
+    let i = installation::installer_depuis_catalogue(&http, &paths, &trouver("agent-brouillons", "1.0.3"), false, &source, &CLE_ESSAI.1).await.map_err(|e| anyhow::anyhow!(e))?;
     println!("  mise à jour : {:?} → {}", i.ancienne_version, i.manifest.version);
     ok(
         i.ancienne_version.as_deref() == Some("1.0.2") && i.manifest.version == "1.0.3" && std::fs::read_to_string(memoire.join("ton.md")).unwrap_or_default() == "PB préfère un ton cordial.",

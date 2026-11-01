@@ -60,6 +60,12 @@ pub enum Event {
     MissionOrdre { mission_id: String, ordre: String },
     /// Vérification de la mission (lot T5) : écarts, contrôles, et confiance qui en découle.
     MissionVerification { run_id: String, mission_id: String, agent_id: String, ecarts: Vec<String>, controles: Vec<String>, statut: String, total_ecarts: u32, confiance_retiree: bool },
+    /// Données d'Orchestra changées pendant une mission, hors des zones de l'agent (lot S-b) : alerte.
+    DonneesModifiees { run_id: String, mission_id: String, agent_id: String, changements: Vec<crate::surveillance::Changement> },
+    /// Choix B1 (lot S-a) : Orchestra veut lire une adresse que PB n'a pas écrite, après un contenu extérieur.
+    LectureAConfirmer { run_id: String, cle: String, url: String, raison: String },
+    /// Réponse de PB (ou refus automatique) à une lecture à confirmer.
+    LectureReglee { run_id: String, cle: String, url: String, accepte: bool },
     /// Action irréversible en attente de la réponse de PB (D28).
     ValidationRequise { run_id: String, cle: String, mission_id: String, agent_id: String, action: String, raison: String },
     /// Réponse donnée (par PB, ou automatiquement par une autorisation en cours).

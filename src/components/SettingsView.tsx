@@ -14,6 +14,52 @@ const PROVIDERS: { id: Config["provider"]; name: string; sub: string; local: boo
   { id: "openrouter", name: "OpenRouter", sub: "multi-modèles · clé API", local: false },
 ];
 
+/**
+ * Clé API d'un fournisseur (lot S-c) : rangée dans le Gestionnaire d'identification de Windows,
+ * jamais réaffichée ni écrite dans config.json. On voit seulement si elle est enregistrée.
+ */
+function CleApi({ fournisseur, nom, exemple }: { fournisseur: string; nom: string; exemple: string }) {
+  const refreshBrain = useStore((s) => s.refreshBrain);
+  const [presente, setPresente] = useState<boolean | null>(null);
+  const [saisie, setSaisie] = useState(false);
+  const [valeur, setValeur] = useState("");
+  const [erreur, setErreur] = useState("");
+  const charger = () => api.clesApi().then((c) => setPresente(!!c[fournisseur])).catch(() => setPresente(false));
+  useEffect(() => { setSaisie(false); setValeur(""); setErreur(""); charger(); }, [fournisseur]);
+  const agir = async (f: () => Promise<void>) => {
+    setErreur("");
+    try {
+      await f();
+      setValeur("");
+      setSaisie(false);
+      await charger();
+      refreshBrain();
+    } catch (e) {
+      setErreur(String(e));
+    }
+  };
+  return (
+    <div className="cle-api">
+      <span>Clé API {nom}</span>
+      {presente && !saisie ? (
+        <div className="cle-api-ligne">
+          <span className="tag ok">enregistrée</span>
+          <span className="muted small">dans le coffre de Windows, jamais réaffichée</span>
+          <button className="glass-btn sm" onClick={() => setSaisie(true)}>Remplacer</button>
+          <button className="link-btn" onClick={() => agir(() => api.supprimerCle(fournisseur))}>Supprimer</button>
+        </div>
+      ) : (
+        <div className="cle-api-ligne">
+          <input type="password" autoComplete="off" value={valeur} onChange={(e) => setValeur(e.target.value)} placeholder={exemple} />
+          <button className="glass-btn sm" disabled={!valeur.trim()} onClick={() => agir(() => api.enregistrerCle(fournisseur, valeur))}>Ranger dans le coffre de Windows</button>
+          {saisie && <button className="link-btn" onClick={() => { setSaisie(false); setValeur(""); }}>Annuler</button>}
+        </div>
+      )}
+      {erreur && <div className="small warn">{erreur}</div>}
+    </div>
+  );
+}
+
 export function SettingsView() {
   const config = useStore((s) => s.config);
   const brain = useStore((s) => s.brain);
@@ -81,9 +127,9 @@ export function SettingsView() {
             </label>
             {form.provider === "ollama" && <label><span>URL d'Ollama</span><input value={form.ollama_url} onChange={(e) => set("ollama_url", e.target.value)} /></label>}
             {form.provider === "lmstudio" && <label><span>URL de LM Studio</span><input value={form.lmstudio_url} onChange={(e) => set("lmstudio_url", e.target.value)} /></label>}
-            {form.provider === "claude" && <label><span>Clé API Claude</span><input type="password" value={form.claude_api_key} onChange={(e) => set("claude_api_key", e.target.value)} placeholder="sk-ant-…" /></label>}
-            {form.provider === "gemini" && <label><span>Clé API Gemini</span><input type="password" value={form.gemini_api_key} onChange={(e) => set("gemini_api_key", e.target.value)} /></label>}
-            {form.provider === "openrouter" && <label><span>Clé API OpenRouter</span><input type="password" value={form.openrouter_api_key} onChange={(e) => set("openrouter_api_key", e.target.value)} placeholder="sk-or-…" /></label>}
+            {form.provider === "claude" && <CleApi fournisseur="claude" nom="Claude" exemple="sk-ant-…" />}
+            {form.provider === "gemini" && <CleApi fournisseur="gemini" nom="Gemini" exemple="AIza…" />}
+            {form.provider === "openrouter" && <CleApi fournisseur="openrouter" nom="OpenRouter" exemple="sk-or-…" />}
           </div>
 
           <div className="detect foot-status" style={{ ["--c" as any]: status.color }}>

@@ -105,8 +105,11 @@ async fn main() -> anyhow::Result<()> {
     let mut bilan = (0, 0);
 
     // 1. Installation : catalogue livrable_seul, ce qui quitte la machine
-    let entree = manifeste(port, "/bon", json!([]));
-    let i = installation::installer_depuis_catalogue(&http, &paths, &entree, false, "catalogue d'essai").await.map_err(|e| anyhow::anyhow!(e))?;
+    let (cle_privee, cle_publique) = orchestra_lib::signature::generer().map_err(|e| anyhow::anyhow!(e))?;
+    let mut entree = manifeste(port, "/bon", json!([]));
+    // le Market signe ses entrées « livrable seul » (lot S, A1) : ici, une clé d'essai
+    orchestra_lib::signature::signer(&mut entree, &cle_privee).map_err(|e| anyhow::anyhow!(e))?;
+    let i = installation::installer_depuis_catalogue(&http, &paths, &entree, false, "catalogue d'essai", &cle_publique).await.map_err(|e| anyhow::anyhow!(e))?;
     let trace: Value = serde_json::from_str(&std::fs::read_to_string(agents::dossier_installe(&paths, "agent-traduction").join("installation.json"))?)?;
     println!("  ce qui part : {}", trace["ce_qui_part"]);
     ok(i.certification == "livrable_seul" && trace["ce_qui_part"]["donnees_envoyees"] == "le texte à traduire", "agent hébergé installé (livrable seul), ce qui quitte la machine noté", &mut bilan);
@@ -140,7 +143,7 @@ async fn main() -> anyhow::Result<()> {
     ok(d.compte_rendu["motif"].as_str().unwrap_or("").contains("HTTPS"), "adresse http refusée (HTTPS obligatoire)", &mut bilan);
     let mut sans = entree.clone();
     sans["execution"]["endpoint"] = json!("http://localhost/bon");
-    ok(installation::autorisation(&sans, true).is_err(), "installation refusée sans HTTPS", &mut bilan);
+    ok(installation::autorisation(&sans, true, &cle_publique).is_err(), "installation refusée sans HTTPS", &mut bilan);
 
     // 5. Clé (D34) : envoyée en Authorization seulement à l'agent qui la déclare
     m2.brut["execution"]["endpoint"] = json!(format!("https://localhost:{port}/cle"));

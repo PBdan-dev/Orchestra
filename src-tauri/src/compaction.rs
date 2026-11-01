@@ -205,15 +205,15 @@ pub fn fichier_session(paths: &Paths, debut: chrono::DateTime<chrono::Local>) ->
 
 /// Ce qui est envoyé au modèle : résumé actuel (le fichier, éventuellement corrigé par PB) et échanges.
 fn matiere(ancien: Option<&str>, echanges: &[Msg]) -> String {
-    let mut s = String::from("<donnees>\n## Résumé actuel\n");
+    let mut s = String::from("## Résumé actuel\n");
     s.push_str(ancien.unwrap_or("(aucun : début de la conversation)"));
     s.push_str("\n\n## Nouveaux échanges à intégrer\n");
     for m in echanges {
         let qui = if m.role == "user" { "Utilisateur" } else { "Orchestra" };
         s.push_str(&format!("{qui} : {}\n", m.content.trim()));
     }
-    s.push_str("</donnees>");
-    s
+    // désamorcé et encadré (lot S-a) : les réponses d'Orchestra peuvent citer un agent ou une page
+    crate::securite::encadrer(&s)
 }
 
 /// Une compaction : fusionne l'ancien résumé et les échanges, écrit le fichier, calibre le comptage.

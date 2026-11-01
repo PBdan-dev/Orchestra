@@ -1,6 +1,7 @@
 pub mod agents;
 pub mod banc;
 pub mod brain;
+pub mod coffre;
 pub mod compaction;
 pub mod config;
 pub mod contrat;
@@ -20,7 +21,10 @@ pub mod pilote;
 pub mod porte;
 pub mod modele;
 pub mod schema;
+pub mod securite;
+pub mod signature;
 pub mod suivi;
+pub mod surveillance;
 pub mod tools;
 pub mod validations;
 pub mod verification;
@@ -62,6 +66,14 @@ fn annuler_compaction_en_cours(app: &AppHandle, state: &AppState) -> bool {
 
 type CmdResult<T> = Result<T, String>;
 
+/// Écriture demandée par PB depuis l'interface : notée, pour qu'une mission en cours ne la
+/// compte pas comme une modification par l'agent (lot S-b).
+fn noter(state: &AppState, chemins: &[std::path::PathBuf]) {
+    for c in chemins {
+        surveillance::noter(&state.paths, c);
+    }
+}
+
 fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
@@ -73,9 +85,59 @@ fn get_config(state: State<AppState>) -> Config {
 
 #[tauri::command]
 fn save_config(state: State<AppState>, config: Config) -> CmdResult<()> {
+    // l'interface ne connaît pas les clés API (lot S-c) : celles d'Orchestra sont gardées
+    let mut config = config;
+    config.garder_cles(&state.config.lock().unwrap());
+    noter(&state, &[state.paths.config.clone()]);
     config.save(&state.paths).map_err(err)?;
     *state.config.lock().unwrap() = config;
     Ok(())
+}
+
+/// Clés API présentes (lot S-c) : jamais leur valeur, seulement si elles sont enregistrées.
+#[tauri::command]
+fn cles_api(state: State<AppState>) -> std::collections::BTreeMap<String, bool> {
+    let cfg = state.config.lock().unwrap();
+    coffre::FOURNISSEURS.iter().map(|(f, _)| (f.to_string(), cfg.cle_presente(f))).collect()
+}
+
+/// Range une clé API dans le coffre de Windows (lot S-c), puis la retire de `config.json` si
+/// elle y était restée.
+#[tauri::command]
+fn enregistrer_cle(state: State<AppState>, fournisseur: String, valeur: String) -> CmdResult<()> {
+    use coffre::Coffre;
+    if !coffre::FOURNISSEURS.iter().any(|(f, _)| *f == fournisseur) {
+        return Err(format!("fournisseur inconnu : {fournisseur}"));
+    }
+    let valeur = valeur.trim().to_string();
+    if valeur.is_empty() {
+        return Err("clé vide".into());
+    }
+    let cible = coffre::cible_cle_api(&state.paths, &fournisseur);
+    coffre::CoffreWindows.ecrire(&cible, &valeur)?;
+    if coffre::CoffreWindows.lire(&cible).as_deref() != Some(valeur.as_str()) {
+        return Err("coffre de Windows : la clé relue ne correspond pas".into());
+    }
+    noter(&state, &[state.paths.config.clone()]);
+    let mut cfg = state.config.lock().unwrap();
+    *cfg.cle_mut(&fournisseur) = valeur;
+    cfg.cles_en_clair.retain(|c| *c != fournisseur);
+    cfg.save(&state.paths).map_err(err)
+}
+
+/// Supprime une clé API du coffre de Windows (et de `config.json` si elle y était restée).
+#[tauri::command]
+fn supprimer_cle(state: State<AppState>, fournisseur: String) -> CmdResult<()> {
+    use coffre::Coffre;
+    if !coffre::FOURNISSEURS.iter().any(|(f, _)| *f == fournisseur) {
+        return Err(format!("fournisseur inconnu : {fournisseur}"));
+    }
+    coffre::CoffreWindows.supprimer(&coffre::cible_cle_api(&state.paths, &fournisseur))?;
+    noter(&state, &[state.paths.config.clone()]);
+    let mut cfg = state.config.lock().unwrap();
+    cfg.cle_mut(&fournisseur).clear();
+    cfg.cles_en_clair.retain(|c| *c != fournisseur);
+    cfg.save(&state.paths).map_err(err)
 }
 
 #[tauri::command]
@@ -120,10 +182,11 @@ fn signaler_installation(app: &AppHandle, i: &installation::Installation) {
 #[tauri::command]
 async fn install_agent(app: AppHandle, state: State<'_, AppState>, id: String) -> CmdResult<installation::Installation> {
     let cfg = state.config.lock().unwrap().clone();
+    noter(&state, &[agents::dossier_installe(&state.paths, &id), state.paths.agents.join("anciennes-versions")]);
     let r = async {
         let (lecture, source) = market::fetch_catalogue(&state.http, &cfg).await?;
         let entree = lecture.agents.into_iter().find(|m| m.id == id).ok_or_else(|| format!("{id} absent du catalogue (ou entrée invalide)"))?;
-        installation::installer_depuis_catalogue(&state.http, &state.paths, &entree.brut, cfg.mode_developpement, &source).await
+        installation::installer_depuis_catalogue(&state.http, &state.paths, &entree.brut, cfg.mode_developpement, &source, signature::CLE_PUBLIQUE_MARKET).await
     }
     .await;
     match r {
@@ -143,6 +206,8 @@ async fn install_agent(app: AppHandle, state: State<'_, AppState>, id: String) -
 fn install_agent_zip(app: AppHandle, state: State<AppState>, chemin: String) -> CmdResult<installation::Installation> {
     let mode_dev = state.config.lock().unwrap().mode_developpement;
     let chemin = chemin.trim().trim_matches('"').to_string();
+    // l'identifiant de l'agent n'est connu qu'à l'ouverture du paquet : tout le dossier des agents installés
+    noter(&state, &[state.paths.installes.clone(), state.paths.agents.join("anciennes-versions")]);
     match installation::installer_fichier(&state.paths, std::path::Path::new(&chemin), mode_dev) {
         Ok(i) => {
             signaler_installation(&app, &i);
@@ -168,7 +233,7 @@ struct Catalogue {
 async fn catalogue(state: State<'_, AppState>) -> CmdResult<Catalogue> {
     let cfg = state.config.lock().unwrap().clone();
     let (lecture, source) = market::fetch_catalogue(&state.http, &cfg).await?;
-    Ok(Catalogue { entrees: installation::lire_catalogue(lecture.agents, &state.paths, cfg.mode_developpement), ignores: lecture.ignores, source })
+    Ok(Catalogue { entrees: installation::lire_catalogue(lecture.agents, &state.paths, cfg.mode_developpement, signature::CLE_PUBLIQUE_MARKET), ignores: lecture.ignores, source })
 }
 
 /// Vérifie les chaînes d'empreintes des traces (lot T6) : toutes au lancement (appelé par
@@ -178,6 +243,8 @@ async fn catalogue(state: State<'_, AppState>) -> CmdResult<Catalogue> {
 async fn verifier_integrite(app: AppHandle, state: State<'_, AppState>, mission: Option<String>) -> CmdResult<integrite::Bilan> {
     let paths = state.paths.clone();
     let m = mission.clone();
+    // une cassure trouvée est mise à l'abri et comptée : écritures d'Orchestra, pas de l'agent en cours
+    noter(&state, &[paths.root.join("integrite"), paths.agents.join("confiance.json"), paths.main_memory()]);
     let b = tauri::async_runtime::spawn_blocking(move || integrite::verifier_tout(&paths, m.as_deref())).await.map_err(err)?;
     events::emit(&app, events::Event::Integrite {
         contexte: match &mission { Some(id) => format!("mission {id}"), None => "lancement".into() },
@@ -340,12 +407,14 @@ fn confiance_agents(state: State<AppState>) -> std::collections::BTreeMap<String
 /// PB lève la quarantaine d'un agent : compteur remis à zéro, confiance encore à rétablir.
 #[tauri::command]
 fn lever_quarantaine(state: State<AppState>, id: String) -> CmdResult<()> {
+    noter(&state, &[state.paths.agents.join("confiance.json")]);
     verification::lever_quarantaine(&state.paths, &id).map_err(err)
 }
 
 /// PB rétablit la confiance dans un agent (il pourra de nouveau être promu « de confiance »).
 #[tauri::command]
 fn retablir_confiance(state: State<AppState>, id: String) -> CmdResult<()> {
+    noter(&state, &[state.paths.agents.join("confiance.json")]);
     verification::retablir(&state.paths, &id).map_err(err)
 }
 
@@ -370,6 +439,7 @@ fn enregistrer_identifiant(state: State<AppState>, id: String, nom: String, vale
 #[tauri::command]
 fn uninstall_agent(state: State<AppState>, id: String) -> CmdResult<()> {
     let p = agents::dossier_installe(&state.paths, &id);
+    noter(&state, &[p.clone(), state.paths.agents.join("desinstalles")]);
     if p.exists() {
         let dest = state.paths.agents.join("desinstalles");
         std::fs::create_dir_all(&dest).map_err(err)?;
@@ -433,6 +503,7 @@ fn read_text_file(state: State<AppState>, rel: String) -> CmdResult<String> {
 #[tauri::command]
 fn write_text_file(state: State<AppState>, rel: String, content: String) -> CmdResult<()> {
     let p = safe_path(&state, &rel)?;
+    noter(&state, &[p.clone()]);
     std::fs::write(p, content).map_err(err)
 }
 
@@ -560,6 +631,8 @@ async fn ollama_switch(state: State<'_, AppState>, load: Option<String>, unload:
 /// Réponse de PB à une demande de validation (D28).
 #[tauri::command]
 fn repondre_validation(app: AppHandle, state: State<AppState>, cle: String, accepte: bool, portee: String) -> CmdResult<()> {
+    // une autorisation permanente est écrite dans agents/autorisations.json (D28)
+    noter(&state, &[state.paths.agents.join("autorisations.json")]);
     let (mission_id, _agent) = state.validations.repondre(&cle, accepte, &portee)?;
     events::emit(&app, events::Event::ValidationReglee {
         run_id: String::new(),
@@ -572,6 +645,12 @@ fn repondre_validation(app: AppHandle, state: State<AppState>, cle: String, acce
     Ok(())
 }
 
+/// Réponse de PB à une lecture web à confirmer (choix B1, lot S-a) : le tour en attente reprend.
+#[tauri::command]
+fn confirmer_lecture(state: State<AppState>, cle: String, accepte: bool) -> CmdResult<()> {
+    state.validations.repondre(&cle, accepte, "cette_fois").map(|_| ())
+}
+
 #[tauri::command]
 fn lister_autorisations(state: State<AppState>) -> Vec<validations::Autorisation> {
     state.validations.lister()
@@ -579,12 +658,14 @@ fn lister_autorisations(state: State<AppState>) -> Vec<validations::Autorisation
 
 #[tauri::command]
 fn retirer_autorisation(state: State<AppState>, autorisation: validations::Autorisation) -> CmdResult<()> {
+    noter(&state, &[state.paths.agents.join("autorisations.json")]);
     state.validations.retirer(&autorisation).map_err(err)
 }
 
 /// Remet à zéro la mémoire propre d'un agent (D32) : l'ancienne est archivée, jamais effacée.
 #[tauri::command]
 fn reinitialiser_memoire_agent(state: State<AppState>, id: String) -> CmdResult<String> {
+    noter(&state, &[agents::dossier_installe(&state.paths, &id).join("memoire"), state.paths.agents.join("memoires-archivees")]);
     agents::archiver_memoire(&state.paths, &id).map(|p| p.to_string_lossy().to_string()).map_err(err)
 }
 
@@ -615,6 +696,7 @@ fn choisir_projet(state: State<AppState>, nom: String) -> CmdResult<String> {
     if nom.is_empty() || nom.chars().all(|c| c == '-') {
         return Err("nom de projet vide".into());
     }
+    noter(&state, &[state.paths.projets.join(&nom), state.paths.config.clone()]);
     std::fs::create_dir_all(state.paths.projets.join(&nom)).map_err(err)?;
     let mut cfg = state.config.lock().unwrap();
     cfg.projet_actif = nom.clone();
@@ -633,7 +715,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let paths = Paths::init().map_err(|e| anyhow::anyhow!("dossiers : {e}"))?;
-            let config = Config::load(&paths);
+            // clés API lues dans le coffre de Windows ; une clé restée dans config.json y est migrée (lot S-c)
+            let (config, notes_cles) = Config::charger(&paths, &coffre::CoffreWindows);
             if !paths.config.exists() {
                 let _ = config.save(&paths);
             }
@@ -653,11 +736,18 @@ pub fn run() {
                 }
             }
             app.manage(state);
+            // migration des clés (lot S-c) : notée au journal et dans Conscience
+            for n in notes_cles {
+                events::emit(app.handle(), events::Event::Avertissement { run_id: "cles".into(), message: n });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_config,
             save_config,
+            cles_api,
+            enregistrer_cle,
+            supprimer_cle,
             detect_brain,
             load_model,
             install_agent,
@@ -697,6 +787,7 @@ pub fn run() {
             voice_restart,
             ollama_switch,
             repondre_validation,
+            confirmer_lecture,
             lister_autorisations,
             retirer_autorisation,
             reinitialiser_memoire_agent,

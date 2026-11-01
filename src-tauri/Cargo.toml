@@ -30,6 +30,8 @@ zip = { version = "2", default-features = false, features = ["deflate-miniz"] }
 keyring = { version = "3", features = ["windows-native"] }
 sha2 = "0.10"
 pdf-extract = "0.9"
+# signature des entrées du Market (lot S, A1) ; déjà livrée avec reqwest pour le HTTPS (Apache-2.0 + ISC)
+ring = "0.17"
 
 [profile.release]
 opt-level = 2

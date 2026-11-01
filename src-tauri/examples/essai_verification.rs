@@ -123,6 +123,7 @@ async fn mission(paths: &Paths, m: &agents::Manifest, projet: &std::path::Path, 
         ecarts_contrat: &d.ecarts,
         validations: &decisions,
         memoire_changee: &memoire_changee,
+        donnees_modifiees: &[],
     };
     let b = verification::apres_mission(paths, &dossier, &mission_id, &c)?;
     println!("  {} : état {} · {} écart(s) {:?} · {}", m.id, d.compte_rendu["etat"], b.verification.ecarts.len(), b.verification.ecarts, b.confiance.libelle());
@@ -228,6 +229,7 @@ async fn main() -> anyhow::Result<()> {
         ecarts_contrat: &d.ecarts,
         validations: &decisions,
         memoire_changee: &[],
+        donnees_modifiees: &[],
     });
     println!("  agent-fichiers : état {} · {:?} · contrôles {:?}", d.compte_rendu["etat"], v.ecarts, v.controles);
     ok(d.compte_rendu["etat"] == "termine" && v.ecarts.is_empty(), "vrai agent-fichiers, suppression validée : aucun écart (livrable conforme à son modèle)", &mut bilan);

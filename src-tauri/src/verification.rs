@@ -43,28 +43,31 @@ pub fn empreintes(dossier: &Path) -> Empreintes {
                 continue;
             }
             let rel = p.strip_prefix(racine).unwrap_or(&p).to_string_lossy().replace('\\', "/");
-            let empreinte = if meta.len() > LECTURE_MAX {
-                let date = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
-                format!("taille {} · modifié {date}", meta.len())
-            } else {
-                let mut h = Sha256::new();
-                let mut buf = vec![0u8; 1 << 16];
-                match std::fs::File::open(&p) {
-                    Ok(mut f) => loop {
-                        match f.read(&mut buf) {
-                            Ok(0) => break format!("{:x}", h.finalize()),
-                            Ok(n) => h.update(&buf[..n]),
-                            Err(_) => break "illisible".into(),
-                        }
-                    },
-                    Err(_) => "illisible".into(),
-                }
-            };
-            out.insert(rel, empreinte);
+            out.insert(rel, empreinte_fichier(&p, &meta));
         }
     }
     parcourir(dossier, dossier, &mut out);
     out
+}
+
+/// Empreinte SHA-256 d'un fichier ; au-delà de 200 Mo, sa taille et sa date de modification.
+pub fn empreinte_fichier(p: &Path, meta: &std::fs::Metadata) -> String {
+    if meta.len() > LECTURE_MAX {
+        let date = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
+        return format!("taille {} · modifié {date}", meta.len());
+    }
+    let mut h = Sha256::new();
+    let mut buf = vec![0u8; 1 << 16];
+    match std::fs::File::open(p) {
+        Ok(mut f) => loop {
+            match f.read(&mut buf) {
+                Ok(0) => break format!("{:x}", h.finalize()),
+                Ok(n) => h.update(&buf[..n]),
+                Err(_) => break "illisible".into(),
+            }
+        },
+        Err(_) => "illisible".into(),
+    }
 }
 
 /// Ce qu'Orchestra a constaté pendant la mission, à comparer au compte rendu.
@@ -85,6 +88,8 @@ pub struct Constats<'a> {
     pub validations: &'a [(String, bool)],
     /// Fichiers de la mémoire propre de l'agent qui ont changé (`memoire/…`).
     pub memoire_changee: &'a [String],
+    /// Données d'Orchestra changées pendant la mission hors des zones de l'agent (lot S-b), déjà libellées.
+    pub donnees_modifiees: &'a [String],
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -215,6 +220,10 @@ pub fn verifier(c: &Constats) -> Verification {
 
     // 6. Écarts au contrat pendant l'échange
     v.ecarts.extend(c.ecarts_contrat.iter().map(|e| format!("contrat : {e}")));
+
+    // 7. Dossier d'Orchestra (lot S-b) : rien ne doit changer hors des zones de l'agent
+    v.ecarts.extend(c.donnees_modifiees.iter().cloned());
+    v.controles.push(format!("dossier d'Orchestra hors des zones de l'agent : {} changement(s)", c.donnees_modifiees.len()));
     v
 }
 
@@ -386,6 +395,7 @@ mod tests {
             ecarts_contrat: &[],
             validations: &val,
             memoire_changee: &mem,
+            donnees_modifiees: &[],
         })
     }
 
@@ -440,6 +450,29 @@ mod tests {
         // hors liste
         let v = verif(&m, cr("echec", json!([]), json!([a("action_sensitive_payer")])), &emp(&[]), &emp(&[]), &[], &[("action_sensitive_payer", true)], &[]);
         assert!(v.ecarts.iter().any(|e| e.contains("hors de la liste")));
+    }
+
+    #[test]
+    fn donnees_d_orchestra_modifiees_comptent_comme_ecarts() {
+        let m = agent(json!([]), false);
+        let projet = std::env::temp_dir().join("orchestra-t5-inexistant");
+        let donnees = vec!["donnée d'Orchestra modifié pendant la mission : memoire/orchestra.md".to_string(), "donnée d'Orchestra ajouté pendant la mission : projets/autre/x.txt".to_string()];
+        let v = verifier(&Constats {
+            agent: &m,
+            mission: &json!({}),
+            compte_rendu: &cr("termine", json!([]), json!([])),
+            projet: &projet,
+            avant: &emp(&[]),
+            apres: &emp(&[]),
+            appels_observes: &[],
+            ecarts_porte: &[],
+            ecarts_contrat: &[],
+            validations: &[],
+            memoire_changee: &[],
+            donnees_modifiees: &donnees,
+        });
+        assert_eq!(v.ecarts, donnees);
+        assert!(v.controles.iter().any(|c| c.contains("dossier d'Orchestra")), "{:?}", v.controles);
     }
 
     #[test]
