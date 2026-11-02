@@ -997,6 +997,10 @@ export const useStore = create<State>((set, get) => ({
         push({ kind: "phase", id: uid(), runId: e.run_id, at: now, phase: e.accepte ? "recalling" : "idle", label: e.accepte ? `Lecture de ${e.url} autorisée` : `Lecture de ${e.url} refusée` });
         set((s) => ({ lecturesAConfirmer: s.lecturesAConfirmer.filter((l) => l.cle !== e.cle) }));
         break;
+      case "environnement_agent":
+        if (e.etat === "erreur") push({ kind: "avertissement", id: uid(), runId: "installation", at: now, message: `Agent ${e.agent_id} : ${e.detail}` });
+        else push({ kind: "phase", id: uid(), runId: "installation", at: now, phase: e.etat === "preparation" ? "thinking" : "idle", label: `Agent ${e.agent_id} : ${e.detail}` });
+        break;
       case "agent_installe": {
         const quoi = e.ancienne_version ? `mis à jour (${e.ancienne_version} → ${e.version})` : `installé (version ${e.version})`;
         const badge = e.certification === "orchestra_certified" ? "Orchestra Certified" : "Non certifié";

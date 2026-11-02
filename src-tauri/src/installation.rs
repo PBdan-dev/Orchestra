@@ -295,6 +295,10 @@ pub fn installer_paquet(paths: &Paths, data: &[u8], entree: Option<&Value>, cert
         if archive.join("memoire").exists() {
             std::fs::rename(archive.join("memoire"), tmp.join("memoire")).map_err(|e| format!("mémoire de l'agent non reprise : {e}"))?;
         }
+        // dépendances inchangées : l'environnement Python déjà prêt est repris (rien à retélécharger)
+        if archive.join(".venv").exists() && crate::environnement::besoin(&archive) == crate::environnement::besoin(&tmp) {
+            let _ = std::fs::rename(archive.join(".venv"), tmp.join(".venv"));
+        }
         ancienne_version = Some(v);
         mise_de_cote = Some(archive);
     }

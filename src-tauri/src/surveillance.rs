@@ -108,6 +108,7 @@ fn dans(rel: &str, zone: &str) -> bool {
 /// Hors surveillance générale : exclusions fixes, zones de l'agent, dossier de la mission (contrôlé à part).
 fn exclu(rel: &str, zones: &Zones) -> bool {
     rel.starts_with("agents/.installation-")
+        || rel.contains("/.venv-preparation")
         || EXCLUS.iter().any(|x| dans(rel, x))
         || dans(rel, &zones.projet)
         || dans(rel, &zones.memoire_agent)

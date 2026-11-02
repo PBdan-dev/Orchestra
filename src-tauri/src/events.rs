@@ -45,6 +45,8 @@ pub enum Event {
     Integrite { contexte: String, intactes: usize, non_chainees: usize, ruptures: Vec<crate::integrite::Rupture>, deja_signalees: usize },
     /// Agent installé ou mis à jour depuis l'Agent Market ou un fichier (lot T4).
     AgentInstalle { agent_id: String, version: String, ancienne_version: Option<String>, certification: String, identifiants_manquants: Vec<String> },
+    /// Environnement Python d'un agent (requirements.txt) : preparation | pret | erreur.
+    EnvironnementAgent { agent_id: String, etat: String, detail: String },
     /// Mission d'un agent (lot T3) : début, avec ses dossiers.
     MissionDebut { run_id: String, mission_id: String, agent_id: String, projet: String, dossier_mission: String, dossier_projet: String },
     /// Pensée du modèle de l'agent, vue par la porte (D14).

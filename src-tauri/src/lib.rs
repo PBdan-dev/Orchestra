@@ -8,6 +8,7 @@ pub mod config;
 pub mod consolidation;
 pub mod contrat;
 pub mod entretien;
+pub mod environnement;
 #[cfg(test)]
 mod essais;
 pub mod evaluation;
@@ -177,6 +178,26 @@ fn signaler_refus(app: &AppHandle, quoi: &str, motif: &str) {
     events::emit(app, events::Event::Avertissement { run_id: "installation".into(), message });
 }
 
+/// Prépare en tâche de fond l'environnement Python d'un agent installé (requirements.txt), sans bloquer l'interface.
+fn preparer_environnement(app: &AppHandle, paths: &Paths, agent_id: &str) {
+    let dossier = agents::dossier_installe(paths, agent_id);
+    if environnement::pret(&dossier) {
+        return;
+    }
+    let (app, paths, id) = (app.clone(), paths.clone(), agent_id.to_string());
+    events::emit(&app, events::Event::EnvironnementAgent { agent_id: id.clone(), etat: "preparation".into(), detail: "préparation de l'environnement Python (téléchargement des dépendances)".into() });
+    std::thread::spawn(move || {
+        let r = environnement::preparer(&dossier);
+        surveillance::noter(&paths, &dossier.join(".venv"));
+        let (etat, detail) = match r {
+            Ok(Some(paquets)) => ("pret", format!("environnement Python prêt ({paquets})")),
+            Ok(None) => ("pret", "environnement Python déjà prêt".to_string()),
+            Err(e) => ("erreur", format!("environnement Python non préparé : {e}. L'agent marche, sans ce qui en dépend (par exemple la lecture des PDF).")),
+        };
+        events::emit(&app, events::Event::EnvironnementAgent { agent_id: id, etat: etat.into(), detail });
+    });
+}
+
 fn signaler_installation(app: &AppHandle, i: &installation::Installation) {
     events::emit(app, events::Event::AgentInstalle {
         agent_id: i.manifest.id.clone(),
@@ -185,6 +206,9 @@ fn signaler_installation(app: &AppHandle, i: &installation::Installation) {
         certification: i.certification.clone(),
         identifiants_manquants: i.identifiants.iter().filter(|x| !x.present).map(|x| x.nom.clone()).collect(),
     });
+    if let Some(state) = app.try_state::<AppState>() {
+        preparer_environnement(app, &state.paths, &i.manifest.id);
+    }
 }
 
 /// Installe ou met à jour un agent du catalogue de l'Agent Market (lot T4).
@@ -793,6 +817,10 @@ pub fn run() {
                 if cfg.voice_enabled && cfg.voice_autostart {
                     let _ = state.voice.start(&state.paths, &cfg);
                 }
+            }
+            // environnements Python des agents installés avant cette version, ou dont les dépendances ont changé
+            for m in agents::installed(&state.paths) {
+                preparer_environnement(app.handle(), &state.paths, &m.id);
             }
             app.manage(state);
             // migration des clés (lot S-c) : notée au journal et dans Conscience

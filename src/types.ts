@@ -68,6 +68,7 @@ export type OrchestraEvent =
   | { type: "mission_ordre"; mission_id: string; ordre: string }
   | { type: "compaction"; etat: "debut" | "fin" | "annulee" | "erreur"; detail: string }
   | { type: "agent_installe"; agent_id: string; version: string; ancienne_version: string | null; certification: string; identifiants_manquants: string[] }
+  | { type: "environnement_agent"; agent_id: string; etat: string; detail: string }
   | { type: "mission_debut"; run_id: string; mission_id: string; agent_id: string; projet: string; dossier_mission: string; dossier_projet: string }
   | { type: "mission_pensee"; run_id: string; mission_id: string; agent_id: string; texte: string }
   | { type: "mission_action"; run_id: string; mission_id: string; agent_id: string; nature: "observee" | "declaree"; action: string; detail: string; raison: string }
