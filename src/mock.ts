@@ -211,6 +211,10 @@ export const mockApi = {
   compacter: async () => false,
   annulerCompaction: async () => false,
   etatSession: async () => ({ couvre: 0, resume: null, profil: "" }),
+  agentsUsage: async () => [
+    { agent_id: "agent-fichiers", missions: 2, reussies: 1, derniere: "2026-10-31T16:07:00+01:00", installe_le: "2026-10-30T12:00:00+01:00", provenance: "market" as const },
+    { agent_id: "mail-adagio", missions: 1, reussies: 1, derniere: "2026-10-30T18:51:00+01:00", installe_le: null, provenance: null },
+  ],
   confianceAgents: async () => ({ "agent-fichiers": { statut: "retire", ecarts: 1, historique: [] } }),
   leverQuarantaine: async () => {},
   retablirConfiance: async () => {},

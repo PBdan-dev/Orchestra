@@ -20,6 +20,9 @@ pub enum Event {
     Recall { run_id: String, items: Vec<Recalled> },
     /// Un agent se branche sur Orchestra
     AgentAttached { run_id: String, agent: Manifest, source: String, reason: String },
+    /// Un agent de l'Agent Market sait faire le travail demandé mais n'est pas installé :
+    /// l'interface propose de l'installer d'un clic, puis de relancer la demande.
+    AgentAInstaller { run_id: String, agent: Manifest, demande: String, raison: String },
     /// État d'un agent branché
     AgentStatus { run_id: String, agent_id: String, status: String, detail: String },
     /// Un outil a été utilisé par un agent

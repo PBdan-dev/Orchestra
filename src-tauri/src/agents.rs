@@ -36,11 +36,19 @@ pub struct Manifest {
     pub avertissement: String,
     /// local (transparent : pensée et actions vues par la porte) | heberge (livrable seul, lot T8)
     pub execution: String,
+    /// Thème de l'agent (`categorie` du manifeste : documents, communication, recherche…).
+    pub categorie: String,
+    /// Ce que l'agent sait faire (`fiche.sait_faire`), pour le cerveau et l'onglet Agents.
+    pub sait_faire: Vec<String>,
     #[serde(skip)]
     pub brut: Value,
     /// Dossier de l'agent installé (`agents/installes/<id>/`).
     #[serde(skip)]
     pub dossier: Option<PathBuf>,
+}
+
+fn liste(v: &Value, pointeur: &str) -> Vec<String> {
+    v.pointer(pointeur).and_then(|a| a.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default()
 }
 
 /// Un type de tâche de l'agent et ses modèles de demande et de livrable (D33).
@@ -84,6 +92,8 @@ impl Manifest {
             certification: s("/certification/statut"),
             avertissement: String::new(),
             execution: s("/execution/type"),
+            categorie: s("/categorie"),
+            sait_faire: liste(v, "/fiche/sait_faire"),
             brut: v.clone(),
             dossier: None,
         })
@@ -107,6 +117,8 @@ impl Manifest {
             certification: s("/certification/statut"),
             avertissement: String::new(),
             execution: s("/execution/type"),
+            categorie: s("/categorie"),
+            sait_faire: liste(v, "/fiche/sait_faire"),
             brut: v.clone(),
             dossier: None,
         }

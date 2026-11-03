@@ -177,6 +177,7 @@ L'installer ?`)) return;
         ))}
       </div>
       <footer className="ap-foot">
+        <button className="link-btn" onClick={() => { setAgentsPanel(false); useStore.getState().setView("agents"); }}><I.grid size={11} /> tous les agents, par thème</button>
         <button className="link-btn" onClick={() => api.openFolder("agents")}><I.external size={11} /> ouvrir le dossier agents</button>
       </footer>
     </motion.aside>
@@ -184,7 +185,7 @@ L'installer ?`)) return;
 }
 
 /** Badge de certification (D25). */
-function BadgeCertification({ statut }: { statut?: string }) {
+export function BadgeCertification({ statut }: { statut?: string }) {
   if (statut === "orchestra_certified") return <span className="tag certifie" title="Vérifié par l'Agent Market">Orchestra Certified</span>;
   if (statut === "livrable_seul") return <span className="tag" title="Agent hébergé : seul le livrable est contrôlé">Livrable seul</span>;
   return <span className="tag noncertifie" title="Non vérifié par l'Agent Market (mode développement)">Non certifié</span>;
@@ -194,7 +195,7 @@ function BadgeCertification({ statut }: { statut?: string }) {
  * Identifiants déclarés par l'agent (D34) : demandés à PB avec leur raison, rangés dans le
  * Gestionnaire d'identification de Windows sous orchestra/<id>/<nom>. La valeur n'est jamais réaffichée.
  */
-function IdentifiantsAgent({ agent, ouvert }: { agent: Manifest; ouvert: boolean }) {
+export function IdentifiantsAgent({ agent, ouvert }: { agent: Manifest; ouvert: boolean }) {
   const [ids, setIds] = useState<Identifiant[]>([]);
   const [valeurs, setValeurs] = useState<Record<string, string>>({});
   const [voir, setVoir] = useState(ouvert);
@@ -234,7 +235,7 @@ function IdentifiantsAgent({ agent, ouvert }: { agent: Manifest; ouvert: boolean
 }
 
 /** Badge d'exécution (lot T8) : local = transparent (pensée et actions vues par la porte), hébergé = livrable seul. */
-function BadgeExecution({ execution, certification }: { execution?: string; certification?: string }) {
+export function BadgeExecution({ execution, certification }: { execution?: string; certification?: string }) {
   if (execution === "heberge" && certification === "livrable_seul") return null;
   if (execution === "heberge") return <span className="tag noncertifie" title="Travaille sur un serveur : seul son livrable est contrôlé, ni sa pensée ni ses actions ne sont visibles">livrable seul</span>;
   return <span className="tag" title="Travaille sur ton ordinateur : sa pensée et ses appels d'outils passent par la porte et sont visibles">transparent</span>;

@@ -24,6 +24,7 @@ export function Composer() {
   const toggleDictation = useStore((s) => s.toggleDictation);
   const voiceInstalled = useStore((s) => s.voiceStatus?.installed !== false);
   const voiceConn = useStore((s) => s.voiceConn);
+  const voiceEtape = useStore((s) => s.voiceEtape);
   const voiceUser = useStore((s) => s.voiceUser);
   const voiceHeld = useStore((s) => s.voiceHeld);
   const voiceInterim = useStore((s) => s.voiceInterim);
@@ -97,7 +98,7 @@ export function Composer() {
     dictInterim ? dictInterim :
     voiceUser ? "J'écris ce que tu dis…" : "Micro ouvert : parle, j'écris. Reclique pour couper.";
   const voiceHint = !voiceOn ? "" :
-    voiceConn !== "on" ? "Je prépare ma voix… (premier lancement : environ 30 s)" :
+    voiceConn !== "on" ? (voiceEtape ? `Presque prête : ${voiceEtape}…` : "Je prépare ma voix… (premier lancement : environ 30 s)") :
     voiceInterim ? voiceInterim :
     voiceUser ? "Je t'écoute…" :
     ptt ? (voiceHeld ? "Je t'écoute… relâche pour envoyer" : `Maintiens ${pttKey} ou le micro pour parler`) :

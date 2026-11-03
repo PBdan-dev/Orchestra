@@ -572,11 +572,52 @@ def build_tts(s: C.VoiceSettings, lat: LatencyLog):
     return tts
 
 
+
+def port_occupe(host: str, port: int) -> bool:
+    """Vrai si un programme écoute déjà sur ce port (le nôtre ou un autre).
+
+    Sous Windows, un essai d'ouverture (bind) ne suffit pas : un serveur Python qui a pris le port
+    avec SO_REUSEADDR (http.server, par exemple) laisse un second programme l'ouvrir aussi. On
+    essaie donc d'abord de s'y connecter."""
+    import socket
+
+    try:
+        with socket.create_connection((host, port), timeout=0.3):
+            return True
+    except OSError:
+        pass
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as so:
+        try:
+            so.bind((host, port))
+            return False
+        except OSError:
+            return True
+
+
+async def surveiller_port(s: C.VoiceSettings):
+    """Le serveur WebSocket de Pipecat n'arrête pas le processus s'il ne peut pas ouvrir son port :
+    il continue sans écouter, et l'interface attend pour rien. On vérifie donc qu'il écoute bien,
+    sinon on s'arrête avec un message clair (l'interface voit le processus s'arrêter)."""
+    for _ in range(40):
+        await asyncio.sleep(0.25)
+        if port_occupe(s.host, s.port):
+            logger.info(f"Serveur voix prêt sur ws://{s.host}:{s.port}")
+            return
+    logger.error(f"Le serveur voix n'a pas pu ouvrir le port {s.port}. Arrêt.")
+    os._exit(3)
+
+
 async def main(s: C.VoiceSettings):
     C.VOIX.mkdir(parents=True, exist_ok=True)
     logger.remove()
     logger.add(sys.stderr, level="INFO")
     logger.add(C.VOIX / "voix.log", level="DEBUG", rotation="5 MB", retention=3, encoding="utf-8")
+
+    # avant de charger les modèles (≈ 15 s) : le port doit être libre, sinon l'interface
+    # se connecterait à un autre programme et attendrait sans fin (bug du 03/11)
+    if port_occupe(s.host, s.port):
+        logger.error(f"Port {s.port} déjà utilisé par un autre programme : serveur voix non démarré.")
+        sys.exit(3)
 
     lat = LatencyLog(s.vad_stop_secs)
     bridge = UIBridge(lat, s.tts, s.llm_model)
@@ -703,11 +744,19 @@ async def main(s: C.VoiceSettings):
         logger.info("Interface connectée")
         nouvelle_session()
         context.set_messages([{"role": "system", "content": system_prompt()}])
-        asyncio.create_task(garder_charge(s))
         asyncio.create_task(prechauffer_rappel())
-        await bridge.send({"type": "ready", "stt": "voxtral-mini-4b-realtime", "llm": s.llm_model, "tts": s.tts})
+        await bridge.send({"type": "loading", "detail": f"chargement de {s.llm_model}"})
 
-    logger.info(f"Serveur voix prêt sur ws://{s.host}:{s.port} (TTS : {s.tts}, cerveau : {s.llm_model})")
+        async def puis_prete():
+            # « prête » seulement quand le cerveau vocal est chargé dans Ollama : sinon le premier
+            # mot attendrait son chargement (5 à 10 s) alors que l'interface annonce la voix prête
+            await garder_charge(s)
+            await bridge.send({"type": "ready", "stt": "voxtral-mini-4b-realtime", "llm": s.llm_model, "tts": s.tts})
+
+        asyncio.create_task(puis_prete())
+
+    logger.info(f"Modèles chargés (TTS : {s.tts}, cerveau : {s.llm_model}), ouverture du port {s.port}")
+    asyncio.get_running_loop().create_task(surveiller_port(s))
     await WorkerRunner(handle_sigint=False).run(task)
 
 
@@ -739,7 +788,8 @@ async def dictee(s: C.VoiceSettings, stt, bridge: UIBridge):
         logger.info("Dictée : interface connectée")
         await bridge.send({"type": "ready", "stt": "voxtral-mini-4b-realtime", "mode": "dictee"})
 
-    logger.info(f"Serveur de dictée prêt sur ws://{s.host}:{s.port}")
+    logger.info(f"Écoute chargée, ouverture du port {s.port} (dictée)")
+    asyncio.get_running_loop().create_task(surveiller_port(s))
     await WorkerRunner(handle_sigint=False).run(task)
 
 

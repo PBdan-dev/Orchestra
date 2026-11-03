@@ -18,6 +18,7 @@ export const levels = {
 
 export type VoiceEvent =
   | { type: "ready"; stt: string; llm: string; tts: string }
+  | { type: "loading"; detail: string }
   | { type: "user_start" } | { type: "user_stop" }
   | { type: "user_interim"; text: string } | { type: "user_final"; text: string }
   | { type: "bot_start" } | { type: "bot_text"; text: string } | { type: "bot_end" }
@@ -96,8 +97,9 @@ export class VoiceClient {
     ws.binaryType = "arraybuffer";
     this.ws = ws;
     ws.onopen = () => {
+      // connecté, mais pas encore prêt : seul le message « ready » du serveur voix rend la voix
+      // disponible (un autre programme pourrait accepter la connexion sans jamais répondre)
       if (this.ws !== ws) { ws.close(); return; }
-      this.onEvent({ type: "conn", state: "on" });
     };
     ws.onclose = () => {
       if (this.ws !== ws) return; // une ancienne connexion : on l'ignore

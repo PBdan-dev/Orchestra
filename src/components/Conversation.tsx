@@ -2,7 +2,8 @@ import { useEffect, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useStore, voice } from "../store";
 import { Markdown } from "../markdown";
-import { I } from "./Icons";
+import { AgentGlyph, I } from "./Icons";
+import type { AgentPropose } from "../types";
 
 const SUGGESTIONS = [
   "Présente-toi en trois phrases.",
@@ -19,12 +20,13 @@ export function Conversation() {
   const voiceOn = useStore((s) => s.voiceOn);
   const file = useStore((s) => s.fileAttente);
   const retirerDeLaFile = useStore((s) => s.retirerDeLaFile);
+  const proposes = useStore((s) => s.agentsProposes);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const el = ref.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages]);
+  }, [messages, proposes]);
 
   return (
     <section className="panel conversation">
@@ -63,6 +65,7 @@ export function Conversation() {
             </motion.div>
           ))}
         </AnimatePresence>
+        {proposes.map((p) => <CarteInstallation key={p.run_id} p={p} />)}
         {file.length > 0 && (
           <div className="file-attente">
             <div className="muted">En attente ({file.length}) : envoyées une à une quand Orchestra aura fini</div>
@@ -73,5 +76,46 @@ export function Conversation() {
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * Un agent de l'Agent Market sait faire la demande, mais il n'est pas installé : Orchestra
+ * n'installe jamais seule. Un clic l'installe (vérifications du lot T4), un autre relance la demande.
+ */
+function CarteInstallation({ p }: { p: AgentPropose }) {
+  const installer = useStore((s) => s.installerPropose);
+  const oublier = useStore((s) => s.oublierPropose);
+  const send = useStore((s) => s.send);
+  const busy = useStore((s) => s.busy);
+  const voirAgent = useStore((s) => s.voirAgent);
+  const a = p.agent;
+  return (
+    <motion.div className="carte-install" style={{ ["--c" as any]: a.color || "#818cf8" }} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+      <div className="ci-tete">
+        <span className="ci-glyph"><AgentGlyph icon={a.icon} size={16} /></span>
+        <div className="ci-titre">
+          <div><b>{a.name}</b> <span className="muted small">{a.version}</span></div>
+          <div className="muted small">sur l'Agent Market · {a.certification === "orchestra_certified" ? "Orchestra Certified" : "non certifié"}</div>
+        </div>
+        {p.etat !== "installation" && <button className="icon-btn" title="Fermer" onClick={() => oublier(p.run_id)}><I.x size={12} /></button>}
+      </div>
+      <p className="ci-desc">{a.description}</p>
+      {p.etat === "propose" && (
+        <div className="ci-actions">
+          <button className="glass-btn sm active" onClick={() => installer(p.run_id)}><I.plug size={11} /> Installer</button>
+          <button className="link-btn" onClick={() => voirAgent(a.id)}>voir la fiche</button>
+        </div>
+      )}
+      {p.etat === "installation" && <div className="small muted">Vérification et installation…</div>}
+      {p.etat === "installe" && (
+        <div className="ci-actions">
+          <span className="small ok"><I.check size={11} /> Installé.</span>
+          {p.detail && <span className="small warn">{p.detail}</span>}
+          <button className="glass-btn sm active" disabled={busy} onClick={() => { oublier(p.run_id); send(p.demande); }}>Relancer ma demande</button>
+        </div>
+      )}
+      {p.etat === "erreur" && <div className="small warn">Installation refusée : {p.detail}</div>}
+    </motion.div>
   );
 }

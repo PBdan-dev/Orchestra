@@ -2,16 +2,27 @@ import { create } from "zustand";
 import { api, onEvent } from "./tauri";
 import { VoiceClient, type VoiceEvent } from "./voice";
 import type {
-  AgentNode, AlerteDonnees, Autorisation, LectureAConfirmer, BrainInfo, ChatMessage, Config, Entry, Installation, Manifest, Rupture, MissionVue, OrchestraEvent, PathsInfo, Phase, Projets, VoiceLatency, VoiceModels, VoiceStatus,
+  AgentNode, AgentPropose, AlerteDonnees, Autorisation, LectureAConfirmer, BrainInfo, ChatMessage, Config, Entry, Installation, Manifest, Rupture, MissionVue, OrchestraEvent, PathsInfo, Phase, Projets, VoiceLatency, VoiceModels, VoiceStatus,
 } from "./types";
 
-export type View = "stage" | "missions" | "memory" | "journal" | "settings";
+export type View = "stage" | "agents" | "missions" | "memory" | "journal" | "settings";
 export type Inspect = { type: "agent"; id: string } | { type: "core" } | null;
 
 let seq = 0;
 export const uid = () => `${Date.now().toString(36)}-${(seq++).toString(36)}`;
 let bootPromise: Promise<void> | null = null;
 let voiceDraft: string | null = null;
+/** surveillance du démarrage de la voix (processus arrêté, ou jamais prêt) */
+let voiceWatch: ReturnType<typeof setInterval> | null = null;
+const VOIX_DELAI_MAX_MS = 180_000;
+
+/** Dernière erreur du journal du serveur voix, en une ligne lisible. */
+function derniereErreur(log: string): string {
+  const l = log.split(/\r?\n/).reverse().find((x) => /\|\s*(ERROR|CRITICAL)\s*\|/.test(x) || /Traceback|Error:/.test(x));
+  if (!l) return "";
+  const m = l.split(" - ").slice(1).join(" - ") || l;
+  return m.length > 220 ? m.slice(0, 220) + "…" : m;
+}
 let dictBusy = false;
 /** vrai quand le run en cours a été lancé par la voix : son résultat sera lu à voix haute */
 let voiceRun = false;
@@ -106,6 +117,13 @@ interface State {
   paths: PathsInfo | null;
   registry: Manifest[];
   installed: Manifest[];
+  /** agents du Market proposés à l'installation dans la conversation */
+  agentsProposes: AgentPropose[];
+  installerPropose: (runId: string) => Promise<void>;
+  oublierPropose: (runId: string) => void;
+  /** agent à montrer dans l'onglet Agents (ouvert depuis une carte) */
+  agentFocus: string | null;
+  voirAgent: (id: string) => void;
   /** projets (D36) et autorisations d'actions irréversibles (D28) */
   projets: Projets | null;
   autorisations: Autorisation[];
@@ -147,6 +165,8 @@ interface State {
   voiceInterim: string;
   voiceLatency: VoiceLatency | null;
   voiceError: string;
+  /** étape du démarrage de la voix, dite par le serveur (« chargement de qwen3.5:9b »…) */
+  voiceEtape: string;
   /** micro coupé dans le mode voix (Orchestra n'entend plus rien) */
   voiceMuted: boolean;
   voiceModels: VoiceModels | null;
@@ -235,6 +255,23 @@ export const useStore = create<State>((set, get) => ({
   paths: null,
   registry: [],
   installed: [],
+  agentsProposes: [],
+  agentFocus: null,
+  voirAgent: (id) => set({ agentFocus: id, view: "agents" }),
+  oublierPropose: (runId) => set((s) => ({ agentsProposes: s.agentsProposes.filter((p) => p.run_id !== runId) })),
+  installerPropose: async (runId) => {
+    const p = get().agentsProposes.find((x) => x.run_id === runId);
+    if (!p) return;
+    const maj = (etat: AgentPropose["etat"], detail?: string) => set((s) => ({ agentsProposes: s.agentsProposes.map((x) => (x.run_id === runId ? { ...x, etat, detail } : x)) }));
+    maj("installation");
+    try {
+      const i = await get().installAgent(p.agent.id);
+      const manquants = i.identifiants.filter((x) => !x.present).length;
+      maj("installe", manquants ? `${manquants} identifiant(s) à renseigner dans l'onglet Agents avant la première mission.` : undefined);
+    } catch (e) {
+      maj("erreur", String(e).replace(/^Error: /, ""));
+    }
+  },
   projets: null,
   autorisations: [],
   alertesIntegrite: [],
@@ -294,6 +331,7 @@ export const useStore = create<State>((set, get) => ({
   voiceInterim: "",
   voiceLatency: null,
   voiceError: "",
+  voiceEtape: "",
   voiceMuted: false,
   voiceModels: null,
   switching: "",
@@ -555,7 +593,8 @@ export const useStore = create<State>((set, get) => ({
       voice.gate = cfg.voice_mode !== "appuyer";
       await voice.startMic();
       await voice.connect(st.port);
-      set({ voiceOn: true });
+      set({ voiceOn: true, voiceEtape: "" });
+      surveillerDemarrage("voix");
     } catch (e) {
       set({ voiceError: String(e).replace(/^Error: /, ""), voiceOn: false });
     }
@@ -601,6 +640,7 @@ export const useStore = create<State>((set, get) => ({
       voice.gate = true;
       await voice.startMic();
       await voice.connect(st.port);
+      surveillerDemarrage("dictee");
     } catch (e) {
       set({ voiceError: String(e).replace(/^Error: /, ""), dictating: false });
     }
@@ -621,7 +661,10 @@ export const useStore = create<State>((set, get) => ({
     switch (e.type) {
       case "conn":
         set({ voiceConn: e.state });
-        if (e.state === "on") contexteVoix(s.messages);
+        if (e.state === "on") { set({ voiceEtape: "" }); contexteVoix(s.messages); }
+        break;
+      case "loading":
+        set({ voiceEtape: e.detail });
         break;
       case "user_start":
         activite();
@@ -844,6 +887,10 @@ export const useStore = create<State>((set, get) => ({
         if (e.run_id !== "sim") get().refreshAgents();
         break;
       }
+      case "agent_a_installer":
+        set((s) => ({ agentsProposes: [...s.agentsProposes.filter((p) => p.run_id !== e.run_id), { run_id: e.run_id, agent: e.agent, demande: e.demande, raison: e.raison, etat: "propose" }] }));
+        push({ kind: "phase", id: uid(), runId: e.run_id, at: now, phase: "searching_agent", label: `${e.agent.name} sait le faire : à installer depuis l'Agent Market` });
+        break;
       case "agent_status": {
         set((s) => {
           const a = s.agents[e.agent_id];
@@ -858,7 +905,8 @@ export const useStore = create<State>((set, get) => ({
           const a = s.agents[e.agent_id];
           if (!a) return {};
           const toolsUsed = a.toolsUsed.includes(e.tool) ? a.toolsUsed : [...a.toolsUsed, e.tool];
-          return { agents: { ...s.agents, [e.agent_id]: { ...a, toolsUsed, lastTool: { tool: e.tool, at: now } } } };
+          const appels = [...(a.appels ?? []), { tool: e.tool, at: now, output: String(e.output ?? "") }].slice(-30);
+          return { agents: { ...s.agents, [e.agent_id]: { ...a, toolsUsed, appels, lastTool: { tool: e.tool, at: now } } } };
         });
         push({ kind: "tool", id: uid(), runId: e.run_id, at: now, agentId: e.agent_id, tool: e.tool, input: e.input, output: e.output });
         live.pulse(0.5);
@@ -1026,3 +1074,35 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 }));
+
+
+/**
+ * Surveille le démarrage de la voix ou de la dictée : si le serveur s'arrête, ou s'il n'est pas
+ * prêt au bout de 3 minutes, on le dit avec la cause lue dans son journal au lieu d'attendre sans fin.
+ */
+function surveillerDemarrage(mode: "voix" | "dictee") {
+  if (voiceWatch) clearInterval(voiceWatch);
+  const t0 = Date.now();
+  const stop = () => { if (voiceWatch) clearInterval(voiceWatch); voiceWatch = null; };
+  voiceWatch = setInterval(async () => {
+    const s = useStore.getState();
+    const actif = mode === "voix" ? s.voiceOn : s.dictating;
+    if (!actif || s.voiceConn === "on") { stop(); return; }
+    let st: VoiceStatus;
+    try { st = await api.voiceStatus(); } catch { return; }
+    const tropLong = Date.now() - t0 > VOIX_DELAI_MAX_MS;
+    if (st.running && !tropLong) return;
+    stop();
+    const cause = derniereErreur(await api.voiceLog().catch(() => ""));
+    voice.disconnect();
+    if (st.running) await api.voiceStop().catch(() => {});
+    const quoi = mode === "voix" ? "La voix" : "La dictée";
+    const msg = !st.running
+      ? `${quoi} s'est arrêtée pendant son démarrage${cause ? ` : ${cause}` : "."} (détails dans le journal de la voix, voix.log)`
+      : `${quoi} ne répond pas après 3 minutes${cause ? ` : ${cause}` : "."} (détails dans le journal de la voix, voix.log)`;
+    useStore.setState(mode === "voix"
+      ? { voiceError: msg, voiceOn: false, voiceConn: "off", voiceEtape: "" }
+      : { voiceError: msg, dictating: false, voiceConn: "off", voiceEtape: "" });
+    api.voiceStatus().then((v) => useStore.setState({ voiceStatus: v })).catch(() => {});
+  }, 2000);
+}

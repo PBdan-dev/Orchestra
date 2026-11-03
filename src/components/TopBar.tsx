@@ -7,6 +7,7 @@ import { I } from "./Icons";
 
 const TABS: { id: View; label: string; icon: keyof typeof I }[] = [
   { id: "stage", label: "Scène", icon: "stage" },
+  { id: "agents", label: "Agents", icon: "grid" },
   { id: "missions", label: "Missions", icon: "folder" },
   { id: "memory", label: "Mémoire", icon: "memory" },
   { id: "journal", label: "Journal", icon: "journal" },
@@ -34,7 +35,7 @@ export function TopBar() {
       <div className="brand">
         <span className="brand-ring" style={{ ["--c" as any]: PHASE_COLOR[phase] }} />
         <span className="brand-name">Orchestra</span>
-        <span className="brand-tag">v0.2</span>
+        <span className="brand-tag">v0.3.1</span>
       </div>
       <nav className="tabs glass">
         {TABS.map((t) => {

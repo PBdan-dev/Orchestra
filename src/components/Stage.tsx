@@ -35,6 +35,7 @@ export function Stage() {
   const simulating = useStore((s) => s.simulating);
   const voiceOn = useStore((s) => s.voiceOn);
   const voiceConn = useStore((s) => s.voiceConn);
+  const voiceEtape = useStore((s) => s.voiceEtape);
   const voiceLlm = useStore((s) => s.config?.voice_llm);
   const switching = useStore((s) => s.switching);
 
@@ -84,6 +85,10 @@ export function Stage() {
   };
   Object.values(placed).filter((p) => p.depth === 0).forEach(placeChildren);
   const nodes = Object.values(placed);
+
+  // sous-bulles de tâche : une par agent qui a une mission, chacune dans son propre espace
+  const [ouvertes, setOuvertes] = useState<Record<string, boolean>>({});
+  const cartes = placerCartes(nodes, placed, { cx, cy, w: usableW, h: size.h, R }, ouvertes);
 
   const color = PHASE_COLOR[phase];
   const status = brainStatus(brain, brainLoading);
@@ -139,6 +144,18 @@ export function Stage() {
         })}
       </svg>
 
+      {/* liens agent → sa sous-bulle de tâche */}
+      <svg className="stage-svg" width={size.w} height={size.h} style={{ zIndex: 2 }}>
+        {cartes.map((k) => {
+          const c = k.p.a.manifest.color || "#818cf8";
+          const nr = k.p.depth > 0 ? 25 : NODE_R;
+          const tx = Math.max(k.x, Math.min(k.x + k.w, k.p.x)), ty = Math.max(k.y, Math.min(k.y + k.h, k.p.y));
+          const ang = Math.atan2(ty - k.p.y, tx - k.p.x);
+          const sx = k.p.x + Math.cos(ang) * (nr + 3), sy = k.p.y + Math.sin(ang) * (nr + 3);
+          return <line key={k.p.a.manifest.id} x1={sx} y1={sy} x2={tx} y2={ty} stroke={c} strokeOpacity={0.5} strokeWidth={1} strokeDasharray="2 3" />;
+        })}
+      </svg>
+
       {/* centre : identité et état du cerveau */}
       <div className="core-label" style={{ left: cx, top: cy, width: Math.max(150, R * 1.75), ["--fs" as any]: Math.max(0.72, Math.min(1.35, R / 140)) }}>
         <button className="core-hit" onClick={() => setInspect(inspect?.type === "core" ? null : { type: "core" })} title="Modèles et détails d'Orchestra" />
@@ -164,10 +181,16 @@ export function Stage() {
         </AnimatePresence>
         <ModeSwitch />
         {voiceOn && <VoiceControls />}
-        {(switching || (voiceOn && voiceConn !== "on")) && <span className="core-note">{switching || "Je prépare ma voix… (≈ 30 s)"}</span>}
+        {(switching || (voiceOn && voiceConn !== "on")) && <span className="core-note">{switching || (voiceEtape ? `Presque prête : ${voiceEtape}…` : "Je prépare ma voix… (≈ 30 s)")}</span>}
       </div>
 
       {/* agents */}
+      <AnimatePresence>
+        {cartes.map((k) => (
+          <SousBulle key={`t-${k.p.a.manifest.id}`} carte={k} ouverte={!!ouvertes[k.p.a.manifest.id]}
+            basculer={() => setOuvertes((o) => ({ ...o, [k.p.a.manifest.id]: !o[k.p.a.manifest.id] }))} />
+        ))}
+      </AnimatePresence>
       <AnimatePresence>
         {nodes.map((p) => (
           <AgentBubble key={p.a.manifest.id} node={p.a} x={p.x} y={p.y} sub={p.depth > 0}
@@ -223,19 +246,112 @@ function AgentBubble({ node, x, y, onClick, selected, sub }: { node: AgentNode; 
       <button className="agent-unplug" onClick={(e) => { e.stopPropagation(); unplug(node.manifest.id); }} title="Débrancher (rien n'est supprimé)"><I.x size={10} /></button>
       <span className="agent-name">{node.manifest.name}</span>
       <span className="agent-status">{statusText}</span>
-      <AnimatePresence>
-        {node.toolsUsed.map((t, i) => {
-          const ang = -Math.PI / 2 + i * 1.0 - (node.toolsUsed.length - 1) * 0.5;
-          const r = sub ? 46 : 56;
-          return (
-            <motion.span key={t} className={`tool-chip ${node.lastTool?.tool === t && Date.now() - (node.lastTool?.at ?? 0) < 2500 ? "hot" : ""}`}
-              style={{ left: (sub ? 25 : NODE_R) + Math.cos(ang) * r, top: (sub ? 25 : NODE_R) + Math.sin(ang) * r }}
-              initial={{ opacity: 0, scale: 0 }} animate={{ opacity: 1, scale: 1 }} transition={{ type: "spring", stiffness: 300, damping: 16 }}>
-              <I.tool size={9} /> {t}
-            </motion.span>
-          );
-        })}
-      </AnimatePresence>
+    </motion.div>
+  );
+}
+
+/** Sous-bulle d'une tâche d'agent : sa mission, puis ses appels d'outils, le plus récent en bas. */
+type Carte = { p: Placed; x: number; y: number; w: number; h: number; visibles: number };
+
+const APPELS_REPLIES = 4;
+const APPELS_OUVERTS = 12;
+const LIGNE_APPEL = 18;
+
+function hauteurCarte(n: AgentNode, ouverte: boolean, w: number) {
+  const tache = n.detail || n.reason || "";
+  const parLigne = Math.max(18, Math.floor((w - 20) / 6.3));
+  const lignesTache = Math.min(ouverte ? 6 : 2, Math.max(1, Math.ceil(tache.length / parLigne)));
+  const total = n.appels?.length ?? 0;
+  const visibles = Math.min(total, ouverte ? APPELS_OUVERTS : APPELS_REPLIES);
+  const plus = total > visibles ? 16 : 0;
+  return { h: 30 + lignesTache * 15 + visibles * LIGNE_APPEL + plus + (visibles ? 6 : 0), visibles };
+}
+
+/**
+ * Place chaque sous-bulle là où elle a le plus de place : d'abord vers l'extérieur (à l'opposé du
+ * cœur ou de l'agent parent), sinon sous l'agent, au-dessus, ou du côté intérieur. Une position qui
+ * recouvre un agent, le cœur ou une autre bulle, ou qui sort de la scène, est pénalisée.
+ */
+type Rect = { x: number; y: number; w: number; h: number };
+function placerCartes(nodes: Placed[], placed: Record<string, Placed>, scene: { cx: number; cy: number; w: number; h: number; R: number }, ouvertes: Record<string, boolean>): Carte[] {
+  const recouvrement = (a: Rect, b: Rect, m = 6) =>
+    Math.max(0, Math.min(a.x + a.w, b.x + b.w) + m - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) + m - Math.max(a.y, b.y));
+  const horsScene = (r: Rect) =>
+    Math.max(0, 8 - r.x) * r.h + Math.max(0, r.x + r.w - (scene.w - 8)) * r.h + Math.max(0, 8 - r.y) * r.w + Math.max(0, r.y + r.h - (scene.h - 8)) * r.w;
+  // obstacles : le cœur, et chaque agent avec son nom et son état en dessous
+  const obstacles: Rect[] = [
+    { x: scene.cx - scene.R, y: scene.cy - scene.R, w: scene.R * 2, h: scene.R * 2 },
+    ...nodes.map((p) => ({ x: p.x - 48, y: p.y - 36, w: 96, h: 84 })),
+  ];
+  const cartes: Carte[] = [];
+  // les agents qui travaillent d'abord : leur bulle prend la meilleure place
+  const ordre = [...nodes].sort((a, b) => (a.a.status === "running" ? 0 : 1) - (b.a.status === "running" ? 0 : 1) || a.depth - b.depth);
+  for (const p of ordre) {
+    const n = p.a;
+    if (!n.detail && !(n.appels?.length) && n.status === "attached") continue;
+    const sub = p.depth > 0;
+    const w = sub ? 178 : 204;
+    const { h, visibles } = hauteurCarte(n, !!ouvertes[n.manifest.id], w);
+    const o = n.parent && placed[n.parent] ? placed[n.parent] : { x: scene.cx, y: scene.cy };
+    let dx = p.x - o.x, dy = p.y - o.y;
+    const d = Math.hypot(dx, dy) || 1;
+    dx /= d; dy /= d;
+    const nr = sub ? 25 : NODE_R;
+    const exterieur = dx >= 0 ? p.x + nr + 16 : p.x - nr - 16 - w;
+    const interieur = dx >= 0 ? p.x - nr - 16 - w : p.x + nr + 16;
+    const candidats: Rect[] = [
+      { x: exterieur, y: p.y - h / 2, w, h },
+      { x: p.x - w / 2, y: p.y + nr + 44, w, h },
+      { x: p.x - w / 2, y: p.y - nr - 12 - h, w, h },
+      { x: exterieur, y: p.y - h + nr, w, h },
+      { x: exterieur, y: p.y - nr, w, h },
+      { x: interieur, y: p.y - h / 2, w, h },
+    ];
+    // vers le bas ou le haut d'abord quand l'agent est en haut ou en bas de la scène
+    if (Math.abs(dy) > 0.82) candidats.unshift(dy > 0 ? candidats[1] : candidats[2]);
+    let meilleur = candidats[0], cout = Infinity;
+    candidats.forEach((c, i) => {
+      const k = horsScene(c) * 3 + obstacles.reduce((t, ob) => t + recouvrement(c, ob), 0) * 2 + cartes.reduce((t, b) => t + recouvrement(c, b), 0) * 2 + i * 40;
+      if (k < cout) { cout = k; meilleur = c; }
+    });
+    const r = { ...meilleur };
+    r.x = Math.max(8, Math.min(scene.w - r.w - 8, r.x));
+    r.y = Math.max(8, Math.min(scene.h - r.h - 8, r.y));
+    cartes.push({ p, ...r, visibles });
+  }
+  return cartes;
+}
+
+function SousBulle({ carte, ouverte, basculer }: { carte: Carte; ouverte: boolean; basculer: () => void }) {
+  const n = carte.p.a;
+  const c = n.manifest.color || "#818cf8";
+  const appels = n.appels ?? [];
+  const vus = appels.slice(-carte.visibles);
+  const caches = appels.length - vus.length;
+  const etat = n.status === "running" ? "en cours" : n.status === "done" ? "terminé" : n.status === "error" ? "erreur" : "en attente";
+  const recent = (at: number) => Date.now() - at < 2500;
+  return (
+    <motion.div className={`sous-bulle ${n.status} ${carte.p.depth > 0 ? "sub" : ""}`} style={{ ["--c" as any]: c, width: carte.w }}
+      initial={{ opacity: 0, scale: 0.85, left: carte.x, top: carte.y }} animate={{ opacity: 1, scale: 1, left: carte.x, top: carte.y, height: carte.h }}
+      exit={{ opacity: 0, scale: 0.85 }} transition={{ type: "spring", stiffness: 240, damping: 26, opacity: { delay: 0.2 } }}
+      onClick={basculer} title={ouverte ? "Replier" : "Déplier la tâche et tous ses appels"}>
+      <div className="sb-tete">
+        <span className="sb-point" />
+        <span className="sb-agent">{n.manifest.name}</span>
+        <span className="sb-etat">{etat}</span>
+      </div>
+      <div className={`sb-tache ${ouverte ? "ouverte" : ""}`}>{n.detail || n.reason || "mission en préparation"}</div>
+      {vus.length > 0 && (
+        <div className="sb-appels">
+          {caches > 0 && <div className="sb-plus">+ {caches} appel(s) avant</div>}
+          {vus.map((a, i) => (
+            <div key={`${a.at}-${i}`} className={`sb-appel ${recent(a.at) ? "hot" : ""}`} title={a.output}>
+              <I.tool size={9} /> <span className="sb-outil">{a.tool}</span>
+              {a.output && <span className="sb-sortie">{a.output}</span>}
+            </div>
+          ))}
+        </div>
+      )}
     </motion.div>
   );
 }

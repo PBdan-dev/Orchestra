@@ -5,6 +5,7 @@ pub mod coffre;
 pub mod compaction;
 pub mod compression;
 pub mod config;
+pub mod connaissance;
 pub mod consolidation;
 pub mod contrat;
 pub mod entretien;
@@ -266,6 +267,8 @@ struct Catalogue {
 async fn catalogue(state: State<'_, AppState>) -> CmdResult<Catalogue> {
     let cfg = state.config.lock().unwrap().clone();
     let (lecture, source) = market::fetch_catalogue(&state.http, &cfg).await?;
+    // le cerveau s'en sert aussi (liste « Agents disponibles »)
+    connaissance::retenir_catalogue(&lecture.agents);
     Ok(Catalogue { entrees: installation::lire_catalogue(lecture.agents, &state.paths, cfg.mode_developpement, signature::CLE_PUBLIQUE_MARKET), ignores: lecture.ignores, source })
 }
 
@@ -533,6 +536,12 @@ struct AgentsList {
 #[tauri::command]
 fn list_agents(state: State<AppState>) -> AgentsList {
     AgentsList { installed: agents::installed(&state.paths), registry: agents::local_registry(&state.paths).agents }
+}
+
+/// Ce qu'Orchestra a déjà fait avec chaque agent (missions, installation), pour l'onglet Agents.
+#[tauri::command]
+fn agents_usage(state: State<AppState>) -> Vec<connaissance::Usage> {
+    connaissance::usages(&state.paths)
 }
 
 #[tauri::command]
@@ -870,6 +879,7 @@ pub fn run() {
             voice_start,
             voice_stop,
             voice_log,
+            agents_usage,
             voice_models,
             voice_start_mode,
             voice_restart,

@@ -71,11 +71,12 @@ Tu es transparent : tu dis ce que tu fais et pourquoi.
 
 ## Tâches
 - RÉPONDRE : selon la demande, tu fais l'une de ces quatre choses.
-  1. Converser (discussion, avis, questions sur toi, questions de connaissance, questions sur l'utilisateur) : réponds directement.
+  1. Converser (discussion, avis, questions sur toi, questions de connaissance, questions sur l'utilisateur) : réponds directement. \
+Pour une question sur tes agents, réponds avec la liste « Agents disponibles ».
   2. Chercher en ligne : si la réponse dépend d'une page web, lis-la avec l'outil lire_page, puis réponds dans la conversation : résumer une page ou en faire une synthèse dans la réponse, c'est une recherche, tu la fais toi-même. \nSeulement si un fichier ou un document est demandé, c'est une production : délègue.
   3. Produire : dès qu'il faut produire quelque chose (rédiger, créer ou modifier un fichier, organiser, planifier, envoyer, préparer un livrable…), \
-ne le fais pas toi-même : appelle l'outil deleguer avec besoin (2 à 5 mots, ex. : rédiger un mail), mission (consigne précise et complète pour l'agent) \
-et raison (pourquoi tu délègues, en une phrase).
+ne le fais pas toi-même : appelle l'outil deleguer avec besoin (2 à 5 mots, ex. : rédiger un mail), mission (consigne précise et complète pour l'agent), \
+raison (pourquoi tu délègues, en une phrase) et agent (l'identifiant de l'agent qui sait le faire, choisi dans « Agents disponibles », même s'il n'est pas encore installé).
   4. Suivre les projets : pour une question sur un projet ou sur ce qui a été fait (missions, livrables, contenu d'un document produit), \
 lis toi-même, en lecture seule : projet_historique ou le fichier SUIVI.md du projet d'abord, puis seulement les livrables utiles avec projet_lire \
 (pour un gros fichier, cherche les mots utiles avec chercher). Réponds avec ce que tu as lu, sans rien inventer. Tu ne modifies jamais un livrable. Ces outils servent seulement à répondre à une question : \
@@ -84,6 +85,7 @@ ranger, trier, renommer, créer ou modifier des fichiers reste une production, �
 - Après deleguer, la réponse de l'outil te dit ce qui s'est passé :
   - l'agent a travaillé : commence par une phrase qui dit ce qu'il a fait, puis donne le résultat utile (texte produit, fichiers créés). \
 N'invente rien qui ne soit pas dans le résultat ; s'il n'a pas tout fait, dis-le simplement ;
+  - l'agent est sur l'Agent Market mais pas installé : dis en une ou deux phrases quel agent sait le faire et que l'utilisateur peut l'installer d'un clic avec la carte affichée, puis relancer sa demande ;
   - aucun agent ne sait le faire : ne fais pas le travail toi-même ; explique-le en 2 à 4 phrases, dis quel type d'agent il faudrait \
 et qu'il pourra être ajouté depuis l'Agent Market ou le registre local ;
   - l'agent a échoué : explique-le brièvement et propose une piste.
@@ -107,6 +109,8 @@ pub struct Session {
     pub fichier: Option<std::path::PathBuf>,
     /// Début de la conversation (nom du fichier de résumé).
     pub debut_le: Option<chrono::DateTime<chrono::Local>>,
+    /// Bloc « Agents disponibles » et sa clé : il ne change que si la liste change (cache).
+    pub agents: Option<(String, String)>,
 }
 
 pub async fn run(app: AppHandle, run_id: String, text: String, history: Vec<Msg>) {
@@ -170,7 +174,16 @@ pub fn bloc_5(date: &str, souvenirs: &str, texte: &str) -> String {
 /// Message système : bloc 1 (fixe) + bloc 2 (profil, figé pour la session) + bloc 3 (résumé de la
 /// conversation, lot C, et mention des messages retirés qu'il ne couvre pas encore).
 pub fn bloc_systeme(profil: &str, resume: Option<&str>, retires: usize) -> String {
+    bloc_systeme_agents(profil, "", resume, retires)
+}
+
+/// Message système avec la liste des agents (installés et Agent Market) après le profil.
+pub fn bloc_systeme_agents(profil: &str, agents: &str, resume: Option<&str>, retires: usize) -> String {
     let mut s = format!("{BLOC_1}\n\n## Profil de l'utilisateur\n{}", if profil.is_empty() { "(vide)" } else { profil });
+    if !agents.is_empty() {
+        s.push_str("\n\n");
+        s.push_str(agents);
+    }
     if let Some(r) = resume.map(str::trim).filter(|r| !r.is_empty()) {
         s.push_str(&format!("\n\n## Début de la conversation (résumé)\nLes premiers échanges ne sont plus affichés : voici leur résumé, à jour et fiable.\n{}", crate::securite::encadrer(r)));
     } else if retires > 0 {
@@ -243,7 +256,18 @@ pub async fn tour(out: &dyn Sortie, ctx: &Contexte, run_id: &str, text: &str, hi
         let resume = sess.fichier.as_ref().and_then(|f| std::fs::read_to_string(f).ok());
         (sess.profil.clone().unwrap_or_default(), sess.debut, resume)
     };
-    let mut pile = vec![Msg::system(bloc_systeme(&profil, resume.as_deref(), debut))];
+    // agents installés et catalogue de l'Agent Market (retour de PB du 03/11)
+    let connus = crate::connaissance::connaitre(&http, &cfg, &paths).await;
+    let bloc_agents = {
+        let mut sess = ctx.session.lock().unwrap();
+        let cle = connus.cle();
+        if sess.agents.as_ref().is_none_or(|(c, _)| *c != cle) {
+            sess.agents = Some((cle, connus.bloc()));
+        }
+        sess.agents.as_ref().map(|(_, b)| b.clone()).unwrap_or_default()
+    };
+    thought(out, run_id, format!("🧩 Agents connus : {} installé(s), {} sur l'Agent Market{}\n", connus.installes.len(), connus.market.len(), connus.market_erreur.as_ref().map(|e| format!(" ({e})")).unwrap_or_default()));
+    let mut pile = vec![Msg::system(bloc_systeme_agents(&profil, &bloc_agents, resume.as_deref(), debut))];
     pile.extend(history[debut..].iter().map(|m| Msg::new(m.role.clone(), m.content.clone())));
 
     // 1. Rappel de mémoire
@@ -396,11 +420,12 @@ pub async fn tour(out: &dyn Sortie, ctx: &Contexte, run_id: &str, text: &str, hi
                         format!("Appel invalide : {motif}. Rappelle deleguer avec besoin, mission et raison, ou réponds directement.")
                     }
                     Ok((besoin, mission, raison)) => {
+                        let agent_choisi = a.arguments["agent"].as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
                         delegue = true;
                         intention = "travail".into();
                         bilan.agent_necessaire = true;
                         bilan.besoin = besoin.clone();
-                        let r = deleguer_mission(out, run_id, &brain, &cfg, &paths, &http, &besoin, &mission, &raison, text, &mut bilan, &mut used_agent, ctx.arreter_voix.as_deref(), ctx.validations.as_deref(), ctx.pilote.as_deref()).await?;
+                        let r = deleguer_mission(out, run_id, &brain, &cfg, &paths, &http, &connus, agent_choisi.as_deref(), &besoin, &mission, &raison, text, &mut bilan, &mut used_agent, ctx.arreter_voix.as_deref(), ctx.validations.as_deref(), ctx.pilote.as_deref()).await?;
                         externe_lu = true;
                         phase(out, run_id, "speaking", "Je restitue le résultat");
                         r
@@ -529,13 +554,14 @@ pub fn outils_orchestra(projets: &[String]) -> Vec<Outil> {
     vec![
         Outil {
             nom: "deleguer".into(),
-            description: "Confie à un agent spécialisé tout travail de production (rédiger, créer ou modifier un fichier, organiser, planifier, envoyer…). Orchestra choisit l'agent.".into(),
+            description: "Confie à un agent spécialisé tout travail de production (rédiger, créer ou modifier un fichier, organiser, planifier, envoyer…). Donne l'identifiant de l'agent choisi dans « Agents disponibles » ; sans identifiant, Orchestra choisit.".into(),
             parametres: json!({
                 "type": "object",
                 "properties": {
                     "besoin": chaine("le besoin en 2 à 5 mots, par exemple : rédiger un mail"),
                     "mission": chaine("la consigne précise et complète pour l'agent"),
-                    "raison": chaine("pourquoi tu délègues, en une phrase")
+                    "raison": chaine("pourquoi tu délègues, en une phrase"),
+                    "agent": chaine("identifiant de l'agent qui sait le faire, pris dans « Agents disponibles » (installé ou sur l'Agent Market) ; vide si aucun ne convient")
                 },
                 "required": ["besoin", "mission", "raison"]
             }),
@@ -602,6 +628,20 @@ pub fn valider_delegation(args: &Value) -> Result<(String, String, String), Stri
     Ok((champ("besoin").unwrap(), champ("mission").unwrap(), champ("raison").unwrap()))
 }
 
+/// Un agent de l'Agent Market sait faire le travail mais n'est pas installé : Orchestra n'installe
+/// jamais seule (T4) ; l'interface affiche une carte « Installer », puis « Relancer ma demande ».
+fn proposer_installation(out: &dyn Sortie, run_id: &str, m: &Manifest, original: &str, raison: &str, bilan: &mut Tour) -> String {
+    bilan.aucun_agent = true;
+    thought(out, run_id, format!("🛒 {} ({}) sait le faire, mais n'est pas installé : je propose de l'installer\n", m.name, m.id));
+    emit(out, Event::AgentAInstaller { run_id: run_id.into(), agent: m.clone(), demande: original.to_string(), raison: raison.to_string() });
+    format!(
+        "L'agent « {} » ({}), sur l'Agent Market, sait faire ce travail, mais il n'est pas installé : rien n'a été fait. \
+Une carte « Installer » est affichée à l'utilisateur. Dis-lui en une ou deux phrases que cet agent peut le faire et qu'il peut l'installer d'un clic, \
+puis relancer sa demande. Ne fais pas le travail toi-même.",
+        m.name, m.id
+    )
+}
+
 /// Choisit l'agent pour un besoin, l'annonce (B2), le lance et renvoie ce qui s'est passé,
 /// pour la réponse de l'outil `deleguer`.
 #[allow(clippy::too_many_arguments)]
@@ -612,6 +652,8 @@ async fn deleguer_mission(
     cfg: &Config,
     paths: &Paths,
     http: &reqwest::Client,
+    connus: &crate::connaissance::Connaissance,
+    agent_choisi: Option<&str>,
     besoin: &str,
     mission: &str,
     raison: &str,
@@ -626,9 +668,22 @@ async fn deleguer_mission(
     phase(out, run_id, "searching_agent", "Je cherche l'agent qu'il faut");
     let mut chosen: Option<(Manifest, String, String)> = None;
 
+    // le cerveau a choisi un agent dans la liste « Agents disponibles »
+    if let Some(id) = agent_choisi {
+        if let Some(m) = connus.installe(id) {
+            thought(out, run_id, format!("🧩 Agent choisi dans la liste : {} ({id})\n", m.name));
+            chosen = Some((m.clone(), "installé".into(), "choisi dans la liste des agents installés".into()));
+        } else if let Some(m) = connus.au_market(id) {
+            return Ok(proposer_installation(out, run_id, m, original, raison, bilan));
+        } else {
+            thought(out, run_id, format!("⚠ Agent « {id} » inconnu (ni installé ni sur l'Agent Market) : je cherche moi-même\n"));
+        }
+    }
+
     // mémoire : un agent de confiance pour ce besoin ?
     let need_words = memory::keywords(besoin);
-    for t in memory::trusted_agents(paths) {
+    let confiance = if chosen.is_none() { memory::trusted_agents(paths) } else { vec![] };
+    for t in confiance {
         let tw = memory::keywords(&t.need);
         if tw.iter().any(|w| need_words.contains(w)) {
             // T5 : jamais un agent non certifié, en quarantaine ou dont la confiance a été retirée
@@ -652,6 +707,10 @@ async fn deleguer_mission(
     }
 
     let Some((m, source, choix)) = chosen else {
+        // un agent du Market sait-il le faire ? on propose de l'installer (jamais d'installation seule)
+        if let Some(m) = connus.meilleur_au_market(besoin) {
+            return Ok(proposer_installation(out, run_id, m, original, raison, bilan));
+        }
         bilan.aucun_agent = true;
         thought(out, run_id, "✗ Aucun agent ne correspond. Je ne fais pas le travail moi-même : je l'explique.\n");
         return Ok(format!("Aucun agent disponible ne sait faire ce travail (besoin : « {besoin} »). Ni installé, ni sur l'Agent Market, ni dans le registre local."));

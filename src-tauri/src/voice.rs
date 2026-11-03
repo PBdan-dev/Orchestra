@@ -17,6 +17,23 @@ pub struct VoiceProcess {
     child: Mutex<Option<Child>>,
     /// « voix » (conversation) ou « dictee » (écoute seule, micro du chat)
     mode: Mutex<String>,
+    /// port réellement utilisé (celui de la config, ou le suivant libre s'il est pris)
+    port: Mutex<Option<u16>>,
+}
+
+/// Premier port libre à partir de `depart` (20 essais). Un autre programme peut occuper le port
+/// de la voix (le 03/11, une page de statistiques en Python tenait le 8765) : l'interface se
+/// connectait alors à ce programme et attendait la voix sans fin.
+pub fn port_libre(depart: u16) -> Option<u16> {
+    (0..20u16).filter_map(|i| depart.checked_add(i)).find(|p| !port_occupe(*p))
+}
+
+/// Sous Windows, un programme qui a pris le port avec SO_REUSEADDR (serveur Python `http.server`)
+/// n'empêche pas un second `bind` : on essaie donc d'abord de s'y connecter.
+fn port_occupe(p: u16) -> bool {
+    let adresse = std::net::SocketAddr::from(([127, 0, 0, 1], p));
+    std::net::TcpStream::connect_timeout(&adresse, std::time::Duration::from_millis(300)).is_ok()
+        || std::net::TcpListener::bind(adresse).is_err()
 }
 
 #[derive(Serialize)]
@@ -150,7 +167,7 @@ impl VoiceProcess {
             missing: miss,
             running: self.is_running(),
             mode: self.mode.lock().unwrap().clone(),
-            port: cfg.voice_port,
+            port: self.port.lock().unwrap().unwrap_or(cfg.voice_port),
             dir: voix(paths).to_string_lossy().to_string(),
         }
     }
@@ -184,8 +201,10 @@ impl VoiceProcess {
         if !miss.is_empty() {
             anyhow::bail!("module voix incomplet : {}", miss.join(", "));
         }
+        let port = port_libre(cfg.voice_port)
+            .ok_or_else(|| anyhow::anyhow!("aucun port libre entre {} et {} pour la voix", cfg.voice_port, cfg.voice_port.saturating_add(19)))?;
         let mut cmd = Command::new(python(paths));
-        cmd.args(["-m", "orchestra_voix.server", "--port", &cfg.voice_port.to_string(), "--llm", &cfg.voice_llm, "--speaker", &cfg.voice_speaker])
+        cmd.args(["-m", "orchestra_voix.server", "--port", &port.to_string(), "--llm", &cfg.voice_llm, "--speaker", &cfg.voice_speaker])
             .env("ORCHESTRA_HOME", &paths.root)
             .env("PYTHONIOENCODING", "utf-8")
             .envs(crate::rappel::adresse().map(|(u, j)| vec![("ORCHESTRA_RAPPEL_URL", u), ("ORCHESTRA_RAPPEL_JETON", j)]).unwrap_or_default())
@@ -210,6 +229,7 @@ impl VoiceProcess {
         let child = cmd.spawn()?;
         *self.child.lock().unwrap() = Some(child);
         *self.mode.lock().unwrap() = mode.to_string();
+        *self.port.lock().unwrap() = Some(port);
         Ok(())
     }
 
@@ -226,5 +246,19 @@ impl VoiceProcess {
         let s = std::fs::read_to_string(p).unwrap_or_default();
         let v: Vec<&str> = s.lines().collect();
         v[v.len().saturating_sub(lines)..].join("\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn port_pris_donne_le_suivant() {
+        let pris = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let p = pris.local_addr().unwrap().port();
+        let libre = port_libre(p).unwrap();
+        assert_ne!(libre, p);
+        assert!(libre > p && libre < p.saturating_add(20));
     }
 }

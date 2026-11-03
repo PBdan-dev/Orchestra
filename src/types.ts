@@ -29,7 +29,17 @@ export interface Manifest {
   avertissement?: string;
   /** local (transparent) | heberge (livrable seul, lot T8) */
   execution?: string;
+  /** thème de l'agent (catégorie du manifeste) */
+  categorie?: string;
+  /** ce que l'agent sait faire (fiche) */
+  sait_faire?: string[];
 }
+
+/** Ce qu'Orchestra a déjà fait avec un agent (onglet Agents). */
+export interface UsageAgent { agent_id: string; missions: number; reussies: number; derniere: string | null; installe_le: string | null; provenance: "market" | "local" | null }
+
+/** Agent du Market proposé à l'installation pour une demande (carte dans la conversation). */
+export interface AgentPropose { run_id: string; agent: Manifest; demande: string; raison: string; etat: "propose" | "installation" | "installe" | "erreur"; detail?: string }
 
 /** Identifiant déclaré par un agent (D34), rangé dans le coffre de Windows. */
 export interface Identifiant { nom: string; type: string; raison: string; present: boolean }
@@ -50,6 +60,7 @@ export type OrchestraEvent =
   | { type: "thought"; run_id: string; text: string }
   | { type: "recall"; run_id: string; items: Recalled[] }
   | { type: "agent_attached"; run_id: string; agent: Manifest; source: string; reason: string; parent?: string }
+  | { type: "agent_a_installer"; run_id: string; agent: Manifest; demande: string; raison: string }
   | { type: "agent_status"; run_id: string; agent_id: string; status: "running" | "done" | "error"; detail: string }
   | { type: "tool_call"; run_id: string; agent_id: string; tool: string; input: unknown; output: string }
   | { type: "token"; run_id: string; text: string }
@@ -171,6 +182,8 @@ export interface AgentNode {
   attachedAt: number;
   runId: string;
   lastTool?: { tool: string; at: number };
+  /** appels d'outils de la mission en cours, dans l'ordre (sous-bulle de tâche sur la scène) */
+  appels?: { tool: string; at: number; output: string }[];
   /** id de l'agent parent quand c'est un sous-agent */
   parent?: string;
 }

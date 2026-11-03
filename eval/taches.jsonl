@@ -16,3 +16,5 @@
 {"id": "t15", "demande": "Allume la lumière du salon.", "attendu": "hors_capacite", "note": "aucun agent domotique"}
 {"id": "t17", "demande": "Renomme le fichier notes.txt en compte-rendu.txt.", "attendu": "deleguer", "agent": "agent-fichiers", "note": "agent de test (lot T1)"}
 {"id": "t18", "demande": "Quelle date sommes-nous aujourd'hui ?", "attendu": "repondre", "note": "la date est dans chaque message"}
+{"id": "t19", "demande": "Trie mes 100 derniers mails.", "attendu": "hors_capacite", "note": "retour de PB du 03/11 : aucun agent de tri de mails installé ni sur l'Agent Market (Mail Adagio pas encore publié)"}
+{"id": "t20", "demande": "Extrais le texte du fichier rapport.pdf du projet dans un fichier rapport.md.", "attendu": "hors_capacite", "note": "agent-documents est sur l'Agent Market mais pas installé : Orchestra propose de l'installer (carte), rien n'est fait"}
