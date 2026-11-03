@@ -9,6 +9,7 @@ pub mod configuration;
 pub mod connaissance;
 pub mod consolidation;
 pub mod contrat;
+pub mod conversations;
 pub mod entretien;
 pub mod environnement;
 #[cfg(test)]
@@ -1025,6 +1026,14 @@ pub fn run() {
             reinitialiser_memoire_agent,
             lister_projets,
             choisir_projet,
+            conversations::conv_etat,
+            conversations::conv_enregistrer_organisation,
+            conversations::conv_nouvelle,
+            conversations::conv_ouvrir,
+            conversations::conv_enregistrer,
+            conversations::conv_modifier,
+            conversations::conv_supprimer,
+            conversations::conv_contexte,
         ])
         .build(tauri::generate_context!())
         .expect("erreur au lancement d'Orchestra")

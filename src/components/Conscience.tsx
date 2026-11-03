@@ -4,6 +4,7 @@ import { useStore } from "../store";
 import { PHASE_COLOR, PHASE_LABEL, type Entry, type MissionVue, type ValidationMission } from "../types";
 import { api } from "../tauri";
 import { AgentGlyph, I } from "./Icons";
+import { useConv } from "../conversations";
 
 /** La conscience : tout ce qu'Orchestra fait, pense, rappelle et retient, en direct. */
 export function Conscience() {
@@ -17,6 +18,7 @@ export function Conscience() {
   const vuDonnees = useStore((s) => s.vuDonnees);
   const lectures = useStore((s) => s.lecturesAConfirmer);
   const confirmerLecture = useStore((s) => s.confirmerLecture);
+  const setConscience = useConv((s) => s.setConscience);
   const ref = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
@@ -45,6 +47,8 @@ export function Conscience() {
           <span title="faits enregistrés"><I.save size={11} /> {counts.memorized}</span>
           <span title="outils utilisés"><I.tool size={11} /> {counts.tools}</span>
           <span className={`live-dot ${busy ? "on" : ""}`} style={{ ["--c" as any]: PHASE_COLOR[phase] }} />
+          <button className="icon-btn xs" title="Réduire la Conscience" onClick={() => setConscience("reduite")}><I.chevron size={12} style={{ transform: "rotate(180deg)" }} /></button>
+          <button className="icon-btn xs" title="Masquer la Conscience" onClick={() => setConscience("masquee")}><I.x size={12} /></button>
         </div>
       </header>
       {alertes.length > 0 && (
