@@ -12,11 +12,18 @@ import { JournalView } from "./components/JournalView";
 import { MissionsView } from "./components/MissionsView";
 import { AgentsView } from "./components/AgentsView";
 import { FormulaireConfiguration } from "./components/AgentConfig";
+import { ConversationsPanel } from "./components/ConversationsPanel";
+import { ConversationTabs } from "./components/ConversationTabs";
+import { ConscienceRail, LanguetteConscience } from "./components/ConscienceRail";
+import { useConv } from "./conversations";
+import "./conversations.css";
 
 export default function App() {
   const boot = useStore((s) => s.boot);
   const bootDone = useStore((s) => s.bootDone);
   const view = useStore((s) => s.view);
+  const panneau = useConv((s) => s.panneau);
+  const conscience = useConv((s) => s.conscience);
   const [minDelay, setMinDelay] = useState(false);
 
   useEffect(() => {
@@ -48,13 +55,19 @@ export default function App() {
       <main className="main">
         <AnimatePresence mode="wait">
           {view === "stage" && (
-            <motion.div key="stage" className="layout-stage" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
-              <Conscience />
+            <motion.div key="stage" className={`layout-stage avec-conversations conv-${panneau} conscience-${conscience}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
+              <ConversationsPanel />
+              {conscience === "ouverte" && <Conscience />}
+              {conscience === "reduite" && <ConscienceRail />}
               <div className="center-col">
+                {conscience === "masquee" && <LanguetteConscience />}
                 <Stage />
                 <Composer />
               </div>
-              <Conversation />
+              <div className="conv-col">
+                <ConversationTabs />
+                <Conversation />
+              </div>
             </motion.div>
           )}
           {view === "agents" && <motion.div key="agents" className="layout-view" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}><AgentsView /></motion.div>}

@@ -112,6 +112,9 @@ pub struct Session {
     pub debut_le: Option<chrono::DateTime<chrono::Local>>,
     /// Bloc « Agents disponibles » et sa clé : il ne change que si la liste change (cache).
     pub agents: Option<(String, String)>,
+    /// Contenu d'un dossier de conversations (« Interroger ce dossier »), figé pour la conversation
+    /// et placé à la fin du message système (cache).
+    pub contexte: Option<String>,
 }
 
 pub async fn run(app: AppHandle, run_id: String, text: String, history: Vec<Msg>) {
@@ -240,7 +243,9 @@ pub async fn tour(out: &dyn Sortie, ctx: &Contexte, run_id: &str, text: &str, hi
         let mut sess = ctx.session.lock().unwrap();
         if history.is_empty() || sess.profil.is_none() {
             // nouvelle conversation : profil relu et figé pour la session
-            *sess = Session { debut_le: Some(chrono::Local::now()), ..Session::default() };
+            // la conversation ouverte dans l'interface garde son fichier de résumé et son contexte de dossier
+            let (fichier, contexte) = (sess.fichier.take(), sess.contexte.take());
+            *sess = Session { debut_le: Some(chrono::Local::now()), fichier, contexte, ..Session::default() };
             let (p, ecartes) = memory::profil(&paths, PROFIL_MAX_CAR);
             if ecartes > 0 {
                 emit(out, Event::Coupe { run_id: run_id.into(), quoi: "profil".into(), detail: format!("{ecartes} fait(s) du profil non repris, faute de place") });
@@ -272,6 +277,9 @@ pub async fn tour(out: &dyn Sortie, ctx: &Contexte, run_id: &str, text: &str, hi
     };
     thought(out, run_id, format!("🧩 Agents connus : {} installé(s), {} sur l'Agent Market{}\n", connus.installes.len(), connus.market.len(), connus.market_erreur.as_ref().map(|e| format!(" ({e})")).unwrap_or_default()));
     let mut pile = vec![Msg::system(bloc_systeme_agents(&profil, &bloc_agents, resume.as_deref(), debut))];
+    if let Some(c) = ctx.session.lock().unwrap().contexte.clone() {
+        pile[0].content.push_str(&c);
+    }
     pile.extend(history[debut..].iter().map(|m| Msg::new(m.role.clone(), m.content.clone())));
 
     // 1. Rappel de mémoire
