@@ -26,6 +26,9 @@ pub struct Config {
     pub market_url: String,
     /// Mode développement (lot T4) : accepte les agents non certifiés, avec le badge « Non certifié ».
     pub mode_developpement: bool,
+    /// « serie » (défaut) : une mission qui prend la carte graphique coupe la conversation, après
+    /// confirmation de PB ; « parallele » : la conversation garde son modèle pendant les missions.
+    pub mode_execution: String,
     /// Rappel par le sens (lot M2) : vecteurs du modèle d'embedding d'Ollama, sur le processeur (D10).
     pub embeddings_enabled: bool,
     pub embedding_model: String,
@@ -84,6 +87,7 @@ impl Default for Config {
             cles_en_clair: vec![],
             market_url: String::new(),
             mode_developpement: false,
+            mode_execution: "serie".into(),
             // lot M2 : rappel par le sens, modèle choisi en D10
             embeddings_enabled: true,
             embedding_model: MODELE_SENS.into(),

@@ -5,6 +5,7 @@ pub mod coffre;
 pub mod compaction;
 pub mod compression;
 pub mod config;
+pub mod configuration;
 pub mod connaissance;
 pub mod consolidation;
 pub mod contrat;
@@ -538,6 +539,64 @@ fn list_agents(state: State<AppState>) -> AgentsList {
     AgentsList { installed: agents::installed(&state.paths), registry: agents::local_registry(&state.paths).agents }
 }
 
+/// État de la chaîne vocale, pour l'interface : le serveur voix (écoute et synthèse vivent dans son
+/// processus) et ce qu'Ollama a en mémoire (cerveau vocal, modèle du rappel par le sens).
+#[derive(Serialize)]
+struct EtatVoix {
+    serveur: bool,
+    mode: String,
+    port: u16,
+    cerveau: String,
+    cerveau_charge: bool,
+    memoire: String,
+    memoire_chargee: bool,
+    ollama: bool,
+}
+
+#[tauri::command]
+async fn etat_voix(state: State<'_, AppState>) -> CmdResult<EtatVoix> {
+    let cfg = state.config.lock().unwrap().clone();
+    let st = state.voice.status(&state.paths, &cfg);
+    let base = cfg.ollama_url.trim_end_matches('/').to_string();
+    let ps: Option<serde_json::Value> = async { state.http.get(format!("{base}/api/ps")).timeout(std::time::Duration::from_secs(3)).send().await.ok()?.json().await.ok() }.await;
+    let charges: Vec<String> = ps.as_ref().and_then(|v| v["models"].as_array()).into_iter().flatten().filter_map(|m| m["name"].as_str().map(String::from)).collect();
+    let charge = |nom: &str| {
+        let n = nom.trim_end_matches(":latest");
+        charges.iter().any(|c| { let c = c.trim_end_matches(":latest"); c == n || c.starts_with(&format!("{n}-orchestra")) || (!n.contains(':') && c.starts_with(&format!("{n}:"))) })
+    };
+    Ok(EtatVoix {
+        serveur: st.running,
+        mode: st.mode,
+        port: st.port,
+        cerveau_charge: charge(&cfg.voice_llm),
+        cerveau: cfg.voice_llm.clone(),
+        memoire_chargee: cfg.embeddings_enabled && charge(&cfg.embedding_model),
+        memoire: if cfg.embeddings_enabled { cfg.embedding_model.clone() } else { String::new() },
+        ollama: ps.is_some(),
+    })
+}
+
+/// Ce dont un agent a besoin pour fonctionner (identifiants, réglages) et leur état, sans aucune valeur secrète.
+#[tauri::command]
+fn champs_agent(state: State<AppState>, id: String) -> CmdResult<Vec<configuration::Champ>> {
+    let m = agents::get_installed(&state.paths, &id).ok_or_else(|| format!("{id} n'est pas installé"))?;
+    Ok(configuration::champs_agent(&m))
+}
+
+/// Formulaire d'un agent : les identifiants vont dans le coffre de Windows (jamais dans un fichier
+/// ni au journal), les réglages dans agents/reglages/<id>.json. Une valeur vide est ignorée pour un identifiant.
+#[tauri::command]
+fn enregistrer_configuration(state: State<AppState>, id: String, reglages: serde_json::Map<String, serde_json::Value>, identifiants: std::collections::HashMap<String, String>) -> CmdResult<()> {
+    let m = agents::get_installed(&state.paths, &id).ok_or_else(|| format!("{id} n'est pas installé"))?;
+    for (nom, valeur) in identifiants.iter().filter(|(_, v)| !v.trim().is_empty()) {
+        installation::enregistrer_identifiant(&m, nom, valeur.trim())?;
+    }
+    if !reglages.is_empty() {
+        configuration::enregistrer_reglages(&state.paths, &id, &reglages)?;
+    }
+    Ok(())
+}
+
 /// Ce qu'Orchestra a déjà fait avec chaque agent (missions, installation), pour l'onglet Agents.
 #[tauri::command]
 fn agents_usage(state: State<AppState>) -> Vec<connaissance::Usage> {
@@ -783,6 +842,77 @@ fn choisir_projet(state: State<AppState>, nom: String) -> CmdResult<String> {
     Ok(nom)
 }
 
+/// Mode d'exécution choisi et pourquoi (refus du parallèle expliqué).
+#[derive(Serialize)]
+struct ModeExecution {
+    mode: String,
+    motif: String,
+}
+
+/// Série ou parallèle (retour de PB du 03/11). Le parallèle garde le modèle de la conversation
+/// (et la voix) pendant les missions : sans cerveau en ligne, il faut que la carte graphique puisse
+/// porter au moins un modèle d'agent en plus de ce qui est déjà chargé ; sinon on reste en série.
+#[tauri::command]
+async fn choisir_mode_execution(state: State<'_, AppState>, mode: String) -> CmdResult<ModeExecution> {
+    let cfg = state.config.lock().unwrap().clone();
+    let go = |o: u64| o as f64 / 1_073_741_824.0;
+    let mut motif = String::new();
+    let mut retenu = if mode == "parallele" { "parallele" } else { "serie" }.to_string();
+    if retenu == "parallele" && cfg.provider == "ollama" {
+        let mut b = Brain::new(cfg.clone(), state.http.clone());
+        let info = b.detect().await;
+        let voix = state.voice.status(&state.paths, &cfg).running;
+        let conversation = if voix { cfg.voice_llm.clone() } else { b.model.clone() };
+        let tailles = modele::tailles(&cfg, &state.http).await;
+        let taille = |m: &str| tailles.get(m.trim_end_matches(":latest")).copied();
+        // modèles que demanderaient les agents installés, autres que celui de la conversation
+        let mut besoins: Vec<(String, u64)> = agents::installed(&state.paths)
+            .iter()
+            .filter_map(|m| modele::choisir(m, &conversation))
+            .filter(|m| *m != conversation && *m != b.model)
+            .filter_map(|m| taille(&m).map(|t| (m, t)))
+            .collect();
+        besoins.sort_by_key(|(_, t)| *t);
+        besoins.dedup_by(|a, b| a.0 == b.0);
+        match (memoire_graphique(), besoins.first()) {
+            (Err(e), _) => {
+                retenu = "serie".into();
+                motif = format!("Mémoire graphique illisible ({e}) : je reste en série.");
+            }
+            (Ok(_), None) => motif = "Parallèle : les agents installés utilisent le modèle de la conversation, rien d'autre à charger.".into(),
+            (Ok(g), Some((petit, t))) => {
+                let totale = g.totale as f64 / 1024.0;
+                let utilisee = g.utilisee as f64 / 1024.0;
+                // le modèle de la conversation, s'il n'est pas chargé maintenant, reviendra à la fin de la mission
+                let conv_absente = !info.loaded && !voix;
+                let a_prevoir = if conv_absente { taille(&conversation).map(go).unwrap_or(0.0) } else { 0.0 };
+                let libre = totale - utilisee - a_prevoir - 1.0;
+                let besoin = go(*t) * 1.1;
+                if libre >= besoin {
+                    let trop_gros: Vec<String> = besoins.iter().filter(|(_, t)| go(*t) * 1.1 > libre).map(|(m, t)| format!("{m} ({:.0} Go)", go(*t))).collect();
+                    motif = format!("Parallèle : {libre:.1} Go libres sur {totale:.0}, assez pour {petit} ({:.1} Go) à côté de la conversation.{}", go(*t),
+                        if trop_gros.is_empty() { String::new() } else { format!(" Trop gros pour tenir à côté : {} ; ces missions demanderont le mode série.", trop_gros.join(", ")) });
+                } else {
+                    retenu = "serie".into();
+                    motif = format!(
+                        "Parallèle impossible : la carte graphique a {totale:.0} Go, dont {:.1} Go déjà pris (conversation{}{}), et le plus petit modèle d'agent ({petit}) demande {besoin:.1} Go. Il faudrait au moins deux modèles en même temps : je reste en série.",
+                        utilisee + a_prevoir,
+                        if voix { ", voix" } else { "" },
+                        if conv_absente { ", modèle de la conversation à recharger" } else { "" }
+                    );
+                }
+            }
+        }
+    } else if retenu == "parallele" {
+        motif = "Parallèle : le cerveau de la conversation est en ligne, la carte graphique reste aux agents.".into();
+    }
+    noter(&state, &[state.paths.config.clone()]);
+    let mut c = state.config.lock().unwrap();
+    c.mode_execution = retenu.clone();
+    c.save(&state.paths).map_err(err)?;
+    Ok(ModeExecution { mode: retenu, motif })
+}
+
 #[tauri::command]
 fn voice_log(state: State<AppState>) -> String {
     voice::VoiceProcess::log_tail(&state.paths, 40)
@@ -880,6 +1010,10 @@ pub fn run() {
             voice_stop,
             voice_log,
             agents_usage,
+            champs_agent,
+            etat_voix,
+            choisir_mode_execution,
+            enregistrer_configuration,
             voice_models,
             voice_start_mode,
             voice_restart,

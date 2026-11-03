@@ -85,6 +85,41 @@ export function VoiceControls() {
           <I.stop size={11} /> Stop
         </button>
       )}
+      <ChaineVoix />
+    </div>
+  );
+}
+
+/**
+ * Chaque maillon de la voix avec son état : écoute (Voxtral) et synthèse vivent dans le serveur
+ * voix, le cerveau vocal et le rappel par le sens dans Ollama. Vert : prêt ; ambre : en chargement ;
+ * gris : arrêté.
+ */
+function ChaineVoix() {
+  const e = useStore((s) => s.voiceEtat);
+  const conn = useStore((s) => s.voiceConn);
+  const pause = useStore((s) => s.voicePause);
+  const etape = useStore((s) => s.voiceEtape);
+  const relancer = useStore((s) => s.relancerVoix);
+  if (!e) return null;
+  type Etat = "ok" | "charge" | "arret";
+  const serveur: Etat = !e.serveur ? "arret" : conn === "on" ? "ok" : "charge";
+  const cerveau: Etat = e.cerveau_charge ? (serveur === "arret" ? "charge" : "ok") : e.serveur || etape ? "charge" : "arret";
+  const maillons: [string, Etat, string][] = [
+    ["Écoute", serveur, "Voxtral, dans le serveur voix : transcrit ce que tu dis"],
+    ["Cerveau", cerveau, `${e.cerveau}, dans Ollama${e.cerveau_charge ? " : chargé" : " : pas chargé"}`],
+    ["Voix", serveur, "Synthèse vocale, dans le serveur voix"],
+    ...(e.memoire ? [["Mémoire", e.memoire_chargee ? "ok" : "arret", `${e.memoire} (rappel par le sens), dans Ollama${e.memoire_chargee ? "" : " : pas chargé, le rappel passe par les mots"}`] as [string, Etat, string]] : []),
+  ];
+  const libelle = { ok: "prêt", charge: "en chargement", arret: "arrêté" };
+  return (
+    <div className="chaine-voix" title={pause ? `Voix en pause : ${pause}` : undefined}>
+      {maillons.map(([nom, etat, detail]) => (
+        <span key={nom} className={`cv-maillon ${pause && etat !== "ok" ? "pause" : etat}`} title={`${nom} : ${pause && etat === "arret" ? "en pause" : libelle[etat]} · ${detail}`}>
+          <span className="cv-point" />{nom}
+        </span>
+      ))}
+      {serveur === "arret" && !pause && <button className="vc-btn" onClick={relancer} title="Arrête et relance le serveur voix"><I.refresh size={11} /> Relancer la voix</button>}
     </div>
   );
 }

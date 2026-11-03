@@ -211,6 +211,15 @@ export const mockApi = {
   compacter: async () => false,
   annulerCompaction: async () => false,
   etatSession: async () => ({ couvre: 0, resume: null, profil: "" }),
+  choisirModeExecution: async (mode: "serie" | "parallele") => (mode === "parallele"
+    ? { mode: "serie", motif: "Parallèle impossible : la carte graphique a 24 Go, dont 19,2 Go déjà pris (conversation, voix), et le plus petit modèle d'agent (qwen3.5:9b) demande 7,3 Go. Il faudrait au moins deux modèles en même temps : je reste en série." }
+    : { mode: "serie", motif: "" }),
+  etatVoix: async () => ({ serveur: false, mode: "voix", port: 8765, cerveau: "qwen3.5:9b", cerveau_charge: false, memoire: "qwen3-embedding:0.6b", memoire_chargee: true, ollama: true }),
+  champsAgent: async (id: string) => (id === "agent-mail" ? [
+    { nom: "compte", genre: "reglage" as const, type: "texte", raison: "Adresse Gmail, si elle n'est pas déjà dans memoire/config.yaml.", requis: false, valeur: "", present: false },
+    ...(idsDemo[id] ?? []).map((i) => ({ nom: i.nom, genre: "identifiant" as const, type: i.type, raison: i.raison, requis: true, valeur: "", present: i.present })),
+  ] : []),
+  enregistrerConfiguration: async (id: string, _r: Record<string, string>, ids: Record<string, string>) => { (idsDemo[id] ?? []).forEach((i) => { if (ids[i.nom]) i.present = true; }); },
   agentsUsage: async () => [
     { agent_id: "agent-fichiers", missions: 2, reussies: 1, derniere: "2026-10-31T16:07:00+01:00", installe_le: "2026-10-30T12:00:00+01:00", provenance: "market" as const },
     { agent_id: "mail-adagio", missions: 1, reussies: 1, derniere: "2026-10-30T18:51:00+01:00", installe_le: null, provenance: null },

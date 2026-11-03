@@ -11,6 +11,7 @@ import { SettingsView } from "./components/SettingsView";
 import { JournalView } from "./components/JournalView";
 import { MissionsView } from "./components/MissionsView";
 import { AgentsView } from "./components/AgentsView";
+import { FormulaireConfiguration } from "./components/AgentConfig";
 
 export default function App() {
   const boot = useStore((s) => s.boot);
@@ -43,6 +44,7 @@ export default function App() {
       </AnimatePresence>
 
       <TopBar />
+      <FormulaireConfiguration />
       <main className="main">
         <AnimatePresence mode="wait">
           {view === "stage" && (

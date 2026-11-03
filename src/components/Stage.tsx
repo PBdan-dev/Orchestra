@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useStore } from "../store";
 import { brainStatus } from "../brainStatus";
-import { runSimulation } from "../simulation";
 import { PHASE_COLOR, PHASE_LABEL, type AgentNode } from "../types";
 import { Core } from "./Core";
 import { AgentGlyph, I } from "./Icons";
@@ -36,6 +35,7 @@ export function Stage() {
   const voiceOn = useStore((s) => s.voiceOn);
   const voiceConn = useStore((s) => s.voiceConn);
   const voiceEtape = useStore((s) => s.voiceEtape);
+  const voicePause = useStore((s) => s.voicePause);
   const voiceLlm = useStore((s) => s.config?.voice_llm);
   const switching = useStore((s) => s.switching);
 
@@ -181,7 +181,7 @@ export function Stage() {
         </AnimatePresence>
         <ModeSwitch />
         {voiceOn && <VoiceControls />}
-        {(switching || (voiceOn && voiceConn !== "on")) && <span className="core-note">{switching || (voiceEtape ? `Presque prête : ${voiceEtape}…` : "Je prépare ma voix… (≈ 30 s)")}</span>}
+        {(switching || (voiceOn && voiceConn !== "on")) && <span className="core-note">{switching || (voicePause ? "Voix en pause pendant la mission" : voiceEtape ? `Presque prête : ${voiceEtape}…` : "Je prépare ma voix… (≈ 30 s)")}</span>}
       </div>
 
       {/* agents */}
@@ -209,9 +209,7 @@ export function Stage() {
       {/* barre d'outils de la scène */}
       <div className="stage-tools tl">
         <button className={`glass-btn ${agentsPanel ? "active" : ""}`} onClick={() => setAgentsPanel(!agentsPanel)}><I.grid size={13} /> Agents</button>
-        <button className="glass-btn" onClick={() => runSimulation()} disabled={busy || simulating} title="Rejoue une demande fictive avec 3 agents et un sous-agent (rien n'est écrit ni envoyé au modèle)">
-          <I.play size={12} /> {simulating ? "Simulation…" : "Simulation"}
-        </button>
+        <ModeExecution />
       </div>
       <div className="stage-tools br" style={{ right: inspectorOpen ? 392 : 12 }}>
         <span className="tools-label">Cœur</span>
@@ -353,5 +351,35 @@ function SousBulle({ carte, ouverte, basculer }: { carte: Carte; ouverte: boolea
         </div>
       )}
     </motion.div>
+  );
+}
+
+/**
+ * Série ou parallèle (retour de PB du 03/11), à la place du bouton Simulation.
+ * Série : une mission rend la conversation indisponible, après ton feu vert. Parallèle : la
+ * conversation garde son modèle ; refusé (et expliqué) si la carte graphique ne peut pas en porter deux.
+ */
+function ModeExecution() {
+  const mode = useStore((s) => s.config?.mode_execution ?? "serie");
+  const choisir = useStore((s) => s.choisirMode);
+  const busy = useStore((s) => s.busy);
+  const [motif, setMotif] = useState("");
+  const [verif, setVerif] = useState(false);
+  useEffect(() => { if (!motif) return; const t = setTimeout(() => setMotif(""), 12000); return () => clearTimeout(t); }, [motif]);
+  const changer = async (m: "serie" | "parallele") => {
+    if (m === mode || verif) return;
+    setVerif(true);
+    try { setMotif(await choisir(m)); } catch (e) { setMotif(String(e).replace(/^Error: /, "")); } finally { setVerif(false); }
+  };
+  return (
+    <div className="mode-exec">
+      <div className="mode-exec-choix glass" role="radiogroup" aria-label="Mode d'exécution des missions">
+        <button role="radio" aria-checked={mode !== "parallele"} className={mode !== "parallele" ? "on" : ""} disabled={busy} onClick={() => changer("serie")}
+          title="Une mission à la fois ; la conversation attend la fin de la mission (tu confirmes chaque lancement)">Série</button>
+        <button role="radio" aria-checked={mode === "parallele"} className={mode === "parallele" ? "on" : ""} disabled={busy} onClick={() => changer("parallele")}
+          title="La conversation garde son modèle pendant les missions, si la carte graphique peut porter les deux">{verif ? "Vérification…" : "Parallèle"}</button>
+      </div>
+      {motif && <div className={`mode-exec-motif ${/impossible|illisible/.test(motif) ? "warn" : ""}`} onClick={() => setMotif("")}>{motif}</div>}
+    </div>
   );
 }

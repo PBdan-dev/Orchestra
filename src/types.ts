@@ -38,6 +38,17 @@ export interface Manifest {
 /** Ce qu'Orchestra a déjà fait avec un agent (onglet Agents). */
 export interface UsageAgent { agent_id: string; missions: number; reussies: number; derniere: string | null; installe_le: string | null; provenance: "market" | "local" | null }
 
+/** État de la chaîne vocale (serveur voix, cerveau vocal et modèle du rappel dans Ollama). */
+export interface EtatVoix { serveur: boolean; mode: string; port: number; cerveau: string; cerveau_charge: boolean; memoire: string; memoire_chargee: boolean; ollama: boolean }
+
+/** Ce dont un agent a besoin pour fonctionner : identifiant (coffre de Windows) ou réglage (donnée simple). */
+export interface ChampAgent { nom: string; genre: "identifiant" | "reglage"; type: string; raison: string; requis: boolean; valeur: string; present: boolean }
+/** Mission bloquée faute de champs : formulaire ouvert, puis demande relancée. */
+export interface ConfigurationRequise { run_id: string; agent_id: string; agent_nom: string; demande: string; motif: string; champs: ChampAgent[] }
+
+/** Mode série : mission en attente du feu vert de PB. */
+export interface LancementAConfirmer { run_id: string; cle: string; agent_id: string; agent_nom: string; but: string; modele: string; change_modele: boolean }
+
 /** Agent du Market proposé à l'installation pour une demande (carte dans la conversation). */
 export interface AgentPropose { run_id: string; agent: Manifest; demande: string; raison: string; etat: "propose" | "installation" | "installe" | "erreur"; detail?: string }
 
@@ -61,6 +72,10 @@ export type OrchestraEvent =
   | { type: "recall"; run_id: string; items: Recalled[] }
   | { type: "agent_attached"; run_id: string; agent: Manifest; source: string; reason: string; parent?: string }
   | { type: "agent_a_installer"; run_id: string; agent: Manifest; demande: string; raison: string }
+  | ({ type: "configuration_requise" } & ConfigurationRequise)
+  | { type: "voix_en_pause"; motif: string }
+  | { type: "lancement_a_confirmer"; run_id: string; cle: string; agent_id: string; agent_nom: string; but: string; modele: string; change_modele: boolean }
+  | { type: "lancement_regle"; run_id: string; cle: string; accepte: boolean }
   | { type: "agent_status"; run_id: string; agent_id: string; status: "running" | "done" | "error"; detail: string }
   | { type: "tool_call"; run_id: string; agent_id: string; tool: string; input: unknown; output: string }
   | { type: "token"; run_id: string; text: string }
@@ -98,6 +113,8 @@ export interface Config {
   /* clés API : jamais envoyées à l'interface (lot S-c), voir api.clesApi() */
   market_url: string;
   mode_developpement: boolean;
+  /** serie | parallele */
+  mode_execution?: string;
   /** projet où vont les missions et les livrables (D36) */
   projet_actif?: string;
   embeddings_enabled: boolean;

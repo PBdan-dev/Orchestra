@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { api, onEvent } from "./tauri";
 import { VoiceClient, type VoiceEvent } from "./voice";
 import type {
-  AgentNode, AgentPropose, AlerteDonnees, Autorisation, LectureAConfirmer, BrainInfo, ChatMessage, Config, Entry, Installation, Manifest, Rupture, MissionVue, OrchestraEvent, PathsInfo, Phase, Projets, VoiceLatency, VoiceModels, VoiceStatus,
+  AgentNode, AgentPropose, AlerteDonnees, ConfigurationRequise, EtatVoix, LancementAConfirmer, Autorisation, LectureAConfirmer, BrainInfo, ChatMessage, Config, Entry, Installation, Manifest, Rupture, MissionVue, OrchestraEvent, PathsInfo, Phase, Projets, VoiceLatency, VoiceModels, VoiceStatus,
 } from "./types";
 
 export type View = "stage" | "agents" | "missions" | "memory" | "journal" | "settings";
@@ -117,6 +117,20 @@ interface State {
   paths: PathsInfo | null;
   registry: Manifest[];
   installed: Manifest[];
+  /** missions bloquées faute de réglages ou d'identifiants : formulaire ouvert */
+  configurations: ConfigurationRequise[];
+  fermerConfiguration: (runId: string, relancer: boolean) => void;
+  /** voix arrêtée pendant une mission (carte graphique prêtée à l'agent) : relancée à la fin du tour */
+  voicePause: string;
+  /** mode série : missions en attente du feu vert */
+  lancements: LancementAConfirmer[];
+  confirmerLancement: (cle: string, accepte: boolean) => Promise<void>;
+  /** série ou parallèle, et la raison d'un refus du parallèle */
+  choisirMode: (mode: "serie" | "parallele") => Promise<string>;
+  /** état de chaque maillon de la voix, relu toutes les 4 s en mode voix */
+  voiceEtat: EtatVoix | null;
+  /** arrête et relance le serveur voix (après une mission, ou à la demande) */
+  relancerVoix: () => Promise<void>;
   /** agents du Market proposés à l'installation dans la conversation */
   agentsProposes: AgentPropose[];
   installerPropose: (runId: string) => Promise<void>;
@@ -257,6 +271,31 @@ export const useStore = create<State>((set, get) => ({
   installed: [],
   agentsProposes: [],
   agentFocus: null,
+  configurations: [],
+  voicePause: "",
+  lancements: [],
+  confirmerLancement: async (cle, accepte) => {
+    await api.confirmerLecture(cle, accepte);
+    set((s) => ({ lancements: s.lancements.filter((l) => l.cle !== cle) }));
+  },
+  choisirMode: async (mode) => {
+    const r = await api.choisirModeExecution(mode);
+    set((s) => ({ config: s.config ? { ...s.config, mode_execution: r.mode } : s.config }));
+    return r.motif;
+  },
+  voiceEtat: null,
+  relancerVoix: async () => {
+    if (!get().voiceOn) return;
+    voice.disconnect();
+    set({ voiceOn: false, voiceConn: "off", voicePause: "", voiceUser: false, voiceInterim: "", voiceError: "" });
+    await api.voiceStop().catch(() => {});
+    await get().toggleVoice();
+  },
+  fermerConfiguration: (runId, relancer) => {
+    const c = get().configurations.find((x) => x.run_id === runId);
+    set((s) => ({ configurations: s.configurations.filter((x) => x.run_id !== runId) }));
+    if (relancer && c) get().send(c.demande);
+  },
   voirAgent: (id) => set({ agentFocus: id, view: "agents" }),
   oublierPropose: (runId) => set((s) => ({ agentsProposes: s.agentsProposes.filter((p) => p.run_id !== runId) })),
   installerPropose: async (runId) => {
@@ -595,6 +634,7 @@ export const useStore = create<State>((set, get) => ({
       await voice.connect(st.port);
       set({ voiceOn: true, voiceEtape: "" });
       surveillerDemarrage("voix");
+      surveillerChaineVoix();
     } catch (e) {
       set({ voiceError: String(e).replace(/^Error: /, ""), voiceOn: false });
     }
@@ -887,6 +927,27 @@ export const useStore = create<State>((set, get) => ({
         if (e.run_id !== "sim") get().refreshAgents();
         break;
       }
+      case "configuration_requise": {
+        const { type: _t, ...c } = e;
+        set((s) => ({ configurations: [...s.configurations.filter((x) => x.agent_id !== c.agent_id), c] }));
+        push({ kind: "phase", id: uid(), runId: e.run_id, at: now, phase: "thinking", label: `${e.agent_nom} a besoin de réglages : formulaire ouvert` });
+        live.pulse(0.8);
+        break;
+      }
+      case "lancement_a_confirmer": {
+        const { type: _t, ...l } = e;
+        set((s) => ({ lancements: [...s.lancements, l] }));
+        live.pulse(0.9);
+        if (get().voiceOn && voice?.connected) voice.say(`${e.agent_nom} est prêt à travailler. Pendant la mission, je ne pourrai plus discuter. Confirme le lancement à l'écran.`);
+        break;
+      }
+      case "lancement_regle":
+        set((s) => ({ lancements: s.lancements.filter((l) => l.cle !== e.cle) }));
+        push({ kind: "phase", id: uid(), runId: e.run_id, at: now, phase: e.accepte ? "delegating" : "idle", label: e.accepte ? "Lancement confirmé" : "Lancement reporté" });
+        break;
+      case "voix_en_pause":
+        if (get().voiceOn) set({ voicePause: e.motif });
+        break;
       case "agent_a_installer":
         set((s) => ({ agentsProposes: [...s.agentsProposes.filter((p) => p.run_id !== e.run_id), { run_id: e.run_id, agent: e.agent, demande: e.demande, raison: e.raison, etat: "propose" }] }));
         push({ kind: "phase", id: uid(), runId: e.run_id, at: now, phase: "searching_agent", label: `${e.agent.name} sait le faire : à installer depuis l'Agent Market` });
@@ -955,6 +1016,8 @@ export const useStore = create<State>((set, get) => ({
           if (last?.content) voice.say(last.content);
         }
         voiceRun = false;
+        // voix arrêtée pendant la mission (carte graphique prêtée) : on la relance
+        if (get().voicePause) setTimeout(() => get().relancerVoix(), 0);
         suivanteDeLaFile();
         break;
       }
@@ -1058,6 +1121,7 @@ export const useStore = create<State>((set, get) => ({
       }
       case "error": {
         setTimeout(suivanteDeLaFile, 0);
+        if (get().voicePause) setTimeout(() => get().relancerVoix(), 0);
         push({ kind: "error", id: uid(), runId: e.run_id, at: now, message: e.message });
         set((s) => ({
           busy: false,
@@ -1105,4 +1169,27 @@ function surveillerDemarrage(mode: "voix" | "dictee") {
       : { voiceError: msg, dictating: false, voiceConn: "off", voiceEtape: "" });
     api.voiceStatus().then((v) => useStore.setState({ voiceStatus: v })).catch(() => {});
   }, 2000);
+}
+
+/**
+ * Pendant tout le mode voix : relit l'état de chaque maillon (serveur, cerveau vocal, rappel) et
+ * dit clairement quand la voix s'est arrêtée, au lieu de laisser l'anneau réagir sans que rien ne parte.
+ */
+let chaineVoix: ReturnType<typeof setInterval> | null = null;
+function surveillerChaineVoix() {
+  if (chaineVoix) clearInterval(chaineVoix);
+  const tic = async () => {
+    const s = useStore.getState();
+    if (!s.voiceOn) { if (chaineVoix) clearInterval(chaineVoix); chaineVoix = null; useStore.setState({ voiceEtat: null }); return; }
+    let e: EtatVoix;
+    try { e = await api.etatVoix(); } catch { return; }
+    useStore.setState({ voiceEtat: e });
+    // arrêtée hors d'une mission, après avoir été prête : on le dit (la surveillance du démarrage couvre le reste)
+    if (!e.serveur && !s.voicePause && s.voiceConn !== "on" && !voiceWatch && !s.voiceError) {
+      const cause = derniereErreur(await api.voiceLog().catch(() => ""));
+      useStore.setState({ voiceError: `La voix s'est arrêtée${cause ? ` : ${cause}` : "."} Clique sur « Relancer la voix ».` });
+    }
+  };
+  tic();
+  chaineVoix = setInterval(tic, 4000);
 }

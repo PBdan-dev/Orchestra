@@ -21,12 +21,14 @@ export function Conversation() {
   const file = useStore((s) => s.fileAttente);
   const retirerDeLaFile = useStore((s) => s.retirerDeLaFile);
   const proposes = useStore((s) => s.agentsProposes);
+  const lancements = useStore((s) => s.lancements);
+  const confirmerLancement = useStore((s) => s.confirmerLancement);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const el = ref.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages, proposes]);
+  }, [messages, proposes, lancements]);
 
   return (
     <section className="panel conversation">
@@ -66,6 +68,17 @@ export function Conversation() {
           ))}
         </AnimatePresence>
         {proposes.map((p) => <CarteInstallation key={p.run_id} p={p} />)}
+        {lancements.map((l) => (
+          <motion.div key={l.cle} className="carte-lancement" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+            <div className="ci-titre"><b><I.play size={11} /> Lancer la mission de {l.agent_nom} ?</b></div>
+            <p className="ci-desc">{l.but}</p>
+            <p className="small muted">Mode série : pendant la mission, je ne pourrai plus discuter{l.change_modele ? ` (je prête la carte graphique à ${l.modele}${voiceOn ? ", la voix se met en pause" : ""})` : ""}. Je te préviens quand elle est finie.</p>
+            <div className="ci-actions">
+              <button className="glass-btn sm active" onClick={() => confirmerLancement(l.cle, true)}><I.play size={11} /> Lancer</button>
+              <button className="glass-btn sm" onClick={() => confirmerLancement(l.cle, false)}>Pas maintenant</button>
+            </div>
+          </motion.div>
+        ))}
         {file.length > 0 && (
           <div className="file-attente">
             <div className="muted">En attente ({file.length}) : envoyées une à une quand Orchestra aura fini</div>

@@ -3,7 +3,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useStore } from "../store";
 import { api } from "../tauri";
 import type { Catalogue, EntreeCatalogue, EtatConfiance, Manifest, UsageAgent } from "../types";
-import { BadgeCertification, BadgeExecution, IdentifiantsAgent } from "./AgentsPanel";
+import { BadgeCertification, BadgeExecution } from "./AgentsPanel";
+import { ChampsAgent } from "./AgentConfig";
 import { AgentGlyph, I } from "./Icons";
 
 /**
@@ -71,6 +72,7 @@ export function AgentsView() {
   const [occupe, setOccupe] = useState<string | null>(null);
   const [message, setMessage] = useState<{ ok: boolean; texte: string } | null>(null);
   const [voirIgnores, setVoirIgnores] = useState(false);
+  const [fonctions, setFonctions] = useState(false);
 
   const charger = async () => {
     setErreurCatalogue("");
@@ -253,13 +255,16 @@ export function AgentsView() {
                 <div className="av-bloc"><div className="av-titre-liste">Sait faire</div><ul>{fiche.manifest.sait_faire.map((s) => <li key={s}>{s}</li>)}</ul></div>
               )}
               {!!fiche.manifest?.tools.length && (
-                <div className="av-bloc"><div className="av-titre-liste">Fonctions</div><div className="ap-tools">{fiche.manifest.tools.map((t) => <span key={t} className={`mini ${t.startsWith("action_sensitive_") ? "sensible" : ""}`}>{t}</span>)}</div></div>
+                <div className="av-bloc">
+                  <button className="av-titre-liste av-plier" onClick={() => setFonctions(!fonctions)}><I.chevron size={10} className={fonctions ? "ac-ouvert" : ""} /> Fonctions ({fiche.manifest.tools.length})</button>
+                  {fonctions && <div className="ap-tools">{fiche.manifest.tools.map((t) => <span key={t} className={`mini ${t.startsWith("action_sensitive_") ? "sensible" : ""}`}>{t}</span>)}</div>}
+                </div>
               )}
               {fiche.manifest?.model && fiche.manifest.model !== "aucun" && <div className="small muted">Modèle : {fiche.manifest.model}</div>}
               {fiche.entree && !fiche.entree.installable && fiche.entree.motif && <div className="ap-motif">{fiche.entree.motif}</div>}
               {fiche.manifest?.avertissement && <div className="ap-avert"><I.alert size={11} /> {fiche.manifest.avertissement}</div>}
               {fiche.statut === "connu" && <div className="ap-motif">Pour qu'Orchestra puisse le choisir, cet agent doit être publié sur l'Agent Market (ou installé depuis un paquet en mode développement).</div>}
-              {fiche.installe && fiche.manifest && <IdentifiantsAgent agent={fiche.manifest} ouvert={false} />}
+              {fiche.installe && fiche.manifest && <ChampsAgent key={fiche.id} agentId={fiche.id} ouvert />}
               <div className="av-fiche-actions">
                 {(fiche.statut === "a_installer" || fiche.statut === "maj") && (
                   <button className="glass-btn sm active" disabled={occupe === fiche.id} onClick={() => installer(fiche)}>

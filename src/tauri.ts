@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { Autorisation, BilanIntegrite, MemoireGraphique, MissionResume, BrainInfo, Catalogue, EtatConfiance, Identifiant, Installation, Config, Manifest, MemoryFile, OrchestraEvent, PathsInfo, Projets, VoiceModels, VoiceStatus, UsageAgent } from "./types";
+import type { Autorisation, BilanIntegrite, MemoireGraphique, MissionResume, BrainInfo, Catalogue, EtatConfiance, Identifiant, Installation, Config, Manifest, MemoryFile, OrchestraEvent, PathsInfo, Projets, VoiceModels, VoiceStatus, UsageAgent, ChampAgent, EtatVoix } from "./types";
 import { mockApi, mockOnEvent } from "./mock";
 
 /** Vrai quand l'interface tourne dans la fenêtre Tauri ; sinon on est en démo navigateur. */
@@ -22,6 +22,10 @@ const real = {
   installAgentZip: (chemin: string) => invoke<Installation>("install_agent_zip", { chemin }),
   catalogue: () => invoke<Catalogue>("catalogue"),
   agentsUsage: () => invoke<UsageAgent[]>("agents_usage"),
+  etatVoix: () => invoke<EtatVoix>("etat_voix"),
+  choisirModeExecution: (mode: "serie" | "parallele") => invoke<{ mode: string; motif: string }>("choisir_mode_execution", { mode }),
+  champsAgent: (id: string) => invoke<ChampAgent[]>("champs_agent", { id }),
+  enregistrerConfiguration: (id: string, reglages: Record<string, string>, identifiants: Record<string, string>) => invoke<void>("enregistrer_configuration", { id, reglages, identifiants }),
   compacter: (history: { role: string; content: string }[]) => invoke<boolean>("compacter", { history }),
   annulerCompaction: () => invoke<boolean>("annuler_compaction"),
   etatSession: () => invoke<{ couvre: number; resume: string | null; profil: string }>("etat_session"),

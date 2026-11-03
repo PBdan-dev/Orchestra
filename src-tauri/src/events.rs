@@ -23,6 +23,14 @@ pub enum Event {
     /// Un agent de l'Agent Market sait faire le travail demandé mais n'est pas installé :
     /// l'interface propose de l'installer d'un clic, puis de relancer la demande.
     AgentAInstaller { run_id: String, agent: Manifest, demande: String, raison: String },
+    /// Mission bloquée faute de réglages ou d'identifiants : l'interface ouvre un formulaire
+    /// (secrets rangés dans le coffre), puis relance la demande.
+    ConfigurationRequise { run_id: String, agent_id: String, agent_nom: String, demande: String, motif: String, champs: Vec<crate::configuration::Champ> },
+    /// La voix est arrêtée pour prêter la carte graphique à un agent ; elle repart après la mission.
+    VoixEnPause { motif: String },
+    /// Mode série : PB confirme le lancement d'une mission, qui rend la conversation indisponible.
+    LancementAConfirmer { run_id: String, cle: String, agent_id: String, agent_nom: String, but: String, modele: String, change_modele: bool },
+    LancementRegle { run_id: String, cle: String, accepte: bool },
     /// État d'un agent branché
     AgentStatus { run_id: String, agent_id: String, status: String, detail: String },
     /// Un outil a été utilisé par un agent

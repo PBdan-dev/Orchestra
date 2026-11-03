@@ -233,6 +233,13 @@ impl VoiceProcess {
         Ok(())
     }
 
+    /// Arrête le serveur voix s'il tourne ; vrai s'il tournait.
+    pub fn arreter_si_actif(&self) -> bool {
+        let actif = self.is_running();
+        self.stop();
+        actif
+    }
+
     pub fn stop(&self) {
         if let Some(mut c) = self.child.lock().unwrap().take() {
             let _ = c.kill();

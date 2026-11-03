@@ -42,6 +42,8 @@ pub struct Changement {
     pub modele_agent: String,
     pub modele_orchestra: String,
     pub duree: Duration,
+    /// mode parallèle : le modèle d'Orchestra est resté chargé, seul celui de l'agent est à décharger
+    pub parallele: bool,
 }
 
 async fn decharger(cfg: &Config, http: &reqwest::Client, modele: &str) {
@@ -102,13 +104,42 @@ pub async fn preparer(cfg: &Config, http: &reqwest::Client, modele_agent: &str, 
             ));
         }
     }
-    Ok(Some(Changement { modele_agent: modele_agent.into(), modele_orchestra: modele_orchestra.into(), duree: debut.elapsed() }))
+    Ok(Some(Changement { modele_agent: modele_agent.into(), modele_orchestra: modele_orchestra.into(), duree: debut.elapsed(), parallele: false }))
+}
+
+/// Mode parallèle : le modèle de l'agent est chargé à côté de celui d'Orchestra (et de la voix),
+/// qui restent en place. Refusé s'il ne tient pas entièrement sur la carte graphique.
+pub async fn preparer_parallele(cfg: &Config, http: &reqwest::Client, modele_agent: &str, modele_orchestra: &str) -> Result<Option<Changement>, String> {
+    if cfg.provider != "ollama" {
+        return Ok(None);
+    }
+    let debut = Instant::now();
+    charger(cfg, http, modele_agent).await?;
+    if let Some(p) = part_sur_gpu(cfg, http, modele_agent).await {
+        if p < 0.98 {
+            decharger(cfg, http, modele_agent).await;
+            return Err(format!("en parallèle, {modele_agent} ne tient pas à côté du modèle de la conversation ({:.0} % sur la carte graphique) : passe en mode série pour cette mission", p * 100.0));
+        }
+    }
+    Ok(Some(Changement { modele_agent: modele_agent.into(), modele_orchestra: modele_orchestra.into(), duree: debut.elapsed(), parallele: true }))
+}
+
+/// Taille des modèles installés dans Ollama (octets), d'après `/api/tags`.
+pub async fn tailles(cfg: &Config, http: &reqwest::Client) -> std::collections::HashMap<String, u64> {
+    let base = cfg.ollama_url.trim_end_matches('/');
+    let v: Option<Value> = async { http.get(format!("{base}/api/tags")).timeout(Duration::from_secs(8)).send().await.ok()?.json().await.ok() }.await;
+    v.as_ref().and_then(|v| v["models"].as_array()).into_iter().flatten()
+        .filter_map(|m| Some((m["name"].as_str()?.trim_end_matches(":latest").to_string(), m["size"].as_u64()?)))
+        .collect()
 }
 
 /// Après la mission : décharge le modèle de l'agent et recharge celui d'Orchestra.
 pub async fn restaurer(cfg: &Config, http: &reqwest::Client, c: &Changement) -> Result<Duration, String> {
     let debut = Instant::now();
     decharger(cfg, http, &c.modele_agent).await;
+    if c.parallele {
+        return Ok(debut.elapsed());
+    }
     charger(cfg, http, &c.modele_orchestra).await?;
     Ok(debut.elapsed())
 }
