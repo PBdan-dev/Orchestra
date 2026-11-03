@@ -138,7 +138,7 @@ pub fn note_tache(t: &Tache, decision: &str, reponse: &str) -> bool {
 /// La réponse dit-elle que ce n'est pas possible (pas d'agent ni de capacité pour ça) ?
 pub fn refuse_faute_d_agent(reponse: &str) -> bool {
     let f = memory::fold(reponse);
-    ["ne peux pas", "je ne suis pas en mesure", "pas la capacite", "aucun agent", "pas d agent", "n ai pas acces", "pas possible", "impossible"].iter().any(|m| f.contains(m))
+    ["ne peux pas", "je ne suis pas en mesure", "pas la capacite", "aucun agent", "aucun des agents", "aucun de mes agents", "pas d agent", "n ai pas acces", "pas possible", "impossible"].iter().any(|m| f.contains(m))
 }
 
 // ---------- Exécution ----------
