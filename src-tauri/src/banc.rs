@@ -124,7 +124,7 @@ async fn un_test(cfg: &Config, http: &reqwest::Client, original: &agents::Manife
     let _ = std::fs::create_dir_all(&dossier_mission);
     // porte du modèle : le modèle d'Orchestra (prêté), ou la réponse fixe du test (`reponse_porte_test`)
     let mut porte_ouverte = None;
-    if let Some(modele_agent) = modele::choisir(m, &cfg.model) {
+    if let Some(modele_agent) = modele::choisir_selon(m, cfg, &cfg.model) {
         let limites = porte::Limites::depuis(m, mission["type_tache"].as_str());
         let reponse_fixe = t["reponse_porte_test"].as_str().map(String::from);
         match porte::Porte::ouvrir(porte::Config_ { cfg: cfg.clone(), http: http.clone(), agent: m.clone(), modele: modele_agent, dossier: dossier_mission.clone(), limites, reponse_fixe }).await {

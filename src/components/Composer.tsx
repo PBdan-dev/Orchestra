@@ -95,7 +95,7 @@ export function Composer() {
   const status = brainStatus(brain, brainLoading);
   const speaking = phase === "speaking" && voiceOn;
   const dictHint = !dictating ? "" :
-    voiceConn !== "on" ? "Je prépare le micro… (≈ 10 s la première fois)" :
+    voiceConn !== "on" ? "J'enregistre déjà : parle, le texte arrive dès que l'écoute est chargée (≈ 10 s la première fois)" :
     dictInterim ? dictInterim :
     voiceUser ? "J'écris ce que tu dis…" : "Micro ouvert : parle, j'écris. Reclique pour couper.";
   const voiceHint = !voiceOn ? "" :

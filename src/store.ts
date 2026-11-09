@@ -16,6 +16,9 @@ let voiceDraft: string | null = null;
 let voiceWatch: ReturnType<typeof setInterval> | null = null;
 const VOIX_DELAI_MAX_MS = 180_000;
 
+/** Cerveau d'Orchestra hébergé en ligne : il ne prend rien sur la carte graphique. */
+const cerveauEnLigne = (p?: string) => p === "claude" || p === "gemini" || p === "openrouter";
+
 /** Dernière erreur du journal du serveur voix, en une ligne lisible. */
 function derniereErreur(log: string): string {
   const l = log.split(/\r?\n/).reverse().find((x) => /\|\s*(ERROR|CRITICAL)\s*\|/.test(x) || /Traceback|Error:/.test(x));
@@ -404,6 +407,10 @@ export const useStore = create<State>((set, get) => ({
         await Promise.all([get().refreshBrain(), get().refreshAgents(), get().refreshVoice(), get().refreshVoiceModels(), get().refreshProjets().catch(() => {}), get().refreshAutorisations().catch(() => {})]);
         // intégrité des traces (lot T6), en arrière-plan
         api.verifierIntegrite(null).catch(() => {});
+        // cerveau en ligne : la carte graphique est libre, l'écoute est chargée d'avance (micro immédiat)
+        if (cerveauEnLigne(config.provider) && get().voiceStatus?.installed && !get().voiceStatus?.running) {
+          api.voiceStartMode("dictee").then((st) => set({ voiceStatus: st })).catch(() => {});
+        }
         // Lot C : résumé de la conversation après 2 min sans saisie, sans parole et sans mission
         setInterval(() => {
           const st = get();
@@ -609,6 +616,8 @@ export const useStore = create<State>((set, get) => ({
       voice.disconnect();
       set({ voiceOn: false, voiceUser: false, voiceHeld: false, voiceInterim: "", voiceConn: "off", voiceMuted: false });
       if ((s.phase === "listening" || s.phase === "speaking") && !s.busy) set({ phase: "idle", phaseLabel: "" });
+      // cerveau en ligne : la carte graphique n'a rien à rendre, la voix reste chargée pour la prochaine fois
+      if (cerveauEnLigne(get().config?.provider)) return;
       // retour au chat : on libère la mémoire GPU de la voix et on charge le cerveau du chat
       try { set({ voiceStatus: await api.voiceStop() }); } catch { /* déjà arrêté */ }
       const cfg = get().config;
@@ -664,9 +673,9 @@ export const useStore = create<State>((set, get) => ({
     async function dictationToggle() {
     const s = get();
     if (s.dictating) {
+      // le serveur d'écoute reste chargé : le prochain clic sur le micro est immédiat
       voice.disconnect();
       set({ dictating: false, dictInterim: "", voiceConn: "off", voiceUser: false });
-      try { set({ voiceStatus: await api.voiceStop() }); } catch { /* déjà arrêté */ }
       return;
     }
     if (s.voiceOn) return;
@@ -674,7 +683,8 @@ export const useStore = create<State>((set, get) => ({
     try {
       let st = await api.voiceStatus();
       if (!st.installed) throw new Error(`module voix incomplet : ${st.missing.join(", ")}`);
-      st = await api.voiceStartMode("dictee"); // écoute seule : le cerveau du chat garde la mémoire GPU
+      // écoute seule : le cerveau du chat garde la mémoire GPU ; déjà chargée si le micro a servi
+      if (!st.running || st.mode !== "dictee") st = await api.voiceStartMode("dictee");
       set({ voiceStatus: st });
       voice.muteWhileSpeaking = false;
       voice.gate = true;

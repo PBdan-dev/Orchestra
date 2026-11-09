@@ -72,6 +72,10 @@ export class VoiceClient {
   private wantOpen = false;
   private retry: ReturnType<typeof setTimeout> | null = null;
   private port = 8765;
+  /** son capté avant que le serveur soit prêt : envoyé d'un coup dès « ready » (rien n'est perdu) */
+  private tampon: ArrayBuffer[] = [];
+  /** le serveur a dit « ready » sur la connexion en cours */
+  pret = false;
   /** morceaux de micro envoyés (diagnostic) */
   sent = { voice: 0, silence: 0 };
   /** le micro envoie-t-il le vrai son ? (sinon du silence) */
@@ -104,6 +108,7 @@ export class VoiceClient {
     ws.onclose = () => {
       if (this.ws !== ws) return; // une ancienne connexion : on l'ignore
       this.ws = null;
+      this.pret = false;
       this.flushPlayback();
       this.onEvent({ type: "conn", state: "off" });
       // le serveur charge ses modèles (≈30 s au démarrage) : on réessaie tant qu'on le veut
@@ -120,7 +125,13 @@ export class VoiceClient {
           e = { ...e, enLecture: this.playing };
           this.flushPlayback();
         }
-        if (e.type === "ready") this.onEvent({ type: "conn", state: "on" });
+        if (e.type === "ready") {
+          this.pret = true;
+          // ce que tu as dit pendant le chargement part maintenant, dans l'ordre
+          for (const b of this.tampon) ws.send(b);
+          this.tampon = [];
+          this.onEvent({ type: "conn", state: "on" });
+        }
         this.onEvent(e);
       } else {
         this.play(m.data as ArrayBuffer);
@@ -130,6 +141,8 @@ export class VoiceClient {
 
   disconnect() {
     this.wantOpen = false;
+    this.tampon = [];
+    this.pret = false;
     if (this.retry) { clearTimeout(this.retry); this.retry = null; }
     this.ws?.close();
     this.ws = null;
@@ -169,8 +182,15 @@ export class VoiceClient {
     const node = new AudioWorkletNode(ctx, "orchestra-capture");
     this.node = node;
     node.port.onmessage = (m) => {
-      if (!this.connected) return;
       const open = this.gate && !(this.muteWhileSpeaking && this.playing);
+      if (!this.connected || !this.pret) {
+        // serveur pas encore prêt : on enregistre déjà (30 s au plus)
+        if (this.wantOpen && open) {
+          this.tampon.push(m.data as ArrayBuffer);
+          if (this.tampon.length > 1500) this.tampon.shift();
+        }
+        return;
+      }
       this.ws!.send(open ? (m.data as ArrayBuffer) : new ArrayBuffer(640));
       if (open) this.sent.voice++; else this.sent.silence++;
     };

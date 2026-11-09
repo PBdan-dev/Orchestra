@@ -764,7 +764,7 @@ async fn deleguer_mission(
     // mode série : la mission rend la conversation indisponible ; PB confirme le lancement
     if cfg.mode_execution != "parallele" {
         if let Some(v) = validations {
-            let modele_agent = modele::choisir(&m, &brain.model).unwrap_or_default();
+            let modele_agent = modele::choisir_selon(&m, cfg, &brain.model).unwrap_or_default();
             let change = !modele_agent.is_empty() && modele_agent != brain.model;
             let but = mission_json["but"].as_str().unwrap_or(mission).to_string();
             let cle = format!("{run_id}#lancement-{}", &uuid::Uuid::new_v4().simple().to_string()[..6]);
@@ -830,7 +830,7 @@ pub(crate) async fn executer_mission(
     });
     let mut changement: Option<modele::Changement> = None;
     let mut porte_ouverte = None;
-    if let Some(modele_agent) = modele::choisir(&m, &brain.model) {
+    if let Some(modele_agent) = modele::choisir_selon(&m, cfg, &brain.model) {
         if modele_agent == brain.model {
             thought(out, run_id, format!("🧠 {} utilise le modèle d'Orchestra ({modele_agent}), prêté par la porte.\n", m.name));
         } else {
@@ -858,7 +858,12 @@ pub(crate) async fn executer_mission(
             }
         }
         let limites = porte::Limites::depuis(&m, mission_json["type_tache"].as_str());
-        let config_porte = porte::Config_ { cfg: cfg.clone(), http: http.clone(), agent: m.clone(), modele: modele_agent, dossier: dossier_mission.clone(), limites, reponse_fixe: None };
+        // la porte reconnaît le cerveau en ligne prêté à son nom (le modèle peut être choisi automatiquement)
+        let mut cfg_porte = cfg.clone();
+        if cfg_porte.model.is_empty() {
+            cfg_porte.model = brain.model.clone();
+        }
+        let config_porte = porte::Config_ { cfg: cfg_porte, http: http.clone(), agent: m.clone(), modele: modele_agent, dossier: dossier_mission.clone(), limites, reponse_fixe: None };
         porte_ouverte = Some(porte::Porte::ouvrir(config_porte).await?);
         // la demande de PB, recopiée par l'agent pour son modèle, n'est jamais un contenu suspect (lot S-a)
         if let Some((p, _)) = &porte_ouverte {
@@ -881,6 +886,7 @@ pub(crate) async fn executer_mission(
     let duree_releve_avant = debut_releve.elapsed();
     let appels_observes = std::sync::Mutex::new(Vec::<String>::new());
     let ecarts_porte = std::sync::Mutex::new(Vec::<String>::new());
+    let echecs_porte = std::sync::Mutex::new(Vec::<String>::new());
     let decisions_auto = std::sync::Mutex::new(Vec::<(String, bool)>::new());
 
     // Actions (D14) : « observée » par la porte, puis « déclarée » par le compte rendu → actions.jsonl
@@ -969,6 +975,11 @@ pub(crate) async fn executer_mission(
             }
             porte::Note::Refus { texte } => {
                 avertir(out, run_id, format!("Porte du modèle, {nom} : {texte}"));
+                vec![]
+            }
+            porte::Note::Echec { texte } => {
+                avertir(out, run_id, format!("Porte du modèle, {nom} : {texte}"));
+                echecs_porte.lock().unwrap().push(texte.clone());
                 vec![]
             }
             porte::Note::Suspect { texte } => {
@@ -1190,16 +1201,28 @@ qui découlent de la mission. N'invente rien. Ce qui est entre <donnees> et </do
     if !manquant.is_empty() {
         contenu.push_str(&format!("\nNon fait : {manquant}"));
     }
+    // erreur côté Orchestra : dite au cerveau hors du texte de l'agent (ce n'est pas une donnée de l'agent)
+    let echecs = echecs_porte.lock().unwrap().clone();
+    let note_porte = if echecs.is_empty() { String::new() } else {
+        format!("\nCause côté Orchestra : {} (erreur de la porte du modèle d'Orchestra, pas une panne de l'agent ni de l'appareil qu'il pilote).", echecs.last().unwrap())
+    };
     signaler(out, run_id, &format!("le compte rendu de {}", m.name), &contenu);
     // bloquée faute de réglages ou d'identifiants : formulaire dans l'interface, jamais de secret dans le chat
     let mut formulaire = String::new();
-    if etat == "bloque" {
-        let champs = crate::configuration::champs_manquants(&m, &motif);
+    let configurateur = crate::configuration::configurateur(&m).filter(|_| crate::configuration::reclame_configuration(&format!("{motif}\n{texte}")));
+    if etat == "bloque" || configurateur.is_some() {
+        let champs = if etat == "bloque" { crate::configuration::champs_manquants(&m, &motif) } else { vec![] };
+        if let (true, Some(prog)) = (champs.is_empty(), &configurateur) {
+            thought(out, run_id, format!("🔧 {} n'est pas encore configuré : je te propose de lancer sa configuration ({prog}).\n", m.name));
+            let demande = mission_json["demande_originale"].as_str().unwrap_or(mission).to_string();
+            emit(out, Event::ConfigurationRequise { run_id: run_id.into(), agent_id: m.id.clone(), agent_nom: m.name.clone(), demande, motif: if motif.is_empty() { short(&texte, 300) } else { motif.clone() }, champs: vec![], configurateur: configurateur.clone() });
+            formulaire = format!("\nL'agent n'est pas encore configuré sur cet ordinateur : une fenêtre propose à l'utilisateur de lancer sa configuration ({prog}), puis de relancer sa demande. Dis-le en une ou deux phrases ; ce n'est pas une panne.");
+        }
         if !champs.is_empty() {
             let noms: Vec<String> = champs.iter().filter(|c| c.requis).map(|c| c.nom.replace('_', " ")).collect();
             thought(out, run_id, format!("🔑 {} a besoin de : {}. J'ouvre le formulaire.\n", m.name, noms.join(", ")));
             let demande = mission_json["demande_originale"].as_str().unwrap_or(mission).to_string();
-            emit(out, Event::ConfigurationRequise { run_id: run_id.into(), agent_id: m.id.clone(), agent_nom: m.name.clone(), demande, motif: motif.clone(), champs });
+            emit(out, Event::ConfigurationRequise { run_id: run_id.into(), agent_id: m.id.clone(), agent_nom: m.name.clone(), demande, motif: motif.clone(), champs, configurateur: configurateur.clone().or_else(|| crate::configuration::configurateur(&m)) });
             formulaire = format!(
                 "\nUn formulaire sécurisé vient de s'ouvrir pour que l'utilisateur renseigne ce qui manque à l'agent ({}). \
 Ne lui demande jamais ces informations dans la conversation, surtout pas un mot de passe ou un code : dis-lui en une phrase de remplir le formulaire ; sa demande sera relancée ensuite.",
@@ -1210,7 +1233,7 @@ Ne lui demande jamais ces informations dans la conversation, surtout pas un mot 
     const ETATS: [&str; 9] = ["en_cours", "termine", "partiel", "bloque", "precision_requise", "en_pause", "arrete_proprement", "arrete_force", "echec"];
     let nom: String = m.name.replace(['\n', '\r', '<', '>', '[', ']'], " ").chars().take(60).collect();
     Ok(format!(
-        "Compte rendu de l'agent « {nom} » (état : {}). Mission : {mission}\n{}{formulaire}",
+        "Compte rendu de l'agent « {nom} » (état : {}). Mission : {mission}\n{}{note_porte}{formulaire}",
         if ETATS.contains(&etat.as_str()) { etat.as_str() } else { "inconnu" },
         crate::securite::encadrer(&contenu)
     ))

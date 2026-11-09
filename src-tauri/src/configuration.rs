@@ -140,6 +140,20 @@ pub fn champs_manquants(m: &Manifest, motif: &str) -> Vec<Champ> {
     champs
 }
 
+/// Programme de configuration livré avec l'agent (`configurer.bat`…), lancé par PB depuis Orchestra :
+/// il règle ce que le manifeste ne peut pas décrire (adresses des appareils, appairage). Retour de PB du
+/// 09/11 : Maison connectée installée, mais jamais configurée (pont Hue introuvable).
+pub fn configurateur(m: &Manifest) -> Option<String> {
+    let d = m.dossier.as_ref()?;
+    ["configurer.bat", "configurer.cmd", "configurer.ps1"].iter().find(|f| d.join(f).is_file()).map(|f| f.to_string())
+}
+
+/// Le compte rendu dit-il que l'agent n'est pas configuré ?
+pub fn reclame_configuration(texte: &str) -> bool {
+    let f = crate::memory::fold(texte);
+    ["configurer.bat", "non configure", "pas configure", "lancer configurer", "lancez configurer", "a configurer"].iter().any(|m| f.contains(m))
+}
+
 /// Noms de données qui sont des réglages durables (un compte, une adresse), pas le détail d'une mission.
 const NOMS_DE_REGLAGE: [&str; 9] = ["compte", "email", "mail", "adresse", "utilisateur", "login", "serveur", "url", "calendrier"];
 

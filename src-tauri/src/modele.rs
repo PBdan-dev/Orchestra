@@ -1,7 +1,9 @@
 //! Modèle d'une mission et carte graphique (D24, lot T2).
 //!
-//! - `inherit` : Orchestra prête son modèle s'il fait partie des modèles admis par l'agent
-//!   (`modele.minimum`, `modele.recommande`) ; sinon il charge le modèle recommandé.
+//! - `inherit` : avec un cerveau en ligne (Claude, Gemini, OpenRouter), l'agent hérite de ce cerveau
+//!   (retour de PB du 09/11 : avec Haiku actif, l'agent chargeait Qwen). Avec un cerveau local,
+//!   Orchestra prête son modèle s'il fait partie des modèles admis par l'agent (`modele.minimum`,
+//!   `modele.recommande`) ; sinon il charge le modèle recommandé.
 //! - Autre modèle : Orchestra décharge le sien (et arrête la voix si on le lui demande), charge
 //!   celui de l'agent, le sert pendant la mission, puis le décharge et recharge le sien.
 //! - Jamais en dessous du minimum, jamais de bascule silencieuse sur le processeur : un modèle qui ne
@@ -12,6 +14,20 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use crate::{agents::Manifest, brain, config::Config};
+
+/// Le cerveau d'Orchestra est-il un service en ligne (pas de modèle sur la carte graphique) ?
+pub fn cerveau_en_ligne(cfg: &Config) -> bool {
+    matches!(cfg.provider.as_str(), "claude" | "gemini" | "openrouter")
+}
+
+/// Modèle à servir à l'agent selon le cerveau actif : `inherit` hérite d'un cerveau en ligne tel quel.
+pub fn choisir_selon(m: &Manifest, cfg: &Config, actif: &str) -> Option<String> {
+    let demande = m.brut.pointer("/modele/demande").and_then(|v| v.as_str()).unwrap_or("");
+    if demande == "inherit" && cerveau_en_ligne(cfg) && !actif.is_empty() {
+        return Some(actif.to_string());
+    }
+    choisir(m, actif)
+}
 
 /// Modèle à servir à l'agent ; `None` si l'agent n'utilise pas de modèle.
 pub fn choisir(m: &Manifest, actif: &str) -> Option<String> {
@@ -81,11 +97,14 @@ pub async fn part_sur_gpu(cfg: &Config, http: &reqwest::Client, modele: &str) ->
 
 /// Prépare le modèle de la mission. `Ok(None)` : rien à changer (modèle d'Orchestra prêté).
 pub async fn preparer(cfg: &Config, http: &reqwest::Client, modele_agent: &str, modele_orchestra: &str, arreter_voix: Option<&(dyn Fn() + Send + Sync)>) -> Result<Option<Changement>, String> {
-    if cfg.provider != "ollama" || modele_agent == modele_orchestra {
+    if modele_agent == modele_orchestra || (cfg.provider != "ollama" && !cerveau_en_ligne(cfg)) {
         return Ok(None);
     }
     let debut = Instant::now();
-    decharger(cfg, http, modele_orchestra).await;
+    // cerveau en ligne : rien à décharger, le modèle local de l'agent est chargé dans Ollama
+    if !cerveau_en_ligne(cfg) {
+        decharger(cfg, http, modele_orchestra).await;
+    }
     if let Some(stop) = arreter_voix {
         stop();
     }
@@ -110,7 +129,7 @@ pub async fn preparer(cfg: &Config, http: &reqwest::Client, modele_agent: &str, 
 /// Mode parallèle : le modèle de l'agent est chargé à côté de celui d'Orchestra (et de la voix),
 /// qui restent en place. Refusé s'il ne tient pas entièrement sur la carte graphique.
 pub async fn preparer_parallele(cfg: &Config, http: &reqwest::Client, modele_agent: &str, modele_orchestra: &str) -> Result<Option<Changement>, String> {
-    if cfg.provider != "ollama" {
+    if modele_agent == modele_orchestra || (cfg.provider != "ollama" && !cerveau_en_ligne(cfg)) {
         return Ok(None);
     }
     let debut = Instant::now();
@@ -137,7 +156,7 @@ pub async fn tailles(cfg: &Config, http: &reqwest::Client) -> std::collections::
 pub async fn restaurer(cfg: &Config, http: &reqwest::Client, c: &Changement) -> Result<Duration, String> {
     let debut = Instant::now();
     decharger(cfg, http, &c.modele_agent).await;
-    if c.parallele {
+    if c.parallele || cerveau_en_ligne(cfg) {
         return Ok(debut.elapsed());
     }
     charger(cfg, http, &c.modele_orchestra).await?;
@@ -150,6 +169,19 @@ mod tests {
 
     fn agent(demande: &str, minimum: &str, recommande: &str) -> Manifest {
         Manifest { brut: json!({ "modele": { "demande": demande, "minimum": minimum, "recommande": recommande } }), ..Default::default() }
+    }
+
+    #[test]
+    fn inherit_herite_d_un_cerveau_en_ligne() {
+        // retour de PB du 09/11 : Haiku actif, l'agent « inherit » (recommandé qwen3.6:27b) doit garder Haiku
+        let a = agent("inherit", "qwen3.5:9b", "qwen3.6:27b");
+        let claude = Config { provider: "claude".into(), model: "claude-haiku-4-5".into(), ..Default::default() };
+        assert_eq!(choisir_selon(&a, &claude, "claude-haiku-4-5").as_deref(), Some("claude-haiku-4-5"));
+        // cerveau local : les modèles admis par l'agent restent la règle
+        let ollama = Config { provider: "ollama".into(), ..Default::default() };
+        assert_eq!(choisir_selon(&a, &ollama, "llama3:8b").as_deref(), Some("qwen3.6:27b"));
+        // un modèle précis demandé par l'agent reste le sien
+        assert_eq!(choisir_selon(&agent("qwen3.5:9b", "", ""), &claude, "claude-haiku-4-5").as_deref(), Some("qwen3.5:9b"));
     }
 
     /// Faux Ollama : note chaque requête `/api/generate` et refuse de charger `geant:405b`.

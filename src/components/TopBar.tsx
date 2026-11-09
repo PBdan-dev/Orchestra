@@ -35,7 +35,7 @@ export function TopBar() {
       <div className="brand">
         <span className="brand-ring" style={{ ["--c" as any]: PHASE_COLOR[phase] }} />
         <span className="brand-name">Orchestra</span>
-        <span className="brand-tag">v0.4.0</span>
+        <span className="brand-tag">v0.4.1</span>
       </div>
       <nav className="tabs glass">
         {TABS.map((t) => {

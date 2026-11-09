@@ -27,7 +27,7 @@ async fn main() -> anyhow::Result<()> {
     let dossier_mission = paths.missions.join(mission["id"].as_str().unwrap_or("mission"));
     std::fs::create_dir_all(&dossier_mission)?;
     let mut ouverte = None;
-    if let Some(modele_agent) = modele::choisir(&m, &cfg.model) {
+    if let Some(modele_agent) = modele::choisir_selon(&m, &cfg, &cfg.model) {
         println!("modèle servi par la porte : {modele_agent}");
         let limites = porte::Limites::depuis(&m, mission["type_tache"].as_str());
         ouverte = Some(porte::Porte::ouvrir(porte::Config_ { cfg: cfg.clone(), http: http.clone(), agent: m.clone(), modele: modele_agent, dossier: dossier_mission.clone(), limites, reponse_fixe: None }).await?);

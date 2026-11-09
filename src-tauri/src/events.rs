@@ -25,7 +25,7 @@ pub enum Event {
     AgentAInstaller { run_id: String, agent: Manifest, demande: String, raison: String },
     /// Mission bloquée faute de réglages ou d'identifiants : l'interface ouvre un formulaire
     /// (secrets rangés dans le coffre), puis relance la demande.
-    ConfigurationRequise { run_id: String, agent_id: String, agent_nom: String, demande: String, motif: String, champs: Vec<crate::configuration::Champ> },
+    ConfigurationRequise { run_id: String, agent_id: String, agent_nom: String, demande: String, motif: String, champs: Vec<crate::configuration::Champ>, configurateur: Option<String> },
     /// La voix est arrêtée pour prêter la carte graphique à un agent ; elle repart après la mission.
     VoixEnPause { motif: String },
     /// Mode série : PB confirme le lancement d'une mission, qui rend la conversation indisponible.

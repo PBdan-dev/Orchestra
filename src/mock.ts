@@ -215,6 +215,8 @@ export const mockApi = {
     ? { mode: "serie", motif: "Parallèle impossible : la carte graphique a 24 Go, dont 19,2 Go déjà pris (conversation, voix), et le plus petit modèle d'agent (qwen3.5:9b) demande 7,3 Go. Il faudrait au moins deux modèles en même temps : je reste en série." }
     : { mode: "serie", motif: "" }),
   etatVoix: async () => ({ serveur: false, mode: "voix", port: 8765, cerveau: "qwen3.5:9b", cerveau_charge: false, memoire: "qwen3-embedding:0.6b", memoire_chargee: true, ollama: true }),
+  configurateurAgent: async (id: string) => (id === "agent-mail" ? "configurer.bat" : null),
+  configurerAgent: async () => {},
   champsAgent: async (id: string) => (id === "agent-mail" ? [
     { nom: "compte", genre: "reglage" as const, type: "texte", raison: "Adresse Gmail, si elle n'est pas déjà dans memoire/config.yaml.", requis: false, valeur: "", present: false },
     ...(idsDemo[id] ?? []).map((i) => ({ nom: i.nom, genre: "identifiant" as const, type: i.type, raison: i.raison, requis: true, valeur: "", present: i.present })),

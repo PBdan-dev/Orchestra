@@ -55,10 +55,11 @@ export function ChampsAgent({ agentId, ouvert = false }: { agentId: string; ouve
   const [valeurs, setValeurs] = useState<Record<string, string>>({});
   const [voir, setVoir] = useState(ouvert);
   const [msg, setMsg] = useState<{ ok: boolean; t: string } | null>(null);
+  const [prog, setProg] = useState<string | null>(null);
   const charger = () => api.champsAgent(agentId).then(setChamps).catch(() => setChamps([]));
-  useEffect(() => { charger(); }, [agentId]);
+  useEffect(() => { charger(); api.configurateurAgent(agentId).then(setProg).catch(() => setProg(null)); }, [agentId]);
   useEffect(() => { if (ouvert) setVoir(true); }, [ouvert]);
-  if (champs.length === 0) return null;
+  if (champs.length === 0 && !prog) return null;
   const manquants = champs.filter((c) => c.requis && !c.present).length;
   const saisis = Object.values(valeurs).some((v) => v.trim());
   const valider = async () => {
@@ -73,7 +74,7 @@ export function ChampsAgent({ agentId, ouvert = false }: { agentId: string; ouve
   return (
     <div className="ac-bloc">
       <button className={`ac-bascule ${manquants ? "warn" : ""}`} onClick={() => setVoir(!voir)}>
-        <I.alert size={11} /> {manquants ? `${manquants} champ(s) requis à renseigner` : `Réglages et identifiants (${champs.length})`}
+        <I.alert size={11} /> {manquants ? `${manquants} champ(s) requis à renseigner` : champs.length ? `Réglages et identifiants (${champs.length})` : "Configuration de l'agent"}
         <I.chevron size={11} className={voir ? "ac-ouvert" : ""} />
       </button>
       {voir && (
@@ -83,9 +84,24 @@ export function ChampsAgent({ agentId, ouvert = false }: { agentId: string; ouve
             <button className="glass-btn sm active" disabled={!saisis} onClick={valider}><I.save size={11} /> Enregistrer</button>
             <span className="muted small">Les secrets vont dans le coffre de Windows (orchestra/{agentId}/…), jamais dans un fichier ni dans le chat.</span>
           </div>
+          {prog && <BoutonConfigurateur agentId={agentId} prog={prog} apres={charger} />}
           {msg && <div className={`small ${msg.ok ? "ok" : "warn"}`}>{msg.t}</div>}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Lance le programme de configuration livré avec l'agent (adresses des appareils, appairage…) dans une console. */
+function BoutonConfigurateur({ agentId, prog, apres }: { agentId: string; prog: string; apres?: () => void }) {
+  const [etat, setEtat] = useState<"" | "lance" | string>("");
+  const lancer = async () => {
+    try { await api.configurerAgent(agentId); setEtat("lance"); setTimeout(() => apres?.(), 4000); } catch (e) { setEtat(String(e).replace(/^Error: /, "")); }
+  };
+  return (
+    <div className="ac-actions">
+      <button className="glass-btn sm" onClick={lancer}><I.gear size={11} /> Lancer sa configuration ({prog})</button>
+      <span className={`small ${etat && etat !== "lance" ? "warn" : "muted"}`}>{etat === "lance" ? "Fenêtre ouverte : réponds à ses questions, puis reviens ici." : etat || "Règle ce que l'agent doit connaître de ton installation (adresses, appairage)."}</span>
     </div>
   );
 }
@@ -116,11 +132,12 @@ export function FormulaireConfiguration() {
             onKeyDown={(e) => { if (e.key === "Escape") fermer(c.run_id, false); }}>
             <header className="ac-fenetre-tete">
               <div>
-                <h3><I.alert size={14} /> {c.agent_nom} a besoin de quelques réglages</h3>
-                <p className="muted small">La mission s'est arrêtée : {c.motif}</p>
+                <h3><I.alert size={14} /> {c.agent_nom} {c.champs.length ? "a besoin de quelques réglages" : "doit être configuré sur cet ordinateur"}</h3>
+                <p className="muted small">{c.champs.length ? "La mission s'est arrêtée" : "L'agent a répondu"} : {c.motif}</p>
               </div>
               <button className="icon-btn" onClick={() => fermer(c.run_id, false)} title="Plus tard"><I.x size={13} /></button>
             </header>
+            {c.configurateur && <BoutonConfigurateur agentId={c.agent_id} prog={c.configurateur} />}
             <div className="ac-liste">
               {c.champs.map((x) => <ChampSaisie key={x.nom} c={x} valeur={valeurs[x.nom] ?? ""} changer={(v) => setValeurs((y) => ({ ...y, [x.nom]: v }))} />)}
             </div>

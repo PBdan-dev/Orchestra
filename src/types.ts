@@ -44,7 +44,7 @@ export interface EtatVoix { serveur: boolean; mode: string; port: number; cervea
 /** Ce dont un agent a besoin pour fonctionner : identifiant (coffre de Windows) ou réglage (donnée simple). */
 export interface ChampAgent { nom: string; genre: "identifiant" | "reglage"; type: string; raison: string; requis: boolean; valeur: string; present: boolean }
 /** Mission bloquée faute de champs : formulaire ouvert, puis demande relancée. */
-export interface ConfigurationRequise { run_id: string; agent_id: string; agent_nom: string; demande: string; motif: string; champs: ChampAgent[] }
+export interface ConfigurationRequise { run_id: string; agent_id: string; agent_nom: string; demande: string; motif: string; champs: ChampAgent[]; configurateur?: string | null }
 
 /** Mode série : mission en attente du feu vert de PB. */
 export interface LancementAConfirmer { run_id: string; cle: string; agent_id: string; agent_nom: string; but: string; modele: string; change_modele: boolean }

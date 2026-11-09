@@ -577,6 +577,30 @@ async fn etat_voix(state: State<'_, AppState>) -> CmdResult<EtatVoix> {
     })
 }
 
+/// Programme de configuration livré avec un agent installé (configurer.bat…), s'il y en a un.
+#[tauri::command]
+fn configurateur_agent(state: State<AppState>, id: String) -> Option<String> {
+    agents::get_installed(&state.paths, &id).and_then(|m| configuration::configurateur(&m))
+}
+
+/// Lance la configuration d'un agent dans une fenêtre de console visible (elle peut poser des questions).
+#[tauri::command]
+fn configurer_agent(state: State<AppState>, id: String) -> CmdResult<()> {
+    let m = agents::get_installed(&state.paths, &id).ok_or_else(|| format!("{id} n'est pas installé"))?;
+    let prog = configuration::configurateur(&m).ok_or_else(|| format!("{} ne livre pas de programme de configuration", m.name))?;
+    let dossier = m.dossier.clone().ok_or("dossier de l'agent introuvable")?;
+    // les réglages écrits par l'agent dans son dossier sont attendus : pas une alerte de surveillance
+    noter(&state, &[dossier.clone()]);
+    let mut c = std::process::Command::new("cmd");
+    if prog.ends_with(".ps1") {
+        c.args(["/c", "start", "", "powershell", "-NoExit", "-ExecutionPolicy", "Bypass", "-File", &prog]);
+    } else {
+        c.args(["/c", "start", "", "cmd", "/k", &prog]);
+    }
+    c.current_dir(&dossier).spawn().map_err(|e| format!("configuration impossible à lancer : {e}"))?;
+    Ok(())
+}
+
 /// Ce dont un agent a besoin pour fonctionner (identifiants, réglages) et leur état, sans aucune valeur secrète.
 #[tauri::command]
 fn champs_agent(state: State<AppState>, id: String) -> CmdResult<Vec<configuration::Champ>> {
@@ -869,7 +893,7 @@ async fn choisir_mode_execution(state: State<'_, AppState>, mode: String) -> Cmd
         // modèles que demanderaient les agents installés, autres que celui de la conversation
         let mut besoins: Vec<(String, u64)> = agents::installed(&state.paths)
             .iter()
-            .filter_map(|m| modele::choisir(m, &conversation))
+            .filter_map(|m| modele::choisir_selon(m, &cfg, &conversation))
             .filter(|m| *m != conversation && *m != b.model)
             .filter_map(|m| taille(&m).map(|t| (m, t)))
             .collect();
@@ -1012,6 +1036,8 @@ pub fn run() {
             voice_log,
             agents_usage,
             champs_agent,
+            configurateur_agent,
+            configurer_agent,
             etat_voix,
             choisir_mode_execution,
             enregistrer_configuration,

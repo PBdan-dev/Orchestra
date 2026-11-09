@@ -42,6 +42,8 @@ pub enum Note {
     Limite { texte: String, arreter: bool },
     /// Requête refusée (jeton, modèle non déclaré…).
     Refus { texte: String },
+    /// L'appel au modèle a échoué côté Orchestra (fournisseur injoignable, modèle refusé…).
+    Echec { texte: String },
     /// Texte donné à lire au modèle de l'agent (mail, page, fichier) qui ressemble à une consigne
     /// (lot S-a, scénario S1) : signalé dans Conscience, ce n'est pas un écart de l'agent.
     Suspect { texte: String },
@@ -240,6 +242,12 @@ async fn repondre(flux: &mut TcpStream, statut: u16, type_: &str, corps: &[u8]) 
     flux.flush().await
 }
 
+/// L'appel au modèle a échoué côté Orchestra : dit dans Conscience et au cerveau, pour qu'un
+/// « 503 » rapporté par l'agent ne soit pas pris pour une panne de l'appareil qu'il pilote.
+fn signaler_echec(e: &Etat, motif: &str) {
+    let _ = e.notes.send(Note::Echec { texte: format!("l'appel au modèle {} a échoué : {motif}", e.c.modele) });
+}
+
 async fn erreur(flux: &mut TcpStream, statut: u16, message: &str) -> std::io::Result<()> {
     repondre(flux, statut, "application/json", json!({ "error": message }).to_string().as_bytes()).await
 }
@@ -265,7 +273,7 @@ async fn servir(flux: TcpStream, e: Arc<Etat>) -> anyhow::Result<()> {
     match r.chemin.as_str() {
         "/api/chat" => {
             let flux_demande = corps["stream"].as_bool().unwrap_or(true);
-            match chat(&e, corps, "/api/chat").await {
+            match chat(&e, corps, "/api/chat").await.inspect_err(|(_, m)| signaler_echec(&e, m)) {
                 Ok(rep) => {
                     if flux_demande {
                         // un seul fragment final, au format NDJSON d'Ollama
@@ -282,7 +290,7 @@ async fn servir(flux: TcpStream, e: Arc<Etat>) -> anyhow::Result<()> {
         "/v1/chat/completions" => {
             let flux_demande = corps["stream"].as_bool().unwrap_or(false);
             let ollama = openai_vers_ollama(&corps);
-            match chat(&e, ollama, "/v1/chat/completions").await {
+            match chat(&e, ollama, "/v1/chat/completions").await.inspect_err(|(_, m)| signaler_echec(&e, m)) {
                 Ok(rep) => {
                     let o = ollama_vers_openai(&rep);
                     if flux_demande {
@@ -458,7 +466,8 @@ async fn chat(e: &Etat, mut corps: Value, chemin: &str) -> Result<Value, (u16, S
 
     let rep: Value = if let Some(fixe) = &e.c.reponse_fixe {
         json!({ "model": e.c.modele, "message": { "role": "assistant", "content": fixe }, "done": true, "prompt_eval_count": 0, "eval_count": 0 })
-    } else if e.c.cfg.provider == "ollama" {
+    } else if e.c.cfg.provider == "ollama" || (crate::modele::cerveau_en_ligne(&e.c.cfg) && e.c.modele != e.c.cfg.model) {
+        // un modèle local demandé par l'agent passe par Ollama, même avec un cerveau en ligne
         let base = e.c.cfg.ollama_url.trim_end_matches('/');
         let r = e
             .c
@@ -523,17 +532,73 @@ async fn chat(e: &Etat, mut corps: Value, chemin: &str) -> Result<Value, (u16, S
     Ok(rep)
 }
 
+/// Messages au format d'Ollama (ceux de l'agent) vers ceux du cerveau, appels d'outils compris :
+/// un message `assistant` avec `tool_calls` garde ses appels (identifiants créés s'il n'en a pas), et
+/// chaque message `tool` est rattaché à l'appel qu'il suit (bug du 09/11 : avec Claude, les résultats
+/// d'outils de l'agent Maison étaient perdus et un message vide faisait refuser l'appel).
+pub(crate) fn messages_vers_brain(messages: &Value) -> Vec<Msg> {
+    let mut msgs = vec![];
+    let mut en_attente: std::collections::VecDeque<crate::brain::AppelOutil> = Default::default();
+    let mut n = 0;
+    let texte = |c: &Value| match c {
+        Value::String(s) => s.clone(),
+        Value::Null => String::new(),
+        autre => autre.to_string(),
+    };
+    for m in messages.as_array().into_iter().flatten() {
+        let role = m["role"].as_str().unwrap_or("user");
+        let contenu = texte(&m["content"]);
+        match role {
+            "assistant" if m["tool_calls"].as_array().is_some_and(|a| !a.is_empty()) => {
+                let appels: Vec<crate::brain::AppelOutil> = m["tool_calls"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|c| {
+                        n += 1;
+                        let arguments = match &c["function"]["arguments"] {
+                            Value::String(s) => serde_json::from_str(s).unwrap_or(json!({})),
+                            Value::Null => json!({}),
+                            v => v.clone(),
+                        };
+                        crate::brain::AppelOutil {
+                            id: c["id"].as_str().map(String::from).unwrap_or_else(|| format!("appel_{n}")),
+                            nom: c["function"]["name"].as_str().unwrap_or("").to_string(),
+                            arguments,
+                        }
+                    })
+                    .collect();
+                en_attente.extend(appels.iter().cloned());
+                msgs.push(Msg::appels_outils(contenu, appels));
+            }
+            "tool" => {
+                let nom = m["tool_name"].as_str().or(m["name"].as_str()).map(String::from);
+                let appel = match m["tool_call_id"].as_str() {
+                    Some(id) => {
+                        en_attente.retain(|a| a.id != id);
+                        crate::brain::AppelOutil { id: id.into(), nom: nom.clone().unwrap_or_default(), arguments: Value::Null }
+                    }
+                    None => en_attente.pop_front().unwrap_or_else(|| {
+                        n += 1;
+                        crate::brain::AppelOutil { id: format!("appel_{n}"), nom: nom.clone().unwrap_or_default(), arguments: Value::Null }
+                    }),
+                };
+                msgs.push(Msg::resultat_outil(&appel, if contenu.is_empty() { "(vide)".to_string() } else { contenu }));
+            }
+            // un message vide n'apporte rien et certains fournisseurs le refusent
+            _ if contenu.trim().is_empty() => {}
+            r => msgs.push(Msg::new(r, contenu)),
+        }
+    }
+    msgs
+}
+
 /// Fournisseur autre qu'Ollama (Claude, OpenRouter…) : conversion vers le cerveau d'Orchestra.
 async fn par_brain(e: &Etat, corps: &Value) -> Result<Value, (u16, String)> {
     let mut cfg = e.c.cfg.clone();
     cfg.model = e.c.modele.clone();
     let b = Brain::new(cfg, e.c.http.clone());
-    let msgs: Vec<Msg> = corps["messages"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|m| Msg::new(m["role"].as_str().unwrap_or("user"), m["content"].as_str().unwrap_or("")))
-        .collect();
+    let msgs = messages_vers_brain(&corps["messages"]);
     let outils: Vec<Outil> = corps["tools"]
         .as_array()
         .into_iter()
@@ -789,5 +854,24 @@ mod tests {
         // porte fermée : plus rien ne répond
         assert!(c.post(format!("{url}/api/chat")).timeout(Duration::from_secs(2)).send().await.is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn appels_d_outils_traduits_pour_le_cerveau() {
+        let m = json!([
+            { "role": "system", "content": "consignes" },
+            { "role": "user", "content": "état du salon ?" },
+            { "role": "assistant", "content": "", "tool_calls": [{ "function": { "name": "read_lumieres", "arguments": {} } }] },
+            { "role": "tool", "content": "{\"salon\": \"allumée\"}", "tool_name": "read_lumieres" },
+            { "role": "assistant", "content": "" }
+        ]);
+        let msgs = messages_vers_brain(&m);
+        assert_eq!(msgs.len(), 4);
+        assert_eq!(msgs[2].appels.len(), 1);
+        assert_eq!(msgs[3].role, "tool");
+        assert_eq!(msgs[3].outil_id.as_deref(), Some(msgs[2].appels[0].id.as_str()));
+        let (_, claude) = crate::brain::msgs_claude(&msgs);
+        assert_eq!(claude[1]["content"][0]["type"], "tool_use");
+        assert_eq!(claude[2]["content"][0]["type"], "tool_result");
     }
 }

@@ -755,6 +755,10 @@ pub fn marquer_cache_claude(messages: &mut [Value]) {
     }
     let m = &mut messages[n - 2];
     if let Some(t) = m["content"].as_str().map(|t| t.to_string()) {
+        // Claude refuse un bloc de texte vide, a fortiori marqué pour le cache
+        if t.trim().is_empty() {
+            return;
+        }
         m["content"] = json!([{ "type": "text", "text": t }]);
     }
     if let Some(blocs) = m["content"].as_array_mut() {
